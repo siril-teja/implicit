@@ -69,11 +69,13 @@ scene = Scene("cage", bounds=((-20, -15, -15), (20, 15, 15)))
 scene.add("Cage", cage, color=(0.3, 0.8, 0.4))
 ```
 
-## GitHub Pages
+## Releases and live viewer
 
-`.github/workflows/pages.yml` runs the tests on every push and deploys the
-viewer from `main`. Turn it on once in **Settings → Pages → Source: GitHub
-Actions**. The site will be `https://siril-teja.github.io/implicit/`.
+`main` only changes through pull requests that pass CI. Each merged PR with a
+new version is tagged and released automatically, and the viewer at
+https://siril-teja.github.io/implicit/ is updated from it. Release notes are in
+[CHANGELOG.md](CHANGELOG.md), and licences and data attribution in [NOTICE.md](NOTICE.md).
+The workflow and one-time repository settings are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Status
 

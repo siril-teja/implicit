@@ -37,6 +37,7 @@
   #status.err { color: var(--err); font-family: ui-monospace, monospace; }
   #fps { color: var(--muted); font-size: 11px; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .hint a { color: var(--accent); }
   @media (max-width: 720px) {
     #app { flex-direction: column; }
     #gl { height: 55vh; flex: none; }
@@ -75,10 +76,13 @@
     </div>
     <div class="hint">Drag: orbit · Shift/right-drag: pan · Wheel: zoom</div>
     <div id="status"></div>
+    <h2>About</h2>
+    <div id="about" class="hint"></div>
     <div id="diag" class="hint"></div>
     <div id="attribution" class="hint"></div>
   </div>
 </div>
+<!--APP-->
 <!--SCENES-->
 <script src="viewer.js"></script>
 </body>

@@ -478,6 +478,7 @@ async function fetchJson(url) {
 }
 
 async function main() {
+  showAbout();
   if (!gl) { setStatus("WebGL2 is not available in this browser.", true); return; }
   if (window.SCENES) {  // single-file build: scenes inlined
     initPicker(Object.keys(window.SCENES), (k) => loadScene(window.SCENES[k]));
@@ -500,6 +501,24 @@ async function main() {
         if (state.scene && sc.hash !== state.scene.hash) loadScene(sc);
       } catch { /* server restarting */ }
     }, 1000);
+  }
+}
+
+function showAbout() {
+  const app = window.APP || {};
+  const box = $("#about");
+  box.replaceChildren();
+  const line = (...parts) => box.append(el("div", {}, ...parts));
+  const link = (text, href) => el("a", { href, textContent: text, target: "_blank", rel: "noopener" });
+  const version = app.version ? `v${app.version}` : "development build";
+  const commit = app.commit ? ` · ${app.commit.slice(0, 7)}` : "";
+  line(`implicit ${version}${commit}`);
+  if (app.repo) {
+    const base = `https://github.com/${app.repo}`;
+    const ref = app.version ? `v${app.version}` : (app.commit || "main");
+    line(link("Release notes", app.version ? `${base}/releases/tag/v${app.version}` : `${base}/releases`),
+      " · ", link("Licences & attribution", `${base}/blob/${ref}/NOTICE.md`),
+      " · ", link("Source", `${base}/tree/${ref}`));
   }
 }
 
