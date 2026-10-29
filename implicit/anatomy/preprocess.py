@@ -85,6 +85,99 @@ def mask_to_grid(mask, affine, h, pad=6.0, sigma=0.6):
     return vals.reshape(n).astype(np.float32), wlo
 
 
+class CTContext:
+    """CT intensities + a nearest-bone partition over a region, for surface refinement.
+
+    The bone surface is placed on the CT iso-surface (sub-voxel, cubic
+    interpolation); labels only decide which bone owns a voxel. See bone_grid().
+    """
+
+    def __init__(self, ct, affine, label_masks: dict, margin_mm=15.0, smooth=0.7):
+        ndi = _ndi()
+        zooms = np.sqrt((affine[:3, :3] ** 2).sum(0))
+        union = np.zeros(ct.shape, bool)
+        for m in label_masks.values():
+            union |= m
+        idx = np.argwhere(union)
+        mv = np.ceil(margin_mm / zooms).astype(int)
+        self.lo = np.maximum(idx.min(0) - mv, 0)
+        self.hi = np.minimum(idx.max(0) + 1 + mv, ct.shape)
+        sl = tuple(slice(a, b) for a, b in zip(self.lo, self.hi))
+        ct_c = ndi.gaussian_filter(ct[sl].astype(np.float32), smooth)  # tame CT noise
+        self.coef = ndi.spline_filter(ct_c, order=3)  # prefiltered once for cubic sampling
+        self.ct = ct_c
+        lab = np.zeros(ct_c.shape, np.int16)
+        self.ids = {}
+        for k, (name, m) in enumerate(label_masks.items(), start=1):
+            lab[m[sl]] = k
+            self.ids[name] = k
+        _, nearest = ndi.distance_transform_edt(lab == 0, sampling=zooms, return_indices=True)
+        self.owner = lab[tuple(nearest)]
+        self.lab = lab
+        self.affine = affine
+
+    def threshold(self, name):
+        """Half-way between soft tissue just outside and cortex just inside the label."""
+        ndi = _ndi()
+        m = self.lab == self.ids[name]
+        out = ndi.binary_dilation(m, iterations=2) & (self.lab == 0)
+        rim = m & ~ndi.binary_erosion(m, iterations=1)
+        return 0.5 * (float(np.median(self.ct[out])) + float(np.median(self.ct[rim])))
+
+    def sample(self, vox_abs, name):
+        """Cubic CT and ownership at absolute (canonical) voxel coordinates [3, N]."""
+        ndi = _ndi()
+        v = vox_abs - self.lo[:, None]
+        ct = ndi.map_coordinates(self.coef, v, order=3, mode="nearest", prefilter=False)
+        own = ndi.map_coordinates((self.owner == self.ids[name]).astype(np.float32), v,
+                                  order=1, mode="constant", cval=0.0) > 0.5
+        return ct, own
+
+
+def bone_grid(mask, affine, h, ctx: CTContext | None = None, name=None, band=2.0, pad=6.0, sigma=0.7):
+    """Signed distance grid (world-aligned, spacing h) for one bone.
+
+    Without CT: distance to the binary mask, smoothed (voxel-limited).
+    With CT: occupancy = deep inside the label (> band) OR (within band of the
+    label surface AND owned by this bone AND CT > threshold), holes filled, then
+    re-distanced on the fine grid. The label therefore only guards the surface
+    to +-band; its exact position comes from the CT.
+    """
+    if ctx is None:
+        return mask_to_grid(mask, affine, h, pad=pad)
+    ndi = _ndi()
+    zooms = np.sqrt((affine[:3, :3] ** 2).sum(0))
+    idx = np.argwhere(mask)
+    lo, hi = idx.min(0), idx.max(0) + 1
+    m = int(np.ceil((pad + band) / zooms.min())) + 2
+    crop = np.pad(mask[lo[0]:hi[0], lo[1]:hi[1], lo[2]:hi[2]], m)
+    din = ndi.distance_transform_edt(crop, sampling=zooms)
+    dout = ndi.distance_transform_edt(~crop, sampling=zooms)
+    hv = float(zooms.mean())
+    s_mask = np.where(crop, -(din - 0.5 * hv), dout - 0.5 * hv).astype(np.float32)
+    off = lo - m
+    n0 = np.array(crop.shape) - 1
+    corners = np.array([[i, j, k] for i in (0, n0[0]) for j in (0, n0[1]) for k in (0, n0[2])]) + off
+    world = corners @ affine[:3, :3].T + affine[:3, 3]
+    wlo, whi = world.min(0) + hv, world.max(0) - hv
+    n = np.floor((whi - wlo) / h).astype(int) + 1
+    axes = [wlo[i] + h * np.arange(n[i]) for i in range(3)]
+    pts = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+    inv = np.linalg.inv(affine)
+    vox = (pts @ inv[:3, :3].T + inv[:3, 3]).T
+    sm = ndi.map_coordinates(s_mask, vox - off[:, None], order=1, mode="nearest")
+    ct, own = ctx.sample(vox, name)
+    T = ctx.threshold(name)
+    occ = (sm < -band) | ((sm < band) & own & (ct > T))
+    occ = largest_component(ndi.binary_fill_holes(occ.reshape(n)))
+    din = ndi.distance_transform_edt(occ, sampling=h)
+    dout = ndi.distance_transform_edt(~occ, sampling=h)
+    sdf = np.where(occ, -(din - 0.5 * h), dout - 0.5 * h).astype(np.float32)
+    if sigma:
+        sdf = ndi.gaussian_filter(sdf, sigma)
+    return sdf, wlo
+
+
 class Field:
     """Trilinear sampler for a world-aligned grid (preprocessing helper)."""
 
@@ -231,8 +324,6 @@ def vertebra_landmarks(f: Field, level, tangent, canal):
     height = np.ptp(local[:, 2])
     out = {"level": level, "body_center": c, "R": R, "height": float(height),
            "width": float(np.ptp(local[:, 0])), "depth": float(np.ptp(local[:, 1])),
-           "post_point": c + R[:, 1] * float(np.percentile(local[:, 1], 1)),
-           "u_range": [float(np.percentile(local[:, 0], 0.5)), float(np.percentile(local[:, 0], 99.5))],
            "footprint_uv": uv}
     for name, sign in (("sup", 1.0), ("inf", -1.0)):
         pts = march(f, c, R, uv, sign, 0.0, 0.9 * height + 5.0)
@@ -273,14 +364,20 @@ def s1_landmarks(f_sacrum: Field, l5):
     a = l5["R"][:, 1] - l5["R"][:, 1].dot(n) * n
     a /= np.linalg.norm(a)
     R1 = np.stack([np.cross(a, n), a, n], axis=1)
-    return {"level": "S1", "body_center": p - n * 10.0, "R": R1, "height": 0.0,
-            "width": l5["width"], "depth": l5["depth"], "u_range": l5["u_range"],
-            "post_point": l5["post_point"] + (p - l5["inf"]["point"]), "sup": sup}
+    return {"level": "S1", "body_center": p - n * 10.0, "R": R1, "height": 0.0, "sup": sup}
 
 
-def process(subject_dir, out_dir, h_vert=1.0, h_other=1.5, log=print):
+def process(subject_dir, out_dir, levels=None, sacrum=True, pelvis=True, use_ct=True,
+            h_vert=1.0, h_sacrum=None, h_other=1.5, log=print):
+    """Process a subject. ``levels``: vertebrae to output (default all present).
+
+    With ``use_ct`` and a ``ct.nii.gz`` next to the masks, bone surfaces come from
+    the CT iso-surface (see bone_grid); otherwise from the masks alone.
+    """
     subject_dir, out_dir = Path(subject_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    levels = levels or LEVELS[:-1]
+    h_sacrum = h_sacrum or h_vert
 
     def load(name):
         p = subject_dir / f"{name}.nii.gz"
@@ -289,53 +386,85 @@ def process(subject_dir, out_dir, h_vert=1.0, h_other=1.5, log=print):
         m, aff = load_mask(p)
         return (m if m.any() else None), aff
 
-    grids, fields, centroids = {}, {}, {}
-    for lv in LEVELS[:-1]:
-        m, aff = load(f"vertebrae_{lv}")
-        if m is None:
-            log(f"  {lv}: missing")
-            continue
-        m = largest_component(m)
-        v, o = mask_to_grid(m, aff, h_vert)
-        grids[lv] = ("vertebra", v, o, h_vert)
-        fields[lv] = Field(v, o, h_vert)
-        centroids[lv] = fields[lv].inside_points().mean(0)
-        log(f"  {lv}: grid {v.shape}")
-
-    sac, aff = load("sacrum")
-    s1, aff1 = load("vertebrae_S1")
+    # Masks: requested levels, their immediate neighbours (for the spine tangent
+    # and the bone partition), sacrum + S1, hips.
+    order = LEVELS[:-1]
+    wanted = [lv for lv in order if lv in levels]
+    lo_i, hi_i = order.index(wanted[0]), order.index(wanted[-1])
+    context = order[max(lo_i - 1, 0):hi_i + 2]
+    masks, aff = {}, None
+    for lv in context:
+        mk, a = load(f"vertebrae_{lv}")
+        if mk is not None:
+            masks[lv], aff = largest_component(mk), a
+    sac, a1 = load("sacrum")
+    s1, a2 = load("vertebrae_S1")
     if sac is not None or s1 is not None:
-        m = (sac if sac is not None else np.zeros_like(s1)) | (s1 if s1 is not None else False)
-        m = largest_component(m)
-        v, o = mask_to_grid(m, aff if sac is not None else aff1, h_vert)
-        grids["sacrum"] = ("sacrum", v, o, h_vert)
-        fields["sacrum"] = Field(v, o, h_vert)
-        log(f"  sacrum: grid {v.shape}")
-    for name in ("hip_left", "hip_right", "femur_left", "femur_right"):
-        m, aff = load(name)
-        if m is None:
+        mk = (sac if sac is not None else np.zeros_like(s1)) | (s1 if s1 is not None else False)
+        masks["sacrum"] = largest_component(mk)
+        aff = aff if aff is not None else (a1 if a1 is not None else a2)
+    for name in ("hip_left", "hip_right"):
+        mk, a = load(name)
+        if mk is not None:
+            masks[name] = largest_component(mk)
+
+    ctx = None
+    ct_path = subject_dir / "ct.nii.gz"
+    if use_ct and ct_path.exists():
+        import nibabel as nib
+        ct_im = nib.as_closest_canonical(nib.load(str(ct_path)))
+        if not np.allclose(ct_im.affine, aff, atol=1e-3):
+            raise RuntimeError("CT and mask grids differ")
+        log("  CT: refining surfaces from intensities")
+        ctx = CTContext(np.asarray(ct_im.dataobj), aff, masks)
+
+    grids, fields, centroids = {}, {}, {}
+    for lv in context:
+        if lv not in masks:
             continue
-        m = largest_component(m)
-        if name.startswith("femur"):
-            zs = np.argwhere(m)[:, 2]
-            zoom = np.sqrt((aff[:3, :3] ** 2).sum(0))[2]
-            m[:, :, :max(int(zs.max() - FEMUR_KEEP / zoom), 0)] = False
-        v, o = mask_to_grid(m, aff, h_other)
-        grids[name] = (name.split("_")[0], v, o, h_other)
-        log(f"  {name}: grid {v.shape}")
+        if lv in wanted:
+            v, o = bone_grid(masks[lv], aff, h_vert, ctx, lv)
+            grids[lv] = ("vertebra", v, o, h_vert)
+            fields[lv] = Field(v, o, h_vert)
+            centroids[lv] = fields[lv].inside_points().mean(0)
+            log(f"  {lv}: grid {v.shape} @ {h_vert} mm"
+                + (f", CT threshold {ctx.threshold(lv):.0f} HU" if ctx else ""))
+        else:  # neighbour: centroid only
+            centroids[lv] = np.argwhere(masks[lv]).mean(0) @ aff[:3, :3].T + aff[:3, 3]
+    if sacrum and "sacrum" in masks:
+        v, o = bone_grid(masks["sacrum"], aff, h_sacrum, ctx, "sacrum")
+        grids["sacrum"] = ("sacrum", v, o, h_sacrum)
+        fields["sacrum"] = Field(v, o, h_sacrum)
+        log(f"  sacrum: grid {v.shape} @ {h_sacrum} mm")
+    if pelvis:
+        for name in ("hip_left", "hip_right", "femur_left", "femur_right"):
+            mk = masks.get(name)
+            if mk is None:
+                mk, a = load(name)
+                if mk is None:
+                    continue
+                mk = largest_component(mk)
+            if name.startswith("femur"):
+                zs = np.argwhere(mk)[:, 2]
+                zoom = np.sqrt((aff[:3, :3] ** 2).sum(0))[2]
+                mk[:, :, :max(int(zs.max() - FEMUR_KEEP / zoom), 0)] = False
+            v, o = bone_grid(mk, aff, h_other, ctx if name in masks else None, name)
+            grids[name] = (name.split("_")[0], v, o, h_other)
+            log(f"  {name}: grid {v.shape} @ {h_other} mm")
 
     cord, aff_c = load("spinal_cord")
     cord_pts = None
     if cord is not None:
         cord_pts = np.argwhere(cord) @ aff_c[:3, :3].T + aff_c[:3, 3]
 
-    levels = [lv for lv in LEVELS[:-1] if lv in fields]
+    present = [lv for lv in order if lv in centroids]
     marks = {}
-    for i, lv in enumerate(levels):
-        if lv == "C1":
+    for lv in wanted:
+        if lv == "C1" or lv not in fields:
             continue
-        up = centroids[levels[i - 1]] if i > 0 else centroids[lv]
-        dn = centroids[levels[i + 1]] if i + 1 < len(levels) else centroids[lv]
+        i = present.index(lv)
+        up = centroids[present[i - 1]] if i > 0 else centroids[lv]
+        dn = centroids[present[i + 1]] if i + 1 < len(present) else centroids[lv]
         tangent = (up - dn) / np.linalg.norm(up - dn)
         canal = None
         if cord_pts is not None:
@@ -371,7 +500,7 @@ def process(subject_dir, out_dir, h_vert=1.0, h_other=1.5, log=print):
         meta["bones"].append({"name": name, "kind": kind, "origin": (o - ref).tolist(),
                               "spacing": h, "shape": list(g.shape)})
     for lv, e in marks.items():
-        d = {k: (v - ref if k in ("body_center", "post_point") else v) for k, v in e.items()
+        d = {k: (v - ref if k in ("body_center",) else v) for k, v in e.items()
              if k != "footprint_uv"}
         for ep in ("sup", "inf"):
             if ep in d:
@@ -397,10 +526,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("subject_dir")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--h-vert", type=float, default=1.0, help="grid spacing for vertebrae/sacrum (mm)")
+    ap.add_argument("--levels", default="all", help='"lumbar", "all" or a comma list, e.g. L3,L4,L5')
+    ap.add_argument("--no-pelvis", action="store_true", help="skip hips and femurs")
+    ap.add_argument("--no-ct", action="store_true", help="ignore ct.nii.gz; use masks only")
+    ap.add_argument("--h-vert", type=float, default=1.0, help="grid spacing for vertebrae (mm)")
+    ap.add_argument("--h-sacrum", type=float, default=None, help="grid spacing for the sacrum (mm)")
     ap.add_argument("--h-other", type=float, default=1.5, help="grid spacing for hips/femurs (mm)")
     a = ap.parse_args(argv)
-    process(a.subject_dir, a.out, a.h_vert, a.h_other)
+    levels = {"all": None, "lumbar": LUMBAR}.get(a.levels) or a.levels.split(",")
+    process(a.subject_dir, a.out, levels, pelvis=not a.no_pelvis, use_ct=not a.no_ct,
+            h_vert=a.h_vert, h_sacrum=a.h_sacrum, h_other=a.h_other)
 
 
 if __name__ == "__main__":

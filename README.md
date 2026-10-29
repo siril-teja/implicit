@@ -19,9 +19,10 @@ roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 ## Patient anatomy (full spine + pelvis)
 
 `examples/full_spine.py` loads `assets/models/s0751`: C1–L5, sacrum, both hips and
-proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0). It detects the endplates
-and builds all 23 discs (C2–C3 … L5–S1) implicitly, as annulus + nucleus, with live
-parameters. To process another subject:
+proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0). Each bone is converted
+once into its own implicit (signed distance) body; all modelling then works on
+those fields. Fitted endplate planes can be shown to check the landmarks.
+To process another subject:
 
 ```bash
 python -m implicit.anatomy.totalseg s0751 --out data/totalseg        # ~4 MB, no full download

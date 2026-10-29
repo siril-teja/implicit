@@ -1,6 +1,5 @@
 """Full spine (C1-L5), sacrum, pelvis and proximal femurs from CT segmentations,
-with every intervertebral disc (annulus + nucleus) built implicitly between the
-detected endplates.
+one implicit (signed distance) body per bone.
 
 Prepare a subject once (needs scipy + nibabel):
     python -m implicit.anatomy.totalseg <subject> --out data/totalseg
@@ -19,4 +18,4 @@ from implicit.anatomy.spine import build_scene
 ROOT = Path(__file__).resolve().parent.parent
 MODEL = Path(os.environ.get("IMPLICIT_MODEL", ROOT / "assets" / "models" / "s0751"))
 
-scene, model, disc_params = build_scene(MODEL, name="Full spine + pelvis")
+scene, model = build_scene(MODEL, name="Full spine + pelvis")

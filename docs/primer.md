@@ -109,28 +109,16 @@ Every downstream operation (offset, cut, shell, cage clip) then works the same
 on patient vertebrae as on analytic shapes. nTop's mesh→implicit conversion is
 equivalent.
 
-### 2.8 Endplates and discs on patient anatomy
+### 2.8 Endplates on patient anatomy
 
-1. **Body isolation.** Remove points behind the posterior wall (found by
-   marching anteriorly from the spinal-cord centroid), then morphologically
-   open with a ball of radius 4.5–5.5 mm (removes pedicles, processes,
-   cervical lateral masses). Keep the largest component.
+1. **Body isolation** (for the local frame only): remove points behind the
+   posterior wall (marching anteriorly from the spinal-cord centroid), then
+   morphologically open (radius 4.5–5.5 mm) and keep the largest component.
 2. **Frame.** The axial axis w is the body's smallest principal axis (or the
    spine tangent if they differ by > 30°). a is anterior and l = a × w.
-3. **Endplates.** From the body centre, march ±w along central columns (≥ 30 % of
-   the max inscribed radius from the footprint edge) to the SDF zero crossing
-   (sub-voxel). Then fit w = αu + βv + γ by iteratively trimmed least squares.
-4. **Disc.** Let fp be the body cross-section 1.5 mm inside each endplate,
-   bounded by the posterior wall and lateral margins, extruded along the
-   endplate normal and blended (`Morph`) from the lower to the upper body.
-   Then:
-   disc = (fp ⊕ bulge) ∩ slab_lower ∩ slab_upper − bone_upper − bone_lower.
-   Subtracting the bones makes the disc fill the real endplate concavities.
-   nucleus = disc ∩ scale(fp, √area_frac) about a posteriorly shifted centre;
-   annulus = disc − nucleus.
-5. **Instancing.** All 23 discs share one GLSL template. Per-level constants
-   (planes, grid placement, bounds) sit in a float texture, so shader size
-   does not grow with level count. Python builds the same graph per disc for meshing.
+3. **Endplates.** From the body centre, march ±w along central columns to the
+   SDF zero crossing (sub-voxel), then fit w = αu + βv + γ by iteratively
+   trimmed least squares. S1 is found from L5 and C2 from C3.
 
 ## 3. Architecture
 
@@ -154,8 +142,7 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | **0, done** | SDF kernel, Params, GLSL codegen, browser viewer, section view, STL export, Pages deploy | Idealised L4–L5 with wedge cage and PSO |
 | **1, done** | **Patient anatomy**: TotalSegmentator v2 subject (C1–L5, sacrum, hips, proximal femurs) → per-bone SDF grids → `Grid` primitive (3D texture atlas) | `implicit/anatomy/` |
 | 1b, done | Endplate detection: body isolation (posterior-wall cut from the cord, opening), local frame, robust plane fits. S1 found from L5 and C2 from C3 | RMS 0.2–1.2 mm (C2–L5, s0751) |
-| 1c, done | Implicit discs C2–C3 … L5–S1: endplate-to-endplate fill, annulus + nucleus, live params; instanced templates | 23 discs, one shader template |
-| 1d | **Cage options**: replace any disc with a parametric cage (ALIF/TLIF/LLIF, wedge from the endplates, graft window, TPMS infill) | next |
+| 1c | CT-refined bone surfaces (iso-surface of the CT, labels as guard rails), 0.6 mm lumbar | in progress |
 | 1e | Pose params per vertebra (alignment), osteotomies on patient anatomy, cortical shell | |
 | **2** | **FE export**: voxel-hex (C3D8 / Marc hex8) with body material IDs, plus Marc `.dat` and Abaqus `.inp` writers, and auto node/face sets for contact and loading | Pure NumPy, no mesher dependency |
 | 2b | Conforming tet mesh with a permissive-licence mesher, sizing field from |f| | See LICENSING.md for candidates |

@@ -145,40 +145,29 @@ class SpinePipeline(unittest.TestCase):
         (d / "subj").mkdir()
         write_synthetic_subject(d / "subj")
         process(d / "subj", d / "model", log=lambda *a: None)
-        cls.scene, cls.model, cls.P = build_scene(d / "model")
+        cls.scene, cls.model = build_scene(d / "model")
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def test_levels_and_discs(self):
+    def test_one_implicit_body_per_bone(self):
         self.assertEqual(set(self.model.marks), {"L3", "L4", "L5", "S1"})
-        self.assertEqual(self.model.disc_pairs(), [("L3", "L4"), ("L4", "L5"), ("L5", "S1")])
         names = [b.name for b in self.scene.bodies]
-        for tag in ("L3-L4", "L4-L5", "L5-S1"):
-            self.assertIn(f"{tag} annulus", names)
-            self.assertIn(f"{tag} nucleus", names)
+        for bone in ("L3", "L4", "L5", "sacrum"):
+            self.assertIn(bone, names)
 
-    def test_disc_height_and_lordosis(self):
+    def test_endplate_geometry(self):
         m = self.model.marks
         n_u, n_l = m["L3"]["inf"]["normal"], m["L4"]["sup"]["normal"]
         ang = np.degrees(np.arccos(np.clip(-n_u @ n_l, -1, 1)))
         self.assertAlmostEqual(ang, 4.0, delta=1.5)
-        h = (m["L3"]["inf"]["point"] - m["L4"]["sup"]["point"]) @ n_l
-        self.assertAlmostEqual(h, 10.0, delta=1.0)
+        gap = (m["L3"]["inf"]["point"] - m["L4"]["sup"]["point"]) @ n_l
+        self.assertAlmostEqual(gap, 10.0, delta=1.0)
 
-    def test_disc_fills_gap_and_nucleus_is_inside(self):
+    def test_bone_volume(self):
         from implicit.mesh import mesh_volume, surface_nets
-        ann = self.scene.body("L3-L4 annulus")
-        nuc = self.scene.body("L3-L4 nucleus")
-        va = mesh_volume(*surface_nets(*self.scene.sample(ann.name, 1.0)))
-        vn = mesh_volume(*surface_nets(*self.scene.sample(nuc.name, 1.0)))
-        disc_area = np.pi * 22 * 16  # nominal ellipse
-        total = va + vn
-        self.assertGreater(total, 0.8 * disc_area * 10)
-        self.assertLess(total, 1.3 * disc_area * 10)
-        self.assertAlmostEqual(vn / total, self.P.nuc_area.value(), delta=0.12)
-        # Nucleus never outside the disc: sample nucleus-interior points.
-        g, o, h = self.scene.sample(nuc.name, 1.0)
-        pts = o + h * np.argwhere(g < -0.5)
-        self.assertTrue(np.all(ann.sdf.eval(pts) > -0.1))
+        vol = mesh_volume(*surface_nets(*self.scene.sample("L4", 1.0)))
+        body = np.pi * 22 * 16 * 27  # synthetic elliptic body; arch adds a little
+        self.assertGreater(vol, 0.95 * body)
+        self.assertLess(vol, 1.4 * body)
