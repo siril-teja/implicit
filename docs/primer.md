@@ -102,12 +102,22 @@ works for SPO/Ponte osteotomies and multilevel alignment changes.
 
 ### 2.7 Patient geometry (TotalSegmentator)
 
-A segmentation mask M becomes an SDF via Euclidean distance transforms,
-f = EDT(¬M) − EDT(M), sampled on the CT grid. It is used as a **grid primitive**:
-trilinear lookup in NumPy, and a 3D texture in WebGL2 (hardware trilinear).
-Every downstream operation (offset, cut, shell, cage clip) then works the same
-on patient vertebrae as on analytic shapes. nTop's mesh→implicit conversion is
-equivalent.
+Conversion happens once per bone (`implicit/anatomy/convert.py`):
+
+1. Mask M (largest component) → f_M = EDT(¬M) − EDT(M), half-voxel corrected.
+2. With the CT: occupancy = {f_M < −2 mm} ∪ {|f_M| < 2 mm ∧ nearest label is
+   this bone ∧ CT > T}. T is the half-maximum edge between the soft-tissue
+   level (3–5 mm outside the label) and the cortical peak (near the label
+   surface). Holes are filled and the result is re-distanced on the target grid.
+   On a synthetic sphere in a 1.5 mm partial-volume CT, labels off by ±1.5 mm
+   give a mean surface error of 0.8–1.45 mm from the mask alone, versus
+   ≤ 0.12 mm with the CT.
+3. Stored as one file per bone (uint8 SDF, 0.1 mm per level, scanner frame).
+
+Each file becomes a **grid primitive**: trilinear lookup in NumPy, and a 3D
+texture in WebGL2 (hardware trilinear). Every downstream operation (offset,
+cut, shell, transform, boolean) then works the same on patient bones as on
+analytic shapes. nTop's mesh→implicit conversion is the equivalent step.
 
 ### 2.8 Endplates on patient anatomy
 
@@ -140,9 +150,8 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | Phase | Deliverable | Notes |
 |---|---|---|
 | **0, done** | SDF kernel, Params, GLSL codegen, browser viewer, section view, STL export, Pages deploy | Idealised L4–L5 with wedge cage and PSO |
-| **1, done** | **Patient anatomy**: TotalSegmentator v2 subject (C1–L5, sacrum, hips, proximal femurs) → per-bone SDF grids → `Grid` primitive (3D texture atlas) | `implicit/anatomy/` |
-| 1b, done | Endplate detection: body isolation (posterior-wall cut from the cord, opening), local frame, robust plane fits. S1 found from L5 and C2 from C3 | RMS 0.2–1.2 mm (C2–L5, s0751) |
-| 1c | CT-refined bone surfaces (iso-surface of the CT, labels as guard rails), 0.6 mm lumbar | in progress |
+| **1, done** | **Conversion**: TotalSegmentator masks + CT → one implicit bone file per bone (CT half-maximum surface, label as ±2 mm guard), scanner frame | `implicit/anatomy/convert.py` |
+| 1b | Landmarks on implicit bones: body frames, endplate planes (L5 not yet reliable) | `implicit/anatomy/landmarks.py` |
 | 1e | Pose params per vertebra (alignment), osteotomies on patient anatomy, cortical shell | |
 | **2** | **FE export**: voxel-hex (C3D8 / Marc hex8) with body material IDs, plus Marc `.dat` and Abaqus `.inp` writers, and auto node/face sets for contact and loading | Pure NumPy, no mesher dependency |
 | 2b | Conforming tet mesh with a permissive-licence mesher, sizing field from |f| | See LICENSING.md for candidates |

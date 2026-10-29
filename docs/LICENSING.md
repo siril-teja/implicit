@@ -19,8 +19,8 @@ differs is the **obligations** they place on you, so the policy has three tiers:
 |---|---|---|
 | Python standard library | PSF | ✅ |
 | NumPy | BSD-3 | ✅ |
-| SciPy (distance transforms, preprocessing only) | BSD-3 | ✅ |
-| nibabel (NIfTI reading, preprocessing only) | MIT | ✅ |
+| SciPy (distance transforms, conversion only) | BSD-3 | ✅ |
+| nibabel (NIfTI reading, conversion only) | MIT | ✅ |
 | Viewer: raw WebGL2, no JS libraries | n/a (own code) | ✅ |
 | GitHub Actions (checkout, setup-python, pages actions) | MIT | ✅ (CI only, not shipped) |
 
@@ -48,14 +48,14 @@ of this code. We only write input decks.
 
 ## Data: TotalSegmentator v2 (used)
 
-`assets/models/s0751` is derived from the TotalSegmentator v2 dataset
+`assets/bones/s0751` is derived from the TotalSegmentator v2 dataset
 (1228 CTs, 117 structures). The licence is **CC BY 4.0**, as stated on the
 [Zenodo record](https://zenodo.org/records/8367088) (`license: cc-by-4.0`).
 
 - Commercial use, modification and redistribution are allowed with attribution.
   There is **no ShareAlike**, so derived models can be kept proprietary.
 - Attribution: Wasserthal et al., Radiology: AI 2023, doi:10.5281/zenodo.8367088.
-  It is shown in the viewer and in `assets/models/*/ATTRIBUTION.txt`.
+  It is shown in the viewer and in `assets/bones/*/ATTRIBUTION.txt`.
 - The masks are model-assisted segmentations that were then reviewed, resampled to
   1.5 mm. They are not hand-corrected like VerSe, so treat endplate geometry as about 1 mm accurate.
 

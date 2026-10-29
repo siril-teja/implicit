@@ -16,24 +16,32 @@ Read [docs/primer.md](docs/primer.md) for the nTop scouting, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
-## Patient anatomy (full spine + pelvis)
+## Patient anatomy: implicit bones
 
-`examples/full_spine.py` loads `assets/models/s0751`: C1–L5, sacrum, both hips and
-proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0). Each bone is converted
-once into its own implicit (signed distance) body; all modelling then works on
-those fields. Fitted endplate planes can be shown to check the landmarks.
-To process another subject:
+TotalSegmentator provides voxel label masks (NIfTI), not CAD. They are converted
+**once**, bone by bone, into implicit bodies: one signed-distance file per bone
+(`assets/bones/<subject>/<bone>.npz`, format in `implicit/anatomy/convert.py`).
+With the CT available, each surface is placed on the CT iso-surface (half-maximum
+threshold) and the label only guards it to ±2 mm. From then on all modelling
+works on these fields; masks are never read again.
+
+`examples/anatomy.py` shows `assets/bones/s0751`: L1–L5, sacrum, hips and proximal
+femurs from a TotalSegmentator v2 CT (CC BY 4.0).
 
 ```bash
-python -m implicit.anatomy.totalseg s0751 --out data/totalseg        # ~4 MB, no full download
-python -m implicit.anatomy.preprocess data/totalseg/s0751 --out assets/models/s0751
-IMPLICIT_MODEL=assets/models/s0751 python -m implicit.serve examples/full_spine.py
+python -m implicit.anatomy.totalseg s0751 --out data/totalseg --ct      # masks + CT, ~40 MB
+python -m implicit.anatomy.convert data/totalseg/s0751 --out assets/bones/s0751 --select lumbar
+python -m implicit.serve examples/anatomy.py
 ```
+
+`--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Optional:
+`python -m implicit.anatomy.landmarks assets/bones/s0751` fits vertebral frames
+and endplate planes from the implicit bones (`landmarks.json`; L5 is not yet reliable).
 
 ## Quick start
 
 ```bash
-pip install -r requirements.txt          # numpy (+ scipy, nibabel for preprocessing)
+pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion)
 python -m implicit.serve examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```
@@ -70,5 +78,5 @@ Actions**. The site will be `https://siril-teja.github.io/implicit/`.
 ## Status
 
 Prototype, not validated. The idealised L4–L5 example is not patient-specific.
-The full-spine model is one CT subject at 1.5 mm resolution. Exported STL is a
+The anatomy is one CT subject (1.5 mm CT, bones resampled to 0.6–1.5 mm). Exported STL is a
 surface for inspection only, and FE volume meshing is not implemented yet.

@@ -4,7 +4,10 @@ Dataset: Wasserthal et al., TotalSegmentator, Radiology: AI 2023,
 https://doi.org/10.5281/zenodo.8367088 (CC BY 4.0). Only the requested mask
 files are downloaded (HTTP range requests into the 23.6 GB zip).
 
-    python -m implicit.anatomy.totalseg s0011 --out data/totalseg
+    python -m implicit.anatomy.totalseg s0751 --out data/totalseg --ct
+
+``--ct`` also downloads the CT (about 36 MB), which implicit.anatomy.convert
+uses to place bone surfaces more accurately than the 1.5 mm masks.
 """
 
 from __future__ import annotations
@@ -28,15 +31,17 @@ EXTRA = ["spinal_cord"]
 ALL = VERTEBRAE + PELVIS + EXTRA
 
 
-def fetch(subject, out_dir, names=ALL, url=URL):
+def fetch(subject, out_dir, names=ALL, url=URL, ct=False):
     out = Path(out_dir) / subject
     out.mkdir(parents=True, exist_ok=True)
     z = open_remote_zip(url)
-    for n in names:
-        dst = out / f"{n}.nii.gz"
+    members = [(f"{subject}/segmentations/{n}.nii.gz", out / f"{n}.nii.gz") for n in names]
+    if ct:
+        members.append((f"{subject}/ct.nii.gz", out / "ct.nii.gz"))
+    for member, dst in members:
         if dst.exists():
             continue
-        dst.write_bytes(z.read(f"{subject}/segmentations/{n}.nii.gz"))
+        dst.write_bytes(z.read(member))
         print(f"  {dst}")
     (out / "ATTRIBUTION.txt").write_text(ATTRIBUTION + "\n")
     return out
@@ -46,8 +51,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("subject", help="TotalSegmentator image id, e.g. s0011")
     ap.add_argument("--out", default="data/totalseg")
+    ap.add_argument("--ct", action="store_true", help="also fetch the CT (~36 MB)")
     a = ap.parse_args(argv)
-    print(f"fetched {fetch(a.subject, a.out)}")
+    print(f"fetched {fetch(a.subject, a.out, ct=a.ct)}")
 
 
 if __name__ == "__main__":
