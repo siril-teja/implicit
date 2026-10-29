@@ -37,17 +37,20 @@ const url = `http://127.0.0.1:${server.address().port}/diagnostics.html`;
 const args = [`--use-angle=${backend}`, "--use-gl=angle", "--ignore-gpu-blocklist"];
 if (backend === "swiftshader") args.push("--enable-unsafe-swiftshader");
 else args.push("--disable-software-rasterizer");  // fail rather than fall back to SwiftShader
+if (backend.startsWith("d3d")) args.push("--disable-gpu-sandbox");  // D3D in a service session
+// Never hang a CI runner: hard stop after 12 minutes whatever happens.
+setTimeout(() => { console.log("FAIL: GPU check timed out"); process.exit(1); }, 12 * 60 * 1000).unref();
 // channel "chromium": the full browser (Playwright's default headless shell only
 // has SwiftShader). GPU_CHECK_HEADED=1 runs it headed, for runners where headless
 // Chrome would not use the hardware/D3D backend.
 const headless = process.env.GPU_CHECK_HEADED !== "1";
-const browser = await chromium.launch({ args, channel: "chromium", headless });
+const browser = await chromium.launch({ args, channel: "chromium", headless, timeout: 60000 });
 const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("pageerror:", e.message));
 let code = 1;
 try {
-  await page.goto(url);
-  await page.waitForFunction(() => window.DIAG && window.DIAG.done, null, { timeout: 15 * 60 * 1000, polling: 2000 });
+  await page.goto(url, { timeout: 60000 });
+  await page.waitForFunction(() => window.DIAG && window.DIAG.done, null, { timeout: 10 * 60 * 1000, polling: 2000 });
   const report = await page.inputValue("#report");
   const diag = await page.evaluate(() => window.DIAG);
   console.log(report);

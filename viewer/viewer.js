@@ -5,7 +5,9 @@
 
 const $ = (s) => document.querySelector(s);
 const canvas = $("#gl");
-const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+// "high-performance" asks dual-GPU laptops for the discrete GPU (a hint: on Windows
+// the browser's GPU is set per app in Settings > System > Display > Graphics).
+const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true, powerPreference: "high-performance" });
 
 const state = {
   scene: null, prog: null, uniforms: {}, values: {}, vis: [], atlas: null, atlasKey: null,

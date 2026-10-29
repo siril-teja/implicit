@@ -32,6 +32,7 @@ jobs:
   # every shader distance must match NumPy and every ray must hit its body.
   gpu:
     name: gpu (${{ matrix.name }})
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -42,9 +43,8 @@ jobs:
             renderer: SwiftShader
           - name: windows-d3d11
             os: windows-latest
-            backend: d3d11-warp
+            backend: d3d11
             renderer: Direct3D11
-            headed: "1"
           - name: macos-metal
             os: macos-latest
             backend: metal

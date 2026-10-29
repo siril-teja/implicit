@@ -28,6 +28,8 @@ publishes that section as the GitHub release notes. Versions follow
 ### Changed
 - Shader sources and WebGL helpers moved to `viewer/gpu.js`, shared by the
   viewer and the GPU check.
+- The viewer asks for the high-performance GPU (`powerPreference`), so dual-GPU
+  laptops prefer the discrete GPU where the browser allows it.
 
 ## [0.1.2] - 2026-10-29
 
