@@ -73,7 +73,7 @@ scene.add("Cage", cage, color=(0.3, 0.8, 0.4))
 
 `main` only changes through pull requests that pass CI. Each merged PR with a
 new version is tagged and released automatically, and the viewer at
-https://siril-teja.github.io/implicit/ is updated from it. Release notes are in
+https://siril.me/implicit/ is updated from it. Release notes are in
 [CHANGELOG.md](CHANGELOG.md), and licences and data attribution in [NOTICE.md](NOTICE.md).
 The workflow and one-time repository settings are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -82,3 +82,9 @@ The workflow and one-time repository settings are in [CONTRIBUTING.md](CONTRIBUT
 Prototype, not validated. The idealised L4–L5 example is not patient-specific.
 The anatomy is one CT subject (1.5 mm CT, bones resampled to 0.6–1.5 mm). Exported STL is a
 surface for inspection only, and FE volume meshing is not implemented yet.
+
+## Licence
+
+The code is released under the [MIT License](LICENSE). The bundled anatomy in
+`assets/bones/` is derived from TotalSegmentator (CC BY 4.0); see
+[NOTICE.md](NOTICE.md) for all third-party licences and attribution.

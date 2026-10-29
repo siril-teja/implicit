@@ -1,5 +1,7 @@
 # Third-party license policy
 
+The project itself is released under the **MIT License** (`LICENSE`).
+
 **Requirement:** every third-party dependency must allow commercial use.
 This is an engineering policy, not legal advice. Have counsel review it before
 commercial release.

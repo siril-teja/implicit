@@ -28,7 +28,7 @@ is updated from it.
    - re-runs the tests and builds the viewer stamped with version and commit;
    - creates tag `vX.Y.Z` and a GitHub release with the CHANGELOG section as
      notes and the built viewer attached;
-   - deploys the viewer to GitHub Pages: https://siril-teja.github.io/implicit/
+   - deploys the viewer to GitHub Pages: https://siril.me/implicit/
 
 ## One-time repository settings
 
