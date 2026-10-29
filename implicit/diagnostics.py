@@ -1,0 +1,57 @@
+"""Probe points with NumPy reference values, for the GPU diagnostics page.
+
+For every shader unit of a scene (one body, or bodies sharing a ``share`` key)
+the page evaluates the unit's GLSL at these points on the viewer's GPU and
+compares with the NumPy value, then traces one ray to the unit's deepest point.
+Grid bodies get points deep inside, at the grid centre, on the surface and
+outside the grid; every unit also gets points sampled across its bounds.
+Template instances (data-texture driven) are not probed.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .sdf import Grid
+
+
+def _grid_points(g: Grid):
+    q = g.q
+    picks = [np.unravel_index(np.argmin(q), q.shape), tuple(np.array(q.shape) // 2)]
+    surface = np.argwhere(q == 128)
+    if len(surface):
+        picks.append(tuple(surface[len(surface) // 2]))
+    pts = [g.origin + g.spacing * np.array(i, float) for i in picks]
+    lo, hi = g.bounds()
+    pts.append(lo - 4.0)                                   # outside, below the grid
+    pts.append(np.array([hi[0] + 6.0, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]))
+    return pts
+
+
+def probes(scene, n_random=8, seed=0):
+    """{"units": [{"unit": k, "name", "points": [[x, y, z, d], ...], "target": [x, y, z]}]}."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for k, unit in enumerate(scene._units()):
+        bodies = [scene.bodies[i] for i in unit]
+        sdfs = [b.sdf for b in bodies]
+        lo, hi = (np.array(x) for x in (bodies[0].bounds or scene.bounds))
+        for b in bodies[1:]:
+            if b.bounds:
+                lo, hi = np.minimum(lo, b.bounds[0]), np.maximum(hi, b.bounds[1])
+        pts = [lo + (hi - lo) * rng.random(3) for _ in range(n_random)]
+        for s in sdfs:
+            if isinstance(s, Grid):
+                pts += _grid_points(s)
+        # Deepest point on a coarse lattice: the ray-probe target.
+        axes = [np.linspace(lo[i], hi[i], 24) for i in range(3)]
+        lattice = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+        dl = np.min([s.eval(lattice) for s in sdfs], axis=0)
+        pts.append(lattice[np.argmin(np.abs(dl))])           # near the surface
+        target = lattice[np.argmin(dl)] if dl.min() < 0 else None
+        P = np.array(pts)
+        d = np.min([s.eval(P) for s in sdfs], axis=0)
+        out.append({"unit": k, "name": ", ".join(b.name for b in bodies),
+                    "points": np.column_stack([P, d]).round(5).tolist(),
+                    "target": None if target is None else target.round(5).tolist()})
+    return {"units": out}
