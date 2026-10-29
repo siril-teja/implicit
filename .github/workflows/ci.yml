@@ -1,0 +1,29 @@
+name: CI
+
+# Runs on every push to a development branch and on every PR into main.
+# Branch protection on main requires the "test" job to pass before merging.
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+      - name: Build viewer
+        run: python -m implicit.build examples/*.py --out site
+      - name: Version bump and CHANGELOG entry
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no-release')
+        run: python ci/release.py check origin/${{ github.base_ref }}

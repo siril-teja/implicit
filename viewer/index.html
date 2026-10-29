@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Implicit Spine Viewer</title>
+<style>
+  :root {
+    --bg: #1d1f24; --panel: #25282f; --text: #e6e8ec; --muted: #9aa0ab;
+    --accent: #6aa9ff; --border: #343843; --err: #ff8080; --btn: #30343d;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #app { display: flex; height: 100%; }
+  #gl { flex: 1; min-width: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #panel { width: 320px; flex: none; overflow-y: auto; background: var(--panel);
+    border-left: 1px solid var(--border); padding-block: 12px 40px;
+    padding-left: 16px; padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    margin: 18px 0 8px; font-weight: 600; }
+  .param { margin-bottom: 9px; }
+  .param label { display: block; color: var(--muted); margin-bottom: 2px; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  output { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  button, select { background: var(--btn); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 5px 9px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.reset { padding: 1px 6px; color: var(--muted); }
+  .body { display: flex; align-items: center; gap: 7px; margin: 4px 0; cursor: pointer; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+  #status { white-space: pre-wrap; color: var(--muted); margin-top: 10px; font-size: 12px; }
+  #status.err { color: var(--err); font-family: ui-monospace, monospace; }
+  #fps { color: var(--muted); font-size: 11px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .hint a { color: var(--accent); }
+  @media (max-width: 720px) {
+    #app { flex-direction: column; }
+    #gl { height: 55vh; flex: none; }
+    #panel { width: 100%; border-left: 0; border-top: 1px solid var(--border);
+      padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <div id="panel">
+    <h1 id="title">Loading…</h1>
+    <div id="fps"></div>
+    <select id="scenePick" hidden></select>
+    <h2>Parameters</h2>
+    <div id="params"></div>
+    <h2>Show</h2>
+    <div id="bodies"></div>
+    <h2>Section</h2>
+    <label class="body"><input type="checkbox" id="clipOn"> Section cut</label>
+    <div class="row">
+      <select id="clipAxis">
+        <option value="0">Sagittal (x)</option>
+        <option value="1">Coronal (y)</option>
+        <option value="2">Axial (z)</option>
+      </select>
+      <label class="body"><input type="checkbox" id="clipFlip"> flip</label>
+    </div>
+    <div class="row" style="margin-top:6px"><input type="range" id="clipOffset"></div>
+    <h2>View</h2>
+    <div class="buttons">
+      <button id="resetView">Reset view</button>
+      <button id="copyParams">Copy params</button>
+      <button id="exportStl" hidden>Export STL</button>
+    </div>
+    <div class="hint">Drag: orbit · Shift/right-drag: pan · Wheel: zoom</div>
+    <div id="status"></div>
+    <h2>About</h2>
+    <div id="about" class="hint"></div>
+    <div id="diag" class="hint"></div>
+    <div id="attribution" class="hint"></div>
+  </div>
+</div>
+<!--APP-->
+<!--SCENES-->
+<script src="viewer.js"></script>
+</body>
+</html>
