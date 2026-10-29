@@ -5,6 +5,14 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.1.2] - 2026-10-29
+
+### Fixed
+- Bones rendered as dots or not at all on some GPUs. The shader sampled the
+  bone texture with implicit level of detail inside a branch, which is undefined
+  in WebGL2 (GLSL ES 3.0) and returns garbage on many drivers. It now uses an
+  explicit level of detail and no branch around the fetch.
+
 ## [0.1.1] - 2026-10-29
 
 ### Added

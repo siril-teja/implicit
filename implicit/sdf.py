@@ -607,11 +607,13 @@ uniform highp sampler3D u_atlas;
 uniform highp sampler2D u_data;
 uniform vec3 u_atlasSize;
 float gridSDF(vec3 p, vec3 o, float invh, vec3 nmax, vec3 off, float h, float margin) {{
+    // Explicit LOD and no fetch inside a branch: implicit-derivative sampling in
+    // divergent control flow is undefined in GLSL ES and returns garbage on many GPUs.
     vec3 q = (p - o) * invh;
     vec3 qc = clamp(q, vec3(0.0), nmax);
     float ext = length(q - qc) * h;
-    if (ext > 0.0) return ext + margin;
-    return (texture(u_atlas, (qc.zyx + off) / u_atlasSize).r * 255.0 - {QZERO}.0) * {QSTEP};
+    float d = (textureLod(u_atlas, (qc.zyx + off) / u_atlasSize, 0.0).r * 255.0 - {QZERO}.0) * {QSTEP};
+    return ext > 0.0 ? ext + margin : d;
 }}
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);
