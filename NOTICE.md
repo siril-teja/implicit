@@ -16,8 +16,10 @@ that allow commercial use.
 
 The browser viewer uses only the browser's WebGL2 API and has no JavaScript
 dependencies. The CI uses GitHub Actions (`actions/checkout`,
-`actions/setup-python`, `actions/upload-pages-artifact`, `actions/deploy-pages`,
-all MIT). They are not part of the distributed application.
+`actions/setup-python`, `actions/setup-node`, `actions/upload-pages-artifact`,
+`actions/deploy-pages`, all MIT) and [Playwright](https://playwright.dev/)
+(Apache-2.0) with its bundled Chromium (BSD-3-Clause and others) for the GPU
+check. They are not part of the distributed application.
 
 ## Data
 

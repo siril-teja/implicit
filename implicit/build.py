@@ -31,7 +31,8 @@ def build_site(scripts, out, commit=None, repo=None):
     out.mkdir(parents=True, exist_ok=True)
     html = (VIEWER_DIR / "index.html").read_text()
     (out / "index.html").write_text(_stamp(html, app_info(commit, repo)))
-    shutil.copy(VIEWER_DIR / "viewer.js", out / "viewer.js")
+    for f in ("gpu.js", "viewer.js", "diagnostics.html", "diagnostics.js"):
+        shutil.copy(VIEWER_DIR / f, out / f)
     (out / ".nojekyll").touch()
     return write_scenes(scripts, out)
 
@@ -40,9 +41,10 @@ def build_single_file(scripts, path, commit=None, repo=None):
     """One self-contained HTML file with the scenes and viewer inlined."""
     scenes = {Path(s).stem: load_scene(s).to_json() for s in scripts}
     html = _stamp((VIEWER_DIR / "index.html").read_text(), app_info(commit, repo))
-    js = (VIEWER_DIR / "viewer.js").read_text()
+    js = (VIEWER_DIR / "gpu.js").read_text() + "\n" + (VIEWER_DIR / "viewer.js").read_text()
     data = json.dumps(scenes).replace("</", "<\\/")
     html = html.replace("<!--SCENES-->", f"<script>window.SCENES = {data};</script>")
+    html = html.replace('<script src="gpu.js"></script>\n', "")
     html = html.replace('<script src="viewer.js"></script>', f"<script>\n{js}\n</script>")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(html)

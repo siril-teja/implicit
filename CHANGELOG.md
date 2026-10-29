@@ -5,6 +5,32 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.1.3] - 2026-10-29
+
+### Fixed
+- Most bones invisible on Intel Iris Xe with Chrome/Direct3D 11 (only the
+  femurs rendered). The grid lookup measured "distance outside the grid" as
+  `length(q - clamp(q)) * spacing` in scaled grid coordinates. That compiler
+  left a rounding residue there, so every point counted as outside the grid
+  for bones whose spacing is not exactly 1 mm. The lookup now clamps and measures
+  in world coordinates (exactly zero inside the grid). Diagnosed on the
+  affected GPU with per-bone numeric probes and a ray-trace probe.
+
+### Added
+- **GPU check** (`diagnostics.html`, linked from the viewer's About section):
+  on the visitor's own GPU, compares the shader distance of every body with
+  NumPy at probe points inside, on and outside each body, and traces a ray to
+  each body. It reports PASS/FAIL with a copyable report.
+- CI runs the GPU check on three graphics stacks for every push and PR:
+  Linux/SwiftShader, Windows/Direct3D 11 (WARP) and macOS/Metal
+  (`ci/gpu_check.mjs`). `ci/check.sh` runs it locally when Playwright is installed.
+
+### Changed
+- Shader sources and WebGL helpers moved to `viewer/gpu.js`, shared by the
+  viewer and the GPU check.
+- The viewer asks for the high-performance GPU (`powerPreference`), so dual-GPU
+  laptops prefer the discrete GPU where the browser allows it.
+
 ## [0.1.2] - 2026-10-29
 
 ### Fixed

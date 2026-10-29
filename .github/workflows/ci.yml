@@ -27,3 +27,48 @@ jobs:
       - name: Version bump and CHANGELOG entry
         if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no-release')
         run: python ci/release.py check origin/${{ github.base_ref }}
+
+  # The viewer's GPU check (site/diagnostics.html) on three graphics stacks:
+  # every shader distance must match NumPy and every ray must hit its body.
+  gpu:
+    name: gpu (${{ matrix.name }})
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-swiftshader
+            os: ubuntu-24.04
+            backend: swiftshader
+            renderer: SwiftShader
+          - name: windows-d3d11
+            os: windows-latest
+            backend: d3d11
+            renderer: Direct3D11
+          - name: macos-metal
+            os: macos-latest
+            backend: metal
+            renderer: Metal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -r requirements.txt
+      - name: Build viewer
+        shell: bash
+        run: python -m implicit.build examples/*.py --out site
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          npm install --no-save playwright@1.50.1
+          if [ "$RUNNER_OS" = "Linux" ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
+      - name: GPU check (${{ matrix.backend }})
+        env:
+          GPU_CHECK_HEADED: ${{ matrix.headed }}
+        run: node ci/gpu_check.mjs site ${{ matrix.backend }} ${{ matrix.renderer }}
+

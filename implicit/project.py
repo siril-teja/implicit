@@ -6,6 +6,7 @@ import json
 import runpy
 from pathlib import Path
 
+from .diagnostics import probes
 from .scene import Scene
 
 VIEWER_DIR = Path(__file__).resolve().parent.parent / "viewer"
@@ -31,6 +32,7 @@ def write_scenes(scripts, out_dir) -> list[str]:
         scene.write_json(out / f"{key}.json", atlas_url=f"{key}.atlas.gz")
         if scene.atlas_gz():
             (out / f"{key}.atlas.gz").write_bytes(scene.atlas_gz())
+        (out / f"{key}.probes.json").write_text(json.dumps(probes(scene)))
         keys.append(key)
     (out / "index.json").write_text(json.dumps(keys))
     return keys

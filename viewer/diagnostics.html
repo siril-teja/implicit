@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Implicit GPU Check</title>
+<style>
+  :root {
+    --bg: #1d1f24; --panel: #25282f; --text: #e6e8ec; --muted: #9aa0ab;
+    --ok: #6fd28a; --bad: #ff8080; --border: #343843; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { color: var(--muted); margin: 0 0 16px; max-width: 70ch; }
+  #verdict { font-size: 16px; font-weight: 600; padding: 12px 14px; border-radius: 6px;
+    background: var(--panel); border: 1px solid var(--border); margin-bottom: 14px; }
+  #verdict.pass { color: var(--ok); border-color: var(--ok); }
+  #verdict.fail { color: var(--bad); border-color: var(--bad); }
+  textarea { width: 100%; min-height: 360px; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: #6aa9ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>GPU check</h1>
+  <p>Checks that this computer's GPU evaluates every model in the viewer exactly as the
+    reference implementation (NumPy) does: distances at known points inside, on and outside
+    each body, and a ray traced to each body. If it fails, copy the report below into an issue.
+    On laptops with two GPUs, Windows picks the browser's GPU per app:
+    Settings &gt; System &gt; Display &gt; Graphics &gt; your browser &gt; High performance.
+    <a href="./">Back to the viewer</a></p>
+  <div id="verdict">Running…</div>
+  <textarea id="report" readonly></textarea>
+</main>
+<script src="gpu.js"></script>
+<script src="diagnostics.js"></script>
+</body>
+</html>

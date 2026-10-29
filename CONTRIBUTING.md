@@ -9,8 +9,9 @@ is updated from it.
 
 1. Branch from `main` with a short, descriptive name: `anatomy-convert`,
    `viewer-about`, `fix-l5-landmarks`.
-2. Commit as you go. CI (`.github/workflows/ci.yml`) runs the tests and builds
-   the viewer on every push.
+2. Commit as you go. CI (`.github/workflows/ci.yml`) runs the tests, builds
+   the viewer and runs the GPU check (shader vs NumPy) on Linux/SwiftShader,
+   Windows/Direct3D 11 and macOS/Metal on every push.
 3. Before opening or updating a PR, run the same checks locally:
    ```bash
    ci/check.sh
@@ -38,8 +39,9 @@ These are set in the GitHub web UI (repository **Settings**):
 2. **Rules → Rulesets → New branch ruleset** (or **Branches → Add classic branch protection rule**), target `main`:
    - Restrict deletions, Block force pushes;
    - Require a pull request before merging;
-   - Require status checks to pass → add **test**. It appears in the list after
-     CI has run once. Also tick "Require branches to be up to date before merging";
+   - Require status checks to pass → add **test**, **gpu (linux-swiftshader)**,
+     **gpu (windows-d3d11)** and **gpu (macos-metal)**. They appear in the list
+     after CI has run once. Also tick "Require branches to be up to date before merging";
    - no bypass list, so the rules apply to admins too.
 3. **Actions → General → Workflow permissions**: *Read and write permissions*,
    so the release workflow can create tags and releases.
