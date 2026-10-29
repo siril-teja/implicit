@@ -9,8 +9,8 @@ and exported for meshing.
 - **Browser** (WebGL2) ray-marches the same graph compiled to GLSL. Params are
   shader uniforms, so sliders update the whole assembly in real time with no
   rebuild.
-- **Export:** the graph is evaluated in NumPy and meshed with surface nets to
-  STL. FE mesh export (Marc/Abaqus) is next.
+- **Export:** the graph is evaluated in NumPy and meshed with narrow-band
+  marching tetrahedra to closed, manifold STL. FE mesh export (Marc/Abaqus) is next.
 
 Read [docs/primer.md](docs/primer.md) for the nTop scouting, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
@@ -32,6 +32,14 @@ femurs from a TotalSegmentator v2 CT (CC BY 4.0).
 python -m implicit.anatomy.totalseg s0751 --out data/totalseg --ct      # masks + CT, ~40 MB
 python -m implicit.anatomy.convert data/totalseg/s0751 --out assets/bones/s0751 --select lumbar
 python -m implicit.serve examples/anatomy.py
+```
+
+Each bone has a **smoothing** slider (σ in mm, Gaussian blur of the implicit
+field, like nTop's "Smoothen Body") that keeps the bone volume by default. To mesh
+bodies at chosen slider values (closed, manifold STL):
+
+```bash
+python -m implicit.export examples/anatomy.py --body L3 --set smooth_L3=1.0 --voxel 0.4 --out out/
 ```
 
 `--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Optional:

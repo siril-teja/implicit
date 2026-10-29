@@ -14,17 +14,17 @@ window.DIAG = { done: false, pass: false, failures: [], checks: 0 };
 const f = (v) => v.toFixed(4);
 const vec3 = (p) => `vec3(${f(p[0])}, ${f(p[1])}, ${f(p[2])})`;
 
-function setUniforms(gl, U, scene, atlas) {
+function setUniforms(gl, U, scene, atlas, values = {}) {
   if (U.u_atlas) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D, atlas); gl.uniform1i(U.u_atlas, 0); }
   if (U.u_data) gl.uniform1i(U.u_data, 2);
   if (U.u_atlasSize && scene.atlas) gl.uniform3fv(U.u_atlasSize, scene.atlas.size);
-  for (const p of scene.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], p.value);
+  for (const p of scene.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], p.name in values ? values[p.name] : p.value);
   scene.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], 1); });
   if (U.u_bmin) { gl.uniform3fv(U.u_bmin, scene.bounds[0]); gl.uniform3fv(U.u_bmax, scene.bounds[1]); }
 }
 
 // One output pixel per probe; each fragment runs its probe statement (sets vec4 o).
-function runProbes(gl, scene, atlas, stmts) {
+function runProbes(gl, scene, atlas, stmts, values) {
   const n = stmts.length;
   let body = "";
   stmts.forEach((st, i) => { body += `  if (i == ${i}) { ${st} }\n`; });
@@ -39,7 +39,7 @@ function runProbes(gl, scene, atlas, stmts) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.useProgram(prog);
-  setUniforms(gl, uniforms, scene, atlas);
+  setUniforms(gl, uniforms, scene, atlas, values);
   gl.viewport(0, 0, n, 1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   const px = new Float32Array(n * 4);
@@ -65,42 +65,45 @@ async function diagnose(gl, key) {
   const probes = await (await fetch(`scenes/${key}.probes.json`, { cache: "no-store" })).json();
   const atlas = scene.atlas ? (await GPU.atlasTexture(gl, scene)).tex : null;
   GPU.dataTexture(gl, scene);
-  log(`\n== ${scene.name} (${key}): ${probes.units.length} units`);
-  // 1) distances at probe points
-  const exprs = [], meta = [];
-  for (const u of probes.units) for (const p of u.points) {
-    exprs.push(`o = vec4(unit${u.unit}(${vec3(p)}).x, 0.0, 0.0, 0.0);`);
-    meta.push([u, p]);
+  for (const [b, batch] of probes.batches.entries()) {
+    const label = b === 0 ? "slider defaults" : "sliders moved";
+    log(`\n== ${scene.name} (${key}), ${label}: ${batch.units.length} units`);
+    // 1) distances at probe points
+    const exprs = [], meta = [];
+    for (const u of batch.units) for (const p of u.points) {
+      exprs.push(`o = vec4(unit${u.unit}(${vec3(p)}).x, 0.0, 0.0, 0.0);`);
+      meta.push([u, p]);
+    }
+    const px = runProbes(gl, scene, atlas, exprs, batch.params);
+    let bad = 0;
+    meta.forEach(([u, p], i) => {
+      const gpu = px[i * 4], ref = p[3];
+      window.DIAG.checks++;
+      if (!(Math.abs(gpu - ref) <= TOL(ref))) {
+        bad++;
+        window.DIAG.failures.push(`${key} (${label}) ${u.name}: distance at (${p.slice(0, 3).map((v) => v.toFixed(1))}) GPU ${gpu.toFixed(3)} vs NumPy ${ref.toFixed(3)}`);
+      }
+    });
+    log(`distance probes: ${meta.length - bad}/${meta.length} match NumPy`);
+    // 2) one ray per unit toward its deepest point, from a fixed eye outside the scene
+    const [lo, hi] = scene.bounds;
+    const c = lo.map((v, i) => (v + hi[i]) / 2);
+    const ext = Math.max(...hi.map((v, i) => v - lo[i]));
+    const eye = [c[0] + 1.6 * ext, c[1] + 0.6 * ext, c[2] + 0.3 * ext];
+    const targets = batch.units.filter((u) => u.target);
+    const rays = runProbes(gl, scene, atlas,
+      targets.map((u) => `MARCH(unit${u.unit}, ${vec3(eye)}, ${vec3(u.target)})`), batch.params);
+    let missed = 0;
+    targets.forEach((u, i) => {
+      window.DIAG.checks++;
+      const [it, t, mind, hit] = rays.slice(i * 4, i * 4 + 4);
+      if (hit !== 1) {
+        missed++;
+        window.DIAG.failures.push(`${key} (${label}) ${u.name}: ray missed (steps ${it}, travelled ${t.toFixed(0)} mm, closest ${mind.toFixed(2)} mm)`);
+      }
+    });
+    log(`ray probes: ${targets.length - missed}/${targets.length} hit`);
   }
-  const px = runProbes(gl, scene, atlas, exprs);
-  let bad = 0;
-  meta.forEach(([u, p], i) => {
-    const gpu = px[i * 4], ref = p[3];
-    window.DIAG.checks++;
-    if (!(Math.abs(gpu - ref) <= TOL(ref))) {
-      bad++;
-      window.DIAG.failures.push(`${key} ${u.name}: distance at (${p.slice(0, 3).map((v) => v.toFixed(1))}) GPU ${gpu.toFixed(3)} vs NumPy ${ref.toFixed(3)}`);
-    }
-  });
-  log(`distance probes: ${meta.length - bad}/${meta.length} match NumPy`);
-  // 2) one ray per unit toward its deepest point, from a fixed eye outside the scene
-  const [lo, hi] = scene.bounds;
-  const c = lo.map((v, i) => (v + hi[i]) / 2);
-  const ext = Math.max(...hi.map((v, i) => v - lo[i]));
-  const eye = [c[0] + 1.6 * ext, c[1] + 0.6 * ext, c[2] + 0.3 * ext];
-  const targets = probes.units.filter((u) => u.target);
-  const rays = runProbes(gl, scene, atlas,
-    targets.map((u) => `MARCH(unit${u.unit}, ${vec3(eye)}, ${vec3(u.target)})`));
-  let missed = 0;
-  targets.forEach((u, i) => {
-    window.DIAG.checks++;
-    const [it, t, mind, hit] = rays.slice(i * 4, i * 4 + 4);
-    if (hit !== 1) {
-      missed++;
-      window.DIAG.failures.push(`${key} ${u.name}: ray missed (steps ${it}, travelled ${t.toFixed(0)} mm, closest ${mind.toFixed(2)} mm)`);
-    }
-  });
-  log(`ray probes: ${targets.length - missed}/${targets.length} hit`);
 }
 
 async function main() {

@@ -506,7 +506,121 @@ class Grid(SDF):
                     out += w * v[np.minimum(i0[:, 0] + dx, n[0]), np.minimum(i0[:, 1] + dy, n[1]),
                                  np.minimum(i0[:, 2] + dz, n[2])]
         ext = _len(q - qc) * self.spacing
-        return np.where(ext > 0, ext + self.margin, out)
+        return np.where(ext > 1e-4, ext + self.margin, out)
+
+
+def _gauss_blur(v, sigma):
+    """Separable Gaussian blur (sigma in voxels), edge values replicated."""
+    r = int(np.ceil(3 * sigma))
+    x = np.arange(-r, r + 1)
+    k = np.exp(-0.5 * (x / sigma) ** 2)
+    k /= k.sum()
+    for ax in range(3):
+        pad = [(0, 0)] * 3
+        pad[ax] = (r, r)
+        vp = np.pad(v, pad, mode="edge")
+        out = np.zeros_like(v)
+        for i, w in enumerate(k):
+            sl = [slice(None)] * 3
+            sl[ax] = slice(i, i + v.shape[ax])
+            out += w * vp[tuple(sl)]
+        v = out
+    return v
+
+
+class GridSmooth(SDF):
+    """Gaussian-smoothed sampled body with a live smoothing width ``sigma`` (mm).
+
+    A Gaussian blur of a distance field stays 1-Lipschitz, so the smoothed body
+    ray-marches and meshes like any other. To stay interactive the blur is
+    precomputed as a pyramid: level k (k = 1..K) is the grid blurred with
+    sigma_k = 2^k * h and resampled at spacing 2^k * h (about +14 % memory).
+    The field blends the two levels around ``sigma`` (linear in sigma up to
+    sigma_1, then in log2 sigma), branch-free in GLSL and identical in NumPy.
+
+    Blurring shrinks convex features. ``preserve`` (0..1) subtracts, per level,
+    the offset that restores the unsmoothed volume (measured on level-0 samples).
+    """
+
+    LEVELS = 3
+
+    def __init__(self, grid: Grid, sigma, preserve=1.0):
+        self.grid, self.sigma, self.preserve = grid, wrap(sigma), wrap(preserve)
+        self.levels, self.offsets = _pyramid(grid, self.LEVELS)
+        self.sigmas = [0.0] + [grid.spacing * 2 ** k for k in range(1, self.LEVELS + 1)]
+
+    def children(self): return [self.grid] + self.levels
+    def exprs(self): return [self.sigma, self.preserve]
+
+    def bounds(self):
+        return self.grid.bounds()
+
+    def _t_glsl(self):
+        s1 = glsl_float(self.sigmas[1])
+        s = f"max({self.sigma.glsl()}, 0.0)"
+        return (f"({s} <= {s1} ? {s} / {s1} : min(1.0 + log2({s} / {s1}), "
+                f"{glsl_float(float(self.LEVELS))}))")
+
+    def _t(self):
+        s, s1 = max(self.sigma.value(), 0.0), self.sigmas[1]
+        return s / s1 if s <= s1 else min(1.0 + np.log2(s / s1), float(self.LEVELS))
+
+    def emit(self, ctx, p):
+        t = ctx.var("float", self._t_glsl())
+        pres = self.preserve.glsl()
+        terms = []
+        for k, g in enumerate([self.grid] + self.levels):
+            d = ctx.sub(g, p)
+            w = f"max(1.0 - abs({t} - {glsl_float(float(k))}), 0.0)"
+            off = f" - {pres} * {glsl_float(self.offsets[k])}" if self.offsets[k] else ""
+            terms.append(f"{w} * ({d}{off})")
+        return ctx.var("float", " + ".join(terms))
+
+    def eval(self, p):
+        t = self._t()
+        pres = self.preserve.value()
+        out = np.zeros(len(p))
+        for k, g in enumerate([self.grid] + self.levels):
+            w = max(1.0 - abs(t - k), 0.0)
+            if w > 0:
+                out += w * (g.eval(p) - pres * self.offsets[k])
+        return out
+
+
+_PYRAMIDS: dict = {}
+
+
+def _pyramid(grid: Grid, levels):
+    """Blurred, downsampled levels of a grid and their volume-restoring offsets (cached)."""
+    key = (id(grid), levels)
+    if key in _PYRAMIDS:
+        return _PYRAMIDS[key]
+    h = grid.spacing
+    v = grid.values.astype(np.float32)
+    out, offsets = [], [0.0]
+    # Reference volume on every 2nd level-0 sample (accurate and cheap).
+    sub = np.argwhere(np.ones(tuple((np.array(v.shape) + 1) // 2), bool)) * 2
+    pts = grid.origin + h * sub
+    n_inside = int((v[tuple(sub.T)] < 0).sum())
+    sigma_prev = 0.0  # mm, blur already in v
+    spacing = h
+    for k in range(1, levels + 1):
+        sigma_k = h * 2 ** k
+        inc = np.sqrt(sigma_k ** 2 - sigma_prev ** 2) / spacing  # in voxels of v
+        v = _gauss_blur(v, inc)[::2, ::2, ::2]
+        spacing *= 2
+        sigma_prev = sigma_k
+        g = Grid(v, grid.origin, spacing, f"{grid.name}~{k}")
+        out.append(g)
+        fk = np.sort(g.eval(pts))
+        offsets.append(float(fk[min(n_inside, len(fk) - 1)]) if n_inside else 0.0)
+    _PYRAMIDS[key] = (out, offsets)
+    return out, offsets
+
+
+def smooth(grid: Grid, sigma, preserve=1.0) -> GridSmooth:
+    """Gaussian smoothing of a sampled body with width ``sigma`` (mm, may be a Param)."""
+    return GridSmooth(grid, sigma, preserve)
 
 
 class GridSlot(SDF):
@@ -628,6 +742,7 @@ float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
 __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
-    "MirrorX", "Offset", "Shell", "Grid", "GridSlot", "ProjectToPlane", "Morph", "ScaleAbout",
+    "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
+    "ScaleAbout",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]

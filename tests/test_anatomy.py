@@ -171,7 +171,9 @@ class SpinePipeline(unittest.TestCase):
         self.assertEqual(meta["name"], "L4")
         self.assertEqual(meta["format_version"], 1)
         self.assertEqual(g.spacing, 1.0)
-        self.assertIs(type(self.scene.body("L4").sdf), type(g))
+        body = self.scene.body("L4").sdf  # loaded grid wrapped in the live smoothing operator
+        self.assertIs(type(body.grid), type(g))
+        self.assertIn("smooth_L4", {p.name for p in self.scene.params()})
 
     def test_landmarks_from_implicit_bones(self):
         m = self.model.marks
