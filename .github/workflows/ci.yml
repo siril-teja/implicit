@@ -64,7 +64,7 @@ jobs:
       - name: Install Playwright Chromium
         shell: bash
         run: |
-          npm install --no-save playwright@1.48.2
+          npm install --no-save playwright@1.50.1
           if [ "$RUNNER_OS" = "Linux" ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
       - name: GPU check (${{ matrix.backend }})
         run: node ci/gpu_check.mjs site ${{ matrix.backend }} ${{ matrix.renderer }}

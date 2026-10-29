@@ -34,9 +34,11 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/diagnostics.html`;
 
-const args = [`--use-angle=${backend}`, "--ignore-gpu-blocklist"];
+const args = [`--use-angle=${backend}`, "--use-gl=angle", "--ignore-gpu-blocklist"];
 if (backend === "swiftshader") args.push("--enable-unsafe-swiftshader");
-const browser = await chromium.launch({ args });
+// channel "chromium": the full browser in new-headless mode. Playwright's default
+// headless shell only has SwiftShader, so D3D11 / Metal would silently fall back.
+const browser = await chromium.launch({ args, channel: "chromium" });
 const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("pageerror:", e.message));
 let code = 1;
