@@ -1,0 +1,1 @@
+Anatomy: TotalSegmentator v2 dataset (Wasserthal et al., Radiology: AI 2023), CC BY 4.0, doi:10.5281/zenodo.8367088. Processed into signed distance fields.

@@ -100,7 +100,7 @@ works for SPO/Ponte osteotomies and multilevel alignment changes.
 - **Sets** (endplate–cage contact, loading surfaces) come from fields too: tag
   faces where |f_cage| < ε and |f_bone| < ε.
 
-### 2.7 Patient geometry (VerSe)
+### 2.7 Patient geometry (TotalSegmentator)
 
 A segmentation mask M becomes an SDF via Euclidean distance transforms,
 f = EDT(¬M) − EDT(M), sampled on the CT grid. It is used as a **grid primitive**:
@@ -108,6 +108,29 @@ trilinear lookup in NumPy, and a 3D texture in WebGL2 (hardware trilinear).
 Every downstream operation (offset, cut, shell, cage clip) then works the same
 on patient vertebrae as on analytic shapes. nTop's mesh→implicit conversion is
 equivalent.
+
+### 2.8 Endplates and discs on patient anatomy
+
+1. **Body isolation.** Remove points behind the posterior wall (found by
+   marching anteriorly from the spinal-cord centroid), then morphologically
+   open with a ball of radius 4.5–5.5 mm (removes pedicles, processes,
+   cervical lateral masses). Keep the largest component.
+2. **Frame.** The axial axis w is the body's smallest principal axis (or the
+   spine tangent if they differ by > 30°). a is anterior and l = a × w.
+3. **Endplates.** From the body centre, march ±w along central columns (≥ 30 % of
+   the max inscribed radius from the footprint edge) to the SDF zero crossing
+   (sub-voxel). Then fit w = αu + βv + γ by iteratively trimmed least squares.
+4. **Disc.** Let fp be the body cross-section 1.5 mm inside each endplate,
+   bounded by the posterior wall and lateral margins, extruded along the
+   endplate normal and blended (`Morph`) from the lower to the upper body.
+   Then:
+   disc = (fp ⊕ bulge) ∩ slab_lower ∩ slab_upper − bone_upper − bone_lower.
+   Subtracting the bones makes the disc fill the real endplate concavities.
+   nucleus = disc ∩ scale(fp, √area_frac) about a posteriorly shifted centre;
+   annulus = disc − nucleus.
+5. **Instancing.** All 23 discs share one GLSL template. Per-level constants
+   (planes, grid placement, bounds) sit in a float texture, so shader size
+   does not grow with level count. Python builds the same graph per disc for meshing.
 
 ## 3. Architecture
 
@@ -129,9 +152,11 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | Phase | Deliverable | Notes |
 |---|---|---|
 | **0, done** | SDF kernel, Params, GLSL codegen, browser viewer, section view, STL export, Pages deploy | Idealised L4–L5 with wedge cage and PSO |
-| **1** | **VerSe import**: NIfTI → per-vertebra SDF grid → `Grid` primitive (3D texture). Fit endplate planes and a local frame per vertebra. | nibabel (MIT), SciPy EDT (BSD). Data is CC BY-SA (see LICENSING.md) |
-| 1b | Pose params per vertebra (sagittal alignment), disc generated between fitted endplates, cortical shell by offset | Same pattern as the idealised example |
-| 1c | Implant library: TLIF/ALIF/LLIF cages, footprint from fitted endplates, TPMS-lattice infill option | Gyroid infill is one more field |
+| **1, done** | **Patient anatomy**: TotalSegmentator v2 subject (C1–L5, sacrum, hips, proximal femurs) → per-bone SDF grids → `Grid` primitive (3D texture atlas) | `implicit/anatomy/` |
+| 1b, done | Endplate detection: body isolation (posterior-wall cut from the cord, opening), local frame, robust plane fits. S1 found from L5 and C2 from C3 | RMS 0.2–1.2 mm (C2–L5, s0751) |
+| 1c, done | Implicit discs C2–C3 … L5–S1: endplate-to-endplate fill, annulus + nucleus, live params; instanced templates | 23 discs, one shader template |
+| 1d | **Cage options**: replace any disc with a parametric cage (ALIF/TLIF/LLIF, wedge from the endplates, graft window, TPMS infill) | next |
+| 1e | Pose params per vertebra (alignment), osteotomies on patient anatomy, cortical shell | |
 | **2** | **FE export**: voxel-hex (C3D8 / Marc hex8) with body material IDs, plus Marc `.dat` and Abaqus `.inp` writers, and auto node/face sets for contact and loading | Pure NumPy, no mesher dependency |
 | 2b | Conforming tet mesh with a permissive-licence mesher, sizing field from |f| | See LICENSING.md for candidates |
 | 3 | Speed: narrow-band / octree sampling and GPU sampling for export, plus GLSL↔NumPy parity tests | Export is ~20 s per body at 0.5 mm today |

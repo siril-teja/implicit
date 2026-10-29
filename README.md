@@ -16,10 +16,23 @@ Read [docs/primer.md](docs/primer.md) for the nTop scouting, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
+## Patient anatomy (full spine + pelvis)
+
+`examples/full_spine.py` loads `assets/models/s0751`: C1–L5, sacrum, both hips and
+proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0). It detects the endplates
+and builds all 23 discs (C2–C3 … L5–S1) implicitly, as annulus + nucleus, with live
+parameters. To process another subject:
+
+```bash
+python -m implicit.anatomy.totalseg s0751 --out data/totalseg        # ~4 MB, no full download
+python -m implicit.anatomy.preprocess data/totalseg/s0751 --out assets/models/s0751
+IMPLICIT_MODEL=assets/models/s0751 python -m implicit.serve examples/full_spine.py
+```
+
 ## Quick start
 
 ```bash
-pip install -r requirements.txt          # numpy only
+pip install -r requirements.txt          # numpy (+ scipy, nibabel for preprocessing)
 python -m implicit.serve examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```
@@ -55,6 +68,6 @@ Actions**. The site will be `https://siril-teja.github.io/implicit/`.
 
 ## Status
 
-Phase 0 is a prototype with idealised geometry, not patient-specific and not
-validated. Exported STL is a surface for inspection only. FE volume meshing
-is not implemented yet.
+Prototype, not validated. The idealised L4–L5 example is not patient-specific.
+The full-spine model is one CT subject at 1.5 mm resolution. Exported STL is a
+surface for inspection only, and FE volume meshing is not implemented yet.

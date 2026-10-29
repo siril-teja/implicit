@@ -27,7 +27,10 @@ def write_scenes(scripts, out_dir) -> list[str]:
     keys = []
     for s in scripts:
         key = Path(s).stem
-        load_scene(s).write_json(out / f"{key}.json")
+        scene = load_scene(s)
+        scene.write_json(out / f"{key}.json", atlas_url=f"{key}.atlas.gz")
+        if scene.atlas_gz():
+            (out / f"{key}.atlas.gz").write_bytes(scene.atlas_gz())
         keys.append(key)
     (out / "index.json").write_text(json.dumps(keys))
     return keys

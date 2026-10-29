@@ -27,6 +27,10 @@ class Expr:
     def params(self):
         return []
 
+    def is_const(self):
+        """True when the value is known at code-generation time (no params or slots)."""
+        return False
+
     def __add__(self, o):
         return BinOp("+", self, wrap(o))
 
@@ -64,6 +68,9 @@ class Const(Expr):
 
     def value(self):
         return self.v
+
+    def is_const(self):
+        return True
 
 
 class Param(Expr):
@@ -128,6 +135,9 @@ class BinOp(Expr):
     def params(self):
         return self.a.params() + self.b.params()
 
+    def is_const(self):
+        return self.a.is_const() and self.b.is_const()
+
 
 class Func(Expr):
     def __init__(self, fn, *args):
@@ -143,6 +153,9 @@ class Func(Expr):
 
     def params(self):
         return [p for a in self.args for p in a.params()]
+
+    def is_const(self):
+        return all(a.is_const() for a in self.args)
 
 
 def wrap(x) -> Expr:
@@ -172,8 +185,46 @@ class Vec3:
     def params(self):
         return [p for c in self.c for p in c.params()]
 
+    def is_const(self):
+        return all(c.is_const() for c in self.c)
+
     def __neg__(self):
         return Vec3(*(-c for c in self.c))
+
+    def __add__(self, o):
+        o = vec3(o)
+        return Vec3(*(a + b for a, b in zip(self.c, o.c)))
+
+    def __sub__(self, o):
+        o = vec3(o)
+        return Vec3(*(a - b for a, b in zip(self.c, o.c)))
+
+    def __mul__(self, k):
+        return Vec3(*(c * k for c in self.c))
+
+    __rmul__ = __mul__
+
+
+class SlotRef(Expr):
+    """One component of an instance data slot (``vec4 s<k>`` in a template function)."""
+
+    def __init__(self, var, comp):
+        self.var, self.comp = var, comp
+
+    def glsl(self):
+        return f"{self.var}.{self.comp}"
+
+    def value(self):
+        raise RuntimeError("template slots have no value outside the shader")
+
+
+class Vec3Slot(Vec3):
+    def __init__(self, var):
+        self.var = var
+        self.c = tuple(SlotRef(var, k) for k in "xyz")
+
+    def glsl(self):
+        return f"{self.var}.xyz"
 
 
 def vec3(v) -> Vec3:
@@ -181,4 +232,4 @@ def vec3(v) -> Vec3:
         return v
     if len(v) != 3:
         raise ValueError("expected 3 components")
-    return Vec3(*v)
+    return Vec3(*(float(x) if not isinstance(x, Expr) else x for x in v))

@@ -25,7 +25,7 @@ from .project import VIEWER_DIR, load_scene
 class Project:
     def __init__(self, scripts, out_dir, voxel):
         self.scripts = {Path(s).stem: Path(s).resolve() for s in scripts}
-        self.cache = {}  # key -> (mtime, scene, json_bytes)
+        self.cache = {}  # key -> (mtime, scene, json_bytes, atlas_gz)
         self.out_dir = Path(out_dir)
         self.voxel = voxel
 
@@ -36,10 +36,14 @@ class Project:
         if hit and hit[0] == mtime:
             return hit[1], hit[2]
         scene = load_scene(path)
-        data = json.dumps(scene.to_json()).encode()
-        self.cache[key] = (mtime, scene, data)
+        data = json.dumps(scene.to_json(atlas_url=f"{key}.atlas.gz")).encode()
+        self.cache[key] = (mtime, scene, data, scene.atlas_gz())
         print(f"[implicit] compiled {key} ({len(scene.bodies)} bodies, {len(scene.params())} params)")
         return scene, data
+
+    def atlas(self, key):
+        self.get(key)
+        return self.cache[key][3]
 
     def export(self, key, params, visible):
         scene, _ = self.get(key)
@@ -47,8 +51,9 @@ class Project:
         out = self.out_dir / key
         out.mkdir(parents=True, exist_ok=True)
         files = []
-        for i, b in enumerate(scene.bodies):
-            if visible and not visible[i]:
+        groups = scene.groups()
+        for b in scene.bodies:
+            if visible and not visible[groups.index(b.group)]:
                 continue
             t0 = time.time()
             f, origin, h = scene.sample(b.name, self.voxel)
@@ -83,6 +88,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True})
         if path == "/scenes/index.json":
             return self._json(200, list(self.project.scripts))
+        m = re.fullmatch(r"/scenes/(\w+)\.atlas\.gz", path)
+        if m and m.group(1) in self.project.scripts:
+            data = self.project.atlas(m.group(1)) or b""
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         m = re.fullmatch(r"/scenes/(\w+)\.json", path)
         if m and m.group(1) in self.project.scripts:
             try:

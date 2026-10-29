@@ -82,7 +82,7 @@ class Glsl(unittest.TestCase):
         sc.add("a", Sphere(r).rotate_x(r) - Box((1, 2, 3)))
         g = sc.glsl()
         self.assertIn("uniform float u_radius;", g)
-        self.assertIn("float body0(vec3 p)", g)
+        self.assertIn("vec2 unit0(vec3 p)", g)
         self.assertIn("vec2 sceneMap(vec3 p)", g)
         self.assertEqual(sc.to_json()["params"][0]["name"], "radius")
 

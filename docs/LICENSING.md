@@ -19,6 +19,8 @@ differs is the **obligations** they place on you, so the policy has three tiers:
 |---|---|---|
 | Python standard library | PSF | ✅ |
 | NumPy | BSD-3 | ✅ |
+| SciPy (distance transforms, preprocessing only) | BSD-3 | ✅ |
+| nibabel (NIfTI reading, preprocessing only) | MIT | ✅ |
 | Viewer: raw WebGL2, no JS libraries | n/a (own code) | ✅ |
 | GitHub Actions (checkout, setup-python, pages actions) | MIT | ✅ (CI only, not shipped) |
 
@@ -29,8 +31,6 @@ upstream LICENSE file before adopting any of them.
 
 | Need | Candidate | License | Tier |
 |---|---|---|---|
-| NIfTI I/O | nibabel | MIT | ✅ |
-| Distance transforms | SciPy | BSD-3 | ✅ |
 | Marching cubes (alternative) | scikit-image | BSD-3 | ✅ |
 | Mesh I/O | meshio | MIT | ✅ |
 | Mesh utilities | trimesh | MIT | ✅ |
@@ -46,7 +46,20 @@ upstream LICENSE file before adopting any of them.
 The FE solver (MSC Marc) is your own commercial licence and is not a dependency
 of this code. We only write input decks.
 
-## Data: VerSe
+## Data: TotalSegmentator v2 (used)
+
+`assets/models/s0751` is derived from the TotalSegmentator v2 dataset
+(1228 CTs, 117 structures). The licence is **CC BY 4.0**, as stated on the
+[Zenodo record](https://zenodo.org/records/8367088) (`license: cc-by-4.0`).
+
+- Commercial use, modification and redistribution are allowed with attribution.
+  There is **no ShareAlike**, so derived models can be kept proprietary.
+- Attribution: Wasserthal et al., Radiology: AI 2023, doi:10.5281/zenodo.8367088.
+  It is shown in the viewer and in `assets/models/*/ATTRIBUTION.txt`.
+- The masks are model-assisted segmentations that were then reviewed, resampled to
+  1.5 mm. They are not hand-corrected like VerSe, so treat endplate geometry as about 1 mm accurate.
+
+## Data: VerSe (not used: no sacrum or pelvis labels)
 
 The VerSe CT and segmentation data is **CC BY-SA 4.0** per the
 [OSF project](https://osf.io/t98fz/wiki). An older challenge page says CC BY-SA 2.0.

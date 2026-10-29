@@ -8,6 +8,7 @@ void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`;
 
 const FRAG_HEAD = `#version 300 es
 precision highp float;
+precision highp sampler3D;
 out vec4 outColor;
 uniform vec2 u_res;
 uniform vec3 u_eye, u_fwd, u_right, u_up;
@@ -15,7 +16,6 @@ uniform float u_fov;
 uniform vec3 u_bmin, u_bmax;
 uniform vec4 u_clip;     // xyz normal, w offset
 uniform float u_clipOn;
-uniform vec3 u_colors[16];
 `;
 
 const FRAG_TAIL = `
@@ -64,7 +64,7 @@ void main() {
   if (id >= 0.0) {
     vec3 p = ro + rd * t;
     vec3 n = calcNormal(p);
-    vec3 base = u_colors[int(id)];
+    vec3 base = bodyColor(int(id));
     bool cut = u_clipOn > 0.5 && abs(dot(p, u_clip.xyz) - u_clip.w) < 0.05;
     if (cut) base *= 0.75 + 0.25 * step(0.5, fract((p.x + p.y + p.z) * 0.35));
     vec3 l1 = normalize(-u_fwd + u_up * 0.6 + u_right * 0.4);
@@ -79,10 +79,10 @@ void main() {
 
 const $ = (s) => document.querySelector(s);
 const canvas = $("#gl");
-const gl = canvas.getContext("webgl2", { antialias: false });
+const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
 
 const state = {
-  scene: null, prog: null, uniforms: {}, values: {}, vis: [],
+  scene: null, prog: null, uniforms: {}, values: {}, vis: [], atlas: null, atlasKey: null,
   cam: { yaw: -0.9, pitch: 0.25, dist: 260, target: [0, 0, 0] },
   clip: { on: false, axis: 0, offset: 0 },
   dirty: true, interacting: 0, server: false,
@@ -123,7 +123,57 @@ function setStatus(msg, err = false) {
   el.className = err ? "err" : "";
 }
 
-function loadScene(scene) {
+function uploadData(scene) {
+  if (state.dataTex) { gl.deleteTexture(state.dataTex); state.dataTex = null; }
+  const d = scene.data;
+  const [w, h] = d ? d.size : [1, 1];
+  const buf = d ? new Float32Array(Uint8Array.from(atob(d.f32_b64), (c) => c.charCodeAt(0)).buffer)
+    : new Float32Array(4);
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, buf);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST]])
+    gl.texParameteri(gl.TEXTURE_2D, k, v);
+  state.dataTex = tex;
+}
+
+async function uploadAtlas(scene) {
+  uploadData(scene);
+  const a = scene.atlas;
+  if (!a) return;
+  const key = scene.hash;
+  if (state.atlasKey === key) return;
+  let gz;
+  if (a.url) gz = await (await fetch(`scenes/${a.url}`, { cache: "no-store" })).arrayBuffer();
+  else gz = Uint8Array.from(atob(a.gzip_b64), (c) => c.charCodeAt(0)).buffer;
+  const stream = new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const data = new Uint8Array(await new Response(stream).arrayBuffer());
+  const [w, h, d] = a.size;
+  const max = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE);
+  if (Math.max(w, h, d) > max) throw new Error(`atlas ${w}x${h}x${d} exceeds MAX_3D_TEXTURE_SIZE ${max}`);
+  if (state.atlas) gl.deleteTexture(state.atlas);
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_3D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, w, h, d, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+    [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]])
+    gl.texParameteri(gl.TEXTURE_3D, k, v);
+  state.atlas = tex;
+  state.atlasKey = key;
+}
+
+async function loadScene(scene) {
+  try {
+    setStatus("Loading anatomy…");
+    await uploadAtlas(scene);
+  } catch (e) {
+    setStatus("Atlas error: " + e.message, true);
+    console.error(e);
+    return;
+  }
   let built;
   try {
     built = buildProgram(scene.glsl);
@@ -139,7 +189,7 @@ function loadScene(scene) {
   const oldVals = state.values;
   state.values = {};
   for (const p of scene.params) state.values[p.name] = p.name in oldVals ? oldVals[p.name] : p.value;
-  if (state.vis.length !== scene.bodies.length) state.vis = scene.bodies.map(() => true);
+  if (state.vis.length !== scene.groups.length) state.vis = scene.groups.map((g) => g.visible !== false);
   state.scene = scene;
   if (first) fitView();
   buildPanel();
@@ -167,6 +217,7 @@ function fmt(v, step) {
 function buildPanel() {
   const s = state.scene;
   $("#title").textContent = s.name;
+  $("#attribution").textContent = s.attribution || "";
   const params = $("#params");
   params.replaceChildren();
   for (const p of s.params) {
@@ -194,7 +245,7 @@ function buildPanel() {
   }
   const bodies = $("#bodies");
   bodies.replaceChildren();
-  s.bodies.forEach((b, i) => {
+  s.groups.forEach((b, i) => {
     const sw = el("span", { className: "swatch" });
     sw.style.background = `rgb(${b.color.map((c) => Math.round(c * 255)).join(",")})`;
     const cb = el("input", {
@@ -239,8 +290,10 @@ $("#exportStl").addEventListener("click", async () => {
 function fitView() {
   const [lo, hi] = state.scene.bounds;
   state.cam.target = lo.map((v, i) => (v + hi[i]) / 2);
-  const diag = Math.hypot(...lo.map((v, i) => hi[i] - v));
-  state.cam.dist = diag * 0.95;
+  const ext = hi.map((v, i) => v - lo[i]);
+  const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  const fitH = ext[2] / 2 / 0.45, fitW = Math.hypot(ext[0], ext[1]) / 2 / (0.45 * aspect);
+  state.cam.dist = 1.1 * Math.max(fitH, fitW) + Math.hypot(ext[0], ext[1]) / 2;
   state.cam.yaw = 0.35;
   state.cam.pitch = 0.12;
 }
@@ -295,17 +348,28 @@ gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STAT
 gl.enableVertexAttribArray(0);
 gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-let lastFull = 0;
-function frame() {
-  requestAnimationFrame(frame);
-  if (!state.prog || !state.dirty) return;
-  const busy = state.interacting > 0 || performance.now() - lastFull < 120;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const scale = busy ? 0.5 : 1.0;
-  const w = Math.max(1, Math.floor(canvas.clientWidth * dpr * scale));
-  const h = Math.max(1, Math.floor(canvas.clientHeight * dpr * scale));
-  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  gl.viewport(0, 0, w, h);
+// Progressive rendering: every change draws a cheap low-res preview into an
+// offscreen buffer (upscaled to the canvas); once input settles the full-res
+// image is refined in horizontal tiles, one tile per animation frame, so no
+// single draw call is long enough to trip the GPU watchdog.
+const low = { fb: null, tex: null, w: 0, h: 0, scale: 0.35 };
+const refine = { active: false, row: 0, tileH: 64, lastT: 0, start: 0, lastInput: 0 };
+
+function ensureLow(w, h) {
+  if (low.fb && low.w === w && low.h === h) return;
+  if (low.fb) { gl.deleteFramebuffer(low.fb); gl.deleteTexture(low.tex); }
+  low.tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, low.tex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+  low.fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, low.fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, low.tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  low.w = w; low.h = h;
+}
+
+function setUniforms(w, h) {
   gl.useProgram(state.prog);
   const U = state.uniforms, s = state.scene;
   const c = camBasis();
@@ -322,19 +386,64 @@ function frame() {
   n[state.clip.axis] = sign;
   gl.uniform4f(U.u_clip, n[0], n[1], n[2], sign * state.clip.offset);
   gl.uniform1f(U.u_clipOn, state.clip.on ? 1 : 0);
-  const cols = new Float32Array(48);
-  s.bodies.forEach((b, i) => cols.set(b.color, i * 3));
-  if (U.u_colors) gl.uniform3fv(U.u_colors, cols);
+  if (U.u_atlasSize && s.atlas) gl.uniform3fv(U.u_atlasSize, s.atlas.size);
+  if (U.u_data && state.dataTex) {
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, state.dataTex);
+    gl.uniform1i(U.u_data, 2);
+  }
+  if (U.u_atlas && state.atlas) {
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_3D, state.atlas);
+    gl.uniform1i(U.u_atlas, 0);
+  }
   for (const p of s.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], state.values[p.name]);
-  s.bodies.forEach((_, i) => { if (U["u_vis" + i]) gl.uniform1f(U["u_vis" + i], state.vis[i] ? 1 : 0); });
-  const t0 = performance.now();
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
-  if (!busy) {
+  s.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], state.vis[i] ? 1 : 0); });
+}
+
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (!state.prog) return;
+  const dt = t - (refine.lastT || t);
+  refine.lastT = t;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+  const H = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; state.dirty = true; }
+
+  if (state.dirty) {
+    if (state.previewed && dt > 90) low.scale = Math.max(0.15, low.scale * 0.8);
+    else if (dt < 25) low.scale = Math.min(0.5, low.scale * 1.05);
+    const lw = Math.max(1, Math.round(W * low.scale)), lh = Math.max(1, Math.round(H * low.scale));
+    ensureLow(lw, lh);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, low.fb);
+    gl.viewport(0, 0, lw, lh);
+    setUniforms(lw, lh);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, low.fb);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.blitFramebuffer(0, 0, lw, lh, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     state.dirty = false;
-    gl.finish();
-    $("#fps").textContent = `${w}×${h} · ${(performance.now() - t0).toFixed(0)} ms`;
-  } else {
-    lastFull = state.interacting > 0 ? performance.now() : lastFull;
+    state.previewed = true;
+    Object.assign(refine, { active: true, row: 0, lastInput: t, start: 0 });
+    return;
+  }
+  if (!refine.active || state.interacting > 0 || t - refine.lastInput < 100) return;
+  if (refine.row === 0) refine.start = t;
+  else if (dt > 60) refine.tileH = Math.max(8, refine.tileH >> 1);
+  else if (dt < 22) refine.tileH = Math.min(H, refine.tileH * 2);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  setUniforms(W, H);
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(0, H - refine.row - refine.tileH, W, refine.tileH);  // top to bottom
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.disable(gl.SCISSOR_TEST);
+  refine.row += refine.tileH;
+  if (refine.row >= H) {
+    refine.active = false;
+    $("#fps").textContent = `${W}×${H} · refined in ${(t - refine.start).toFixed(0)} ms`;
   }
 }
 window.addEventListener("resize", () => { state.dirty = true; });
@@ -352,10 +461,10 @@ async function main() {
     initPicker(Object.keys(window.SCENES), (k) => loadScene(window.SCENES[k]));
     return requestAnimationFrame(frame);
   }
-  try {
-    const ping = await fetch("/api/ping", { cache: "no-store" });
-    state.server = ping.ok;
-  } catch { state.server = false; }
+  state.server = false;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {  // local dev server?
+    try { state.server = (await fetch("/api/ping", { cache: "no-store" })).ok; } catch { /* static */ }
+  }
   $("#exportStl").hidden = !state.server;
   const index = await fetchJson("scenes/index.json");
   const qs = new URLSearchParams(location.search).get("scene");

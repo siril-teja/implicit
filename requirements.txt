@@ -1,1 +1,4 @@
 numpy>=1.24
+# preprocessing of CT segmentations (optional for scenes that use processed models)
+scipy>=1.10
+nibabel>=5.0
