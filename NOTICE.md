@@ -1,8 +1,9 @@
 # Notices: licences and attribution
 
-This file lists the third-party software and data used by **implicit**, with
-their licences. The policy for adding dependencies is in
-[docs/LICENSING.md](docs/LICENSING.md): only licences that allow commercial use.
+**implicit** is released under the [MIT License](LICENSE). This file lists the
+third-party software and data it uses, with their licences. The policy for
+adding dependencies is in [docs/LICENSING.md](docs/LICENSING.md): only licences
+that allow commercial use.
 
 ## Software
 
@@ -29,4 +30,5 @@ Intelligence, 2023. Dataset: doi:[10.5281/zenodo.8367088](https://doi.org/10.528
 Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The
 files in `assets/bones/` are derived works: signed distance fields computed
 from the segmentation masks and the CT of image `s0751`. They are not the
-original data. See [assets/bones/README.md](assets/bones/README.md).
+original data. See [assets/bones/README.md](assets/bones/README.md). These data
+files stay under CC BY 4.0; the MIT License covers the code only.

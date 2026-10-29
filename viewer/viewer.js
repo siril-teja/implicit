@@ -517,7 +517,8 @@ function showAbout() {
     const base = `https://github.com/${app.repo}`;
     const ref = app.version ? `v${app.version}` : (app.commit || "main");
     line(link("Release notes", app.version ? `${base}/releases/tag/v${app.version}` : `${base}/releases`),
-      " · ", link("Licences & attribution", `${base}/blob/${ref}/NOTICE.md`),
+      " · ", link("MIT licence", `${base}/blob/${ref}/LICENSE`),
+      " · ", link("Notices & attribution", `${base}/blob/${ref}/NOTICE.md`),
       " · ", link("Source", `${base}/tree/${ref}`));
   }
 }

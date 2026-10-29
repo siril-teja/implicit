@@ -5,6 +5,16 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.1.1] - 2026-10-29
+
+### Added
+- MIT License for the code (`LICENSE`). The bundled TotalSegmentator-derived
+  anatomy stays under CC BY 4.0 (see `NOTICE.md`).
+- Viewer About section links to the licence.
+
+### Changed
+- Live viewer URL in the docs: https://siril.me/implicit/
+
 ## [0.1.0] - 2026-10-29
 
 First release.
