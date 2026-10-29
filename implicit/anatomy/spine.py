@@ -46,6 +46,18 @@ class Model:
     def grid(self, level):
         return self.bones["sacrum" if level == "S1" else level][1]
 
+    def shift(self, offset):
+        """Move everything by -offset (mm): bones and landmark points."""
+        offset = np.asarray(offset, float)
+        for _, g in self.bones.values():
+            g.origin = g.origin - offset
+        for e in self.marks.values():
+            if "body_center" in e:
+                e["body_center"] = e["body_center"] - offset
+            for ep in ("sup", "inf"):
+                if ep in e:
+                    e[ep]["point"] = e[ep]["point"] - offset
+
 
 def _arrays(d):
     if isinstance(d, dict):
@@ -89,9 +101,16 @@ def marker_instances(m: Model, radius=12.0):
 
 def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "markers")):
     m = Model(bone_dir)
+    # Display frame: the scanner frame shifted so the bones sit around the
+    # origin. Shader floats lose precision far from the origin (CT coordinates
+    # are ~1 m), which shows up as speckle on some GPUs.
+    offset = np.round(np.mean(_union_bounds(*[_bounds(g) for k, g in m.bones.values()
+                                              if k != "reference"]), axis=0))
+    m.shift(offset)
     lo, hi = _union_bounds(*[_bounds(g) for _, g in m.bones.values()])
     scene = Scene(name or f"Implicit bones ({m.subject})", (lo, hi))
     scene.attribution = m.attribution
+    scene.frame_offset = offset  # scene coordinates = scanner RAS - offset (mm)
     for bname, (kind, g) in m.bones.items():
         key = bname[0] if kind == "vertebra" else kind
         part = {"vertebra": "spine", "reference": "reference"}.get(kind, "pelvis")

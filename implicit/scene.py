@@ -34,16 +34,8 @@ def _walk(node, seen=None):
         yield from _walk(c, seen)
 
 
-def pack_grids(grids, min_side=64):
-    """Shelf-pack grid blocks into one uint8 volume; sets each grid's atlas fields.
-
-    NumPy axes (0, 1, 2) map to texture (depth, height, width), i.e. texture
-    coordinates are the grid index reversed (zyx), see Grid.emit.
-    """
-    if not grids:
-        return None
-    side = max(min_side, max(max(g.shape[1], g.shape[2]) for g in grids))
-    order = sorted(grids, key=lambda g: (g.shape[0], g.shape[1]), reverse=True)
+def _shelf_place(order, side):
+    """Shelf placement in layers of side x side; returns ({id: (z, y, x)}, depth)."""
     place, layer_z, layer_d = {}, 0, 0
     row_y = row_h = col_x = 0
     for g in order:
@@ -58,7 +50,30 @@ def pack_grids(grids, min_side=64):
         place[id(g)] = (layer_z, row_y, col_x)
         col_x += nz
         row_h = max(row_h, ny)
-    depth = layer_z + layer_d
+    return place, layer_z + layer_d
+
+
+def pack_grids(grids, min_side=64, max_dim=2048):
+    """Shelf-pack grid blocks into one uint8 volume; sets each grid's atlas fields.
+
+    The layer side is chosen to minimise the atlas volume (texture memory),
+    keeping every dimension <= ``max_dim`` (the common WebGL2 3D-texture limit).
+    NumPy axes (0, 1, 2) map to texture (depth, height, width), i.e. texture
+    coordinates are the grid index reversed (zyx), see Grid.emit.
+    """
+    if not grids:
+        return None
+    order = sorted(grids, key=lambda g: (g.shape[0], g.shape[1]), reverse=True)
+    first = max(min_side, max(max(g.shape[1], g.shape[2]) for g in grids))
+    best = None
+    for side in range(first, max_dim + 1, 8):
+        place, depth = _shelf_place(order, side)
+        vol = side * side * depth
+        if depth <= max_dim and (best is None or vol < best[0]):
+            best = (vol, side, place, depth)
+    if best is None:
+        raise ValueError("grids do not fit in a 3D texture atlas; use coarser spacing")
+    _, side, place, depth = best
     atlas = np.full((depth, side, side), 255, dtype=np.uint8)
     for g in grids:
         o = place[id(g)]
@@ -77,6 +92,7 @@ class Scene:
         self.bodies: list[Body] = []
         self.templates: list[Template] = []
         self.attribution = ""
+        self.frame_offset = None  # optional: scene coordinates = source frame - offset (mm)
 
     def add(self, name, sdf, color=(0.8, 0.8, 0.8), group=None, bounds=None, visible=True,
             share=None):
@@ -276,6 +292,7 @@ class Scene:
             ],
             "bodies": [{"name": b.name, "group": groups.index(b.group)} for b in self.bodies],
             "attribution": self.attribution,
+            "frame_offset": None if self.frame_offset is None else [float(x) for x in self.frame_offset],
         }
         h = hashlib.sha1(glsl.encode())
         atlas = pack_grids(self.grids())

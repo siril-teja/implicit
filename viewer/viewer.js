@@ -152,6 +152,7 @@ async function uploadAtlas(scene) {
   const [w, h, d] = a.size;
   const max = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE);
   if (Math.max(w, h, d) > max) throw new Error(`atlas ${w}x${h}x${d} exceeds MAX_3D_TEXTURE_SIZE ${max}`);
+  while (gl.getError() !== gl.NO_ERROR) { /* clear stale errors */ }
   if (state.atlas) gl.deleteTexture(state.atlas);
   const tex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
@@ -161,8 +162,28 @@ async function uploadAtlas(scene) {
   for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
     [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]])
     gl.texParameteri(gl.TEXTURE_3D, k, v);
+  const err = gl.getError();
+  if (err !== gl.NO_ERROR) throw new Error(`3D texture upload failed (WebGL error 0x${err.toString(16)}, `
+    + `${(w * h * d / 1e6).toFixed(0)} MB): the GPU may be out of memory`);
   state.atlas = tex;
   state.atlasKey = key;
+  state.atlasMB = w * h * d / 1e6;
+}
+
+function gpuInfo() {
+  const ext = gl.getExtension("WEBGL_debug_renderer_info");
+  const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  const hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+  return { renderer, floatBits: hp ? hp.precision : 0, max3D: gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) };
+}
+
+function showDiag() {
+  const g = gpuInfo();
+  const atlas = state.scene && state.scene.atlas
+    ? ` · atlas ${state.scene.atlas.size.join("×")} (${(state.atlasMB || 0).toFixed(0)} MB)` : "";
+  $("#diag").textContent = `GPU: ${g.renderer} · float ${g.floatBits} bit · max 3D ${g.max3D}${atlas}`;
+  if (g.floatBits < 23) setStatus("Warning: this GPU has no full-precision fragment floats; "
+    + "the implicit bodies may render with speckle.", true);
 }
 
 async function loadScene(scene) {
@@ -194,6 +215,7 @@ async function loadScene(scene) {
   if (first) fitView();
   buildPanel();
   setStatus(`${scene.name} · shader compiled in ${built.ms.toFixed(0)} ms`);
+  showDiag();
   state.dirty = true;
 }
 
