@@ -37,13 +37,14 @@ jobs:
       matrix:
         include:
           - name: linux-swiftshader
-            os: ubuntu-latest
+            os: ubuntu-24.04
             backend: swiftshader
             renderer: SwiftShader
           - name: windows-d3d11
             os: windows-latest
             backend: d3d11-warp
             renderer: Direct3D11
+            headed: "1"
           - name: macos-metal
             os: macos-latest
             backend: metal
@@ -67,5 +68,7 @@ jobs:
           npm install --no-save playwright@1.50.1
           if [ "$RUNNER_OS" = "Linux" ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
       - name: GPU check (${{ matrix.backend }})
+        env:
+          GPU_CHECK_HEADED: ${{ matrix.headed }}
         run: node ci/gpu_check.mjs site ${{ matrix.backend }} ${{ matrix.renderer }}
 

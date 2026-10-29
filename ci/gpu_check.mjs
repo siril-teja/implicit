@@ -36,9 +36,12 @@ const url = `http://127.0.0.1:${server.address().port}/diagnostics.html`;
 
 const args = [`--use-angle=${backend}`, "--use-gl=angle", "--ignore-gpu-blocklist"];
 if (backend === "swiftshader") args.push("--enable-unsafe-swiftshader");
-// channel "chromium": the full browser in new-headless mode. Playwright's default
-// headless shell only has SwiftShader, so D3D11 / Metal would silently fall back.
-const browser = await chromium.launch({ args, channel: "chromium" });
+else args.push("--disable-software-rasterizer");  // fail rather than fall back to SwiftShader
+// channel "chromium": the full browser (Playwright's default headless shell only
+// has SwiftShader). GPU_CHECK_HEADED=1 runs it headed, for runners where headless
+// Chrome would not use the hardware/D3D backend.
+const headless = process.env.GPU_CHECK_HEADED !== "1";
+const browser = await chromium.launch({ args, channel: "chromium", headless });
 const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("pageerror:", e.message));
 let code = 1;
