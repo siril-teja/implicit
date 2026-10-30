@@ -112,8 +112,8 @@ def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "m
     scene = Scene(name or f"Implicit bones ({m.subject})", (lo, hi))
     scene.attribution = m.attribution
     scene.frame_offset = offset  # scene coordinates = scanner RAS - offset (mm)
-    # Each bone gets a live Gaussian smoothing width (nTop's "Smoothen Body",
-    # precomputed as a pyramid so the slider is interactive); one switch keeps
+    # Each bone gets a live Gaussian smoothing width (precomputed as a
+    # pyramid so the slider is interactive); one switch keeps
     # every bone's volume when smoothing.
     preserve = Param("smooth_preserve", 1, 0, 1, 1, "Smoothing keeps bone volume (1 = on)", "")
     for bname, (kind, g) in m.bones.items():
