@@ -5,6 +5,32 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.8.0] - 2026-10-30
+
+### Added
+- **Average (idealised) spine**: `assets/bones/vivaplus-50F`, T1–T12, L1–L5,
+  sacrum, both hip bones and proximal femurs of the VIVA+ open human body model
+  (average female, standing; v2.0.2, LGPL-3.0-or-later). It is the default
+  scene of the viewer (`examples/average_spine.json`), with landmarks and a
+  pose block per vertebra like the patient scene.
+- `python -m implicit.anatomy.vivaplus`: downloads VIVA+ once and converts its
+  bone surfaces (cortical shells; femurs: outer boundary of the solid elements)
+  to implicit bone files, by ray-parity inside/outside tests along x, y and z
+  (majority vote) on a 0.25–0.6 mm grid and the existing distance step.
+
+### Changed
+- The patient scene is now `examples/patient.json` (was `anatomy.json`).
+- Block graphs from `anatomy_graph` list vertebrae cranial to caudal.
+
+### Fixed
+- Landmarks: without a spinal-cord file, the posterior wall is found from the
+  vertebral foramen, so pedicles no longer stay in the isolated body. L5 uses a
+  larger opening radius (7 mm) to drop its transverse processes; this corrects
+  the L5 inferior endplate (was tilted up to 20°) and hence S1, also for
+  `s0751` (landmarks regenerated).
+- GPU check: probes read their point and body from a data texture through one
+  dispatch function, so large scenes (40 bodies) no longer read back zeros.
+
 ## [0.7.0] - 2026-10-30
 
 ### Added

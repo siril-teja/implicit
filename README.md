@@ -19,6 +19,22 @@ Read [docs/primer.md](docs/primer.md) for the background, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
+## Average spine (VIVA+)
+
+`examples/average_spine.json`, the default scene, is an idealised spine:
+T1–T12, L1–L5, sacrum, hip bones and proximal femurs of the
+[VIVA+](https://zenodo.org/records/18338876) average-female human body model (50F,
+standing; LGPL-3.0-or-later, see [NOTICE](NOTICE.md)). Its bone surfaces are
+converted to the same implicit bone files as the patient data:
+
+```bash
+python -m implicit.anatomy.vivaplus --model 50F-standing --out assets/bones/vivaplus-50F   # downloads VIVA+ once
+python -m implicit.anatomy.landmarks assets/bones/vivaplus-50F
+```
+
+The fitted lumbar endplate planes agree with VIVA+'s own endplate shells to
+0.7–2.4° and 0.3 mm (normal offset).
+
 ## Patient anatomy: implicit bones
 
 TotalSegmentator provides voxel label masks (NIfTI), not CAD. They are converted
@@ -28,13 +44,13 @@ With the CT available, each surface is placed on the CT iso-surface (half-maximu
 threshold) and the label only guards it to ±2 mm. From then on all modelling
 works on these fields; masks are never read again.
 
-`examples/anatomy.json` (a block graph) shows `assets/bones/s0751`: L1–L5,
+`examples/patient.json` (a block graph) shows `assets/bones/s0751`: L1–L5,
 sacrum, hips and proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0).
 
 ```bash
 python -m implicit.anatomy.totalseg s0751 --out data/totalseg --ct      # masks + CT, ~40 MB
 python -m implicit.anatomy.convert data/totalseg/s0751 --out assets/bones/s0751 --select lumbar
-python -m implicit.serve examples/anatomy.json
+python -m implicit.serve examples/patient.json
 ```
 
 Each bone feeds a **Smooth** block (σ in mm, Gaussian blur of the implicit
@@ -42,7 +58,7 @@ field) that keeps the bone volume by default. To mesh
 bodies at chosen values (closed, manifold STL):
 
 ```bash
-python -m implicit.export examples/anatomy.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
+python -m implicit.export examples/patient.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
 ```
 
 `--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Then
@@ -70,7 +86,7 @@ the viewer, the panel at the bottom holds the **block canvas** and the settings:
 Literal values in a graph are live parameters named `<node>_<input>`.
 
 ```bash
-python -m implicit.graph check examples/anatomy.json
+python -m implicit.graph check examples/average_spine.json
 python -m implicit.graph blocks          # every block, its inputs and outputs
 ```
 
@@ -82,7 +98,7 @@ browser-built shader with NumPy too.
 
 ```bash
 pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion)
-python -m implicit.serve examples/anatomy.json examples/spine_segment.py
+python -m implicit.serve examples/average_spine.json examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```
 

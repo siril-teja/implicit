@@ -1,6 +1,6 @@
 """Local dev server: viewer + live reload of scene scripts and block graphs + STL export.
 
-    python -m implicit.serve examples/anatomy.json examples/spine_segment.py [--port 8000]
+    python -m implicit.serve examples/average_spine.json examples/spine_segment.py [--port 8000]
 
 Edit a scene script or graph file and save: the browser reloads it within ~1 s.
 Block graphs are edited in the browser's block canvas; "Save" writes the graph

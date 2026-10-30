@@ -75,3 +75,21 @@ Check `license.txt` on OSF before redistributing.
   with a script.
 - For proprietary commercial models, use your own institution's imaging (with
   ethics/IRB clearance) instead of VerSe-derived geometry.
+
+## Data: VIVA+ human body models (used)
+
+`assets/bones/vivaplus-50F` is derived from the VIVA+ open human body models
+v2.0.2 (average female, standing), Chalmers University of Technology and
+partners: [vivaplus.readthedocs.io](https://vivaplus.readthedocs.io),
+[Zenodo doi:10.5281/zenodo.7789362](https://doi.org/10.5281/zenodo.7789362).
+Licence: **LGPL-3.0-or-later** (stated in the release's `LICENSE.md` and on Zenodo).
+
+- Commercial use, modification and redistribution are allowed (⚠️ Review tier).
+- The bone files here are modified (converted) VIVA+ data, so they stay under
+  LGPL-3.0-or-later and their changes are published (this repository does that).
+  The code that reads them stays MIT.
+- **Open question for counsel:** whether a model built on these bones (e.g. an
+  FE model shipped to a customer) is a derivative of the LGPL data that must
+  also be shared under the LGPL. If that matters, use bones from CC BY data
+  (e.g. TotalSegmentator, as in `assets/bones/s0751`) for proprietary work.
+- Attribution is shown in the viewer and in `assets/bones/vivaplus-50F/ATTRIBUTION.txt`.

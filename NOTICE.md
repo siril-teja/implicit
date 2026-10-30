@@ -34,3 +34,17 @@ files in `assets/bones/` are derived works: signed distance fields computed
 from the segmentation masks and the CT of image `s0751`. They are not the
 original data. See [assets/bones/README.md](assets/bones/README.md). These data
 files stay under CC BY 4.0; the MIT License covers the code only.
+
+### VIVA+ human body models (bundled anatomy in `assets/bones/vivaplus-50F/`)
+
+VIVA+ open finite element human body models, v2.0.2, average female (50F)
+standing; Chalmers University of Technology and partners.
+[vivaplus.readthedocs.io](https://vivaplus.readthedocs.io),
+doi:[10.5281/zenodo.7789362](https://doi.org/10.5281/zenodo.7789362).
+Lumbar spine: Iraeus J. et al., *A new open-source finite element lumbar spine
+model*, IRCOBI 2023.
+
+Licensed under the [GNU LGPL v3.0 or later](https://www.gnu.org/licenses/lgpl-3.0.html).
+The files in `assets/bones/vivaplus-50F/` are derived works (bone surfaces of
+the model converted to signed distance fields) and stay under the LGPL-3.0-or-later;
+the MIT License covers the code only. See [docs/LICENSING.md](docs/LICENSING.md).

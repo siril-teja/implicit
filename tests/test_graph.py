@@ -255,12 +255,23 @@ class TestLandmarkBlocks(unittest.TestCase):
 
 class TestAnatomyGraph(unittest.TestCase):
     def test_example_graph_matches_bone_files(self):
-        """examples/anatomy.json: one bone -> smooth -> output chain per bone file, all files present."""
-        g = read_graph(ROOT / "examples" / "anatomy.json")
+        """examples/patient.json: one bone -> smooth -> output chain per bone file, all files present."""
+        g = read_graph(ROOT / "examples" / "patient.json")
         files = {n["in"]["file"] for n in g["nodes"].values() if n["block"] == "bone"}
         self.assertEqual({Path(f).stem for f in files}, {p.stem for p in BONES.glob("*.npz")})
         for f in files:
             self.assertTrue((ROOT / "examples" / f).exists(), f)
+
+    def test_average_spine_graph(self):
+        """examples/average_spine.json: T1-L5 in order, each posed by its own landmarks."""
+        g = read_graph(ROOT / "examples" / "average_spine.json")
+        bones = [n for n in g["nodes"].values() if n["block"] == "bone"]
+        lv = [f"T{i}" for i in range(1, 13)] + [f"L{i}" for i in range(1, 6)]
+        self.assertEqual([b["title"] for b in bones][:17], lv)
+        for b in bones:
+            self.assertTrue((ROOT / "examples" / b["in"]["file"]).exists(), b["in"]["file"])
+        for v in lv:
+            self.assertEqual(g["nodes"][f"{v}_pose"]["in"]["vertebra"], f"@{v}_lm.vertebra")
 
     def test_bone_smoothing_equals_direct_construction(self):
         from implicit.anatomy.convert import load_bone

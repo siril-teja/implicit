@@ -17,7 +17,7 @@ import numpy as np
 from ..expr import Param
 from ..scene import Scene
 from ..sdf import Grid, HalfSpace, Sphere, smooth
-from .convert import load_bones
+from .convert import VERTEBRAE, load_bones
 
 COLORS = {
     "C": (0.95, 0.86, 0.70), "T": (0.93, 0.83, 0.68), "L": (0.91, 0.80, 0.66),
@@ -148,6 +148,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     bone_dir = Path(bone_dir)
     base = Path(relative_to) if relative_to else bone_dir
     loaded = load_bones(bone_dir)
+    rank = {lv: i for i, lv in enumerate(VERTEBRAE)}  # cranial to caudal, then the rest
+    loaded = dict(sorted(loaded.items(), key=lambda kv: (rank.get(kv[0], len(rank)), kv[0])))
     subject = next(iter(loaded.values()))[1].get("subject", "")
     hexc = lambda c: "#" + "".join(f"{round(v * 255):02x}" for v in c)
     lm_file = bone_dir / "landmarks.json"
