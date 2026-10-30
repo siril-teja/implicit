@@ -5,6 +5,28 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.2.0] - 2026-10-29
+
+### Added
+- **Live surface smoothing of bones** (`implicit.sdf.smooth`, `GridSmooth`):
+  Gaussian blur of the implicit field, like nTop's "Smoothen Body", with the
+  width σ (mm) as a slider per bone. The blur is precomputed as a small
+  pyramid (σ = 2, 4, 8 voxels, each at matching coarser spacing, about +15 %
+  texture memory), so moving the slider is instant. The smoothed field stays
+  1-Lipschitz, so it ray-marches and meshes like any body. A
+  "keeps bone volume" switch (on by default) cancels the shrinkage that
+  blurring causes on convex features. On L3 (0.4 mm mesh), σ = 1 mm cuts surface
+  area 8 % (CT noise) at −0.4 % volume; σ = 2.5 mm cuts it 19 % at −1.1 %.
+- **Robust meshing** (`implicit.mesh.mesh_sdf`): narrow-band marching
+  tetrahedra. Meshes are closed and manifold by construction (every edge shared
+  by exactly two triangles), including thin and touching features where surface
+  nets were not. Only blocks that can contain the surface are sampled.
+- `python -m implicit.export SCENE [--body NAME] [--set PARAM=VALUE] [--voxel MM]`:
+  mesh any body at any slider values to STL, with volume, area and closure report.
+  The dev server's "Export STL" uses the same mesher.
+- The GPU check also tests every scene with all sliders moved off their defaults
+  (twice the checks), so parameter-dependent shader paths are compared with NumPy.
+
 ## [0.1.3] - 2026-10-29
 
 ### Fixed

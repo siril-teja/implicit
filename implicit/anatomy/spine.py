@@ -13,8 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
+from ..expr import Param
 from ..scene import Scene
-from ..sdf import Grid, HalfSpace, Sphere
+from ..sdf import Grid, HalfSpace, Sphere, smooth
 from .convert import load_bones
 
 COLORS = {
@@ -99,7 +100,7 @@ def marker_instances(m: Model, radius=12.0):
     return inst, bounds
 
 
-def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "markers")):
+def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "markers"), smoothing=True):
     m = Model(bone_dir)
     # Display frame: the scanner frame shifted so the bones sit around the
     # origin. Shader floats lose precision far from the origin (CT coordinates
@@ -111,12 +112,21 @@ def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "m
     scene = Scene(name or f"Implicit bones ({m.subject})", (lo, hi))
     scene.attribution = m.attribution
     scene.frame_offset = offset  # scene coordinates = scanner RAS - offset (mm)
+    # Each bone gets a live Gaussian smoothing width (nTop's "Smoothen Body",
+    # precomputed as a pyramid so the slider is interactive); one switch keeps
+    # every bone's volume when smoothing.
+    preserve = Param("smooth_preserve", 1, 0, 1, 1, "Smoothing keeps bone volume (1 = on)", "")
     for bname, (kind, g) in m.bones.items():
         key = bname[0] if kind == "vertebra" else kind
         part = {"vertebra": "spine", "reference": "reference"}.get(kind, "pelvis")
-        if part in include:
-            scene.add(bname, g, COLORS[key], group=GROUP[key], bounds=_bounds(g),
-                      visible=kind != "reference")
+        if part not in include:
+            continue
+        body = g
+        if smoothing and kind != "reference":
+            sigma = Param(f"smooth_{bname}", 0, 0, 4, 0.1, f"{bname} smoothing σ", "mm")
+            body = smooth(g, sigma, preserve)
+        scene.add(bname, body, COLORS[key], group=GROUP[key], bounds=_bounds(g),
+                  visible=kind != "reference")
     if "markers" in include and m.marks:
         inst, bounds = marker_instances(m)
         if inst:

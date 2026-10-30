@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .sdf import Grid
+from .sdf import Grid, GridSmooth
 
 
 def _grid_points(g: Grid):
@@ -29,7 +29,26 @@ def _grid_points(g: Grid):
 
 
 def probes(scene, n_random=8, seed=0):
-    """{"units": [{"unit": k, "name", "points": [[x, y, z, d], ...], "target": [x, y, z]}]}."""
+    """Probe batches: slider defaults, then every slider moved away from its default.
+
+    {"batches": [{"params": {name: value}, "units": [{"unit", "name", "points": [[x, y, z, d]],
+    "target": [x, y, z]}]}]}. The second batch exercises parameter-dependent code
+    paths (e.g. blending between smoothing levels) that defaults never reach.
+    """
+    params = scene.params()
+    defaults = {p.name: p.value() for p in params}
+    moved = {p.name: round(p.lo + 0.37 * (p.hi - p.lo), 4) for p in params}
+    batches = []
+    try:
+        for values in ({}, moved):
+            scene.set_params({**defaults, **values})
+            batches.append({"params": values, "units": _units(scene, n_random, seed)})
+    finally:
+        scene.set_params(defaults)
+    return {"batches": batches}
+
+
+def _units(scene, n_random, seed):
     rng = np.random.default_rng(seed)
     out = []
     for k, unit in enumerate(scene._units()):
@@ -43,6 +62,8 @@ def probes(scene, n_random=8, seed=0):
         for s in sdfs:
             if isinstance(s, Grid):
                 pts += _grid_points(s)
+            elif isinstance(s, GridSmooth):
+                pts += _grid_points(s.grid)
         # Deepest point on a coarse lattice: the ray-probe target.
         axes = [np.linspace(lo[i], hi[i], 24) for i in range(3)]
         lattice = np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
@@ -54,4 +75,4 @@ def probes(scene, n_random=8, seed=0):
         out.append({"unit": k, "name": ", ".join(b.name for b in bodies),
                     "points": np.column_stack([P, d]).round(5).tolist(),
                     "target": None if target is None else target.round(5).tolist()})
-    return {"units": out}
+    return out

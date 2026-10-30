@@ -16,7 +16,7 @@ class Probes(unittest.TestCase):
         sc.add("ball", self.grid, bounds=((-12,) * 3, (12,) * 3))
         sc.add("box", Box((3, 4, 5)).translate((10, 0, 0)))
         sc.to_json()  # pack the atlas
-        self.scene, self.p = sc, probes(sc)
+        self.scene, self.p = sc, probes(sc)["batches"][0]
 
     def test_one_entry_per_unit_with_reference_values(self):
         self.assertEqual([u["unit"] for u in self.p["units"]], [0, 1])

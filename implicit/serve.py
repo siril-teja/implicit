@@ -18,7 +18,8 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .mesh import surface_nets, write_stl
+from .export import mesh_body, mesh_report
+from .mesh import write_stl
 from .project import VIEWER_DIR, load_scene
 
 
@@ -55,14 +56,17 @@ class Project:
         for b in scene.bodies:
             if visible and not visible[groups.index(b.group)]:
                 continue
+            if b.template is not None:
+                continue
             t0 = time.time()
-            f, origin, h = scene.sample(b.name, self.voxel)
-            v, t = surface_nets(f, origin, h)
+            v, t = mesh_body(scene, b.name, self.voxel)
             if len(t) == 0:
                 continue
             fn = out / (re.sub(r"[^A-Za-z0-9_-]+", "_", b.name) + ".stl")
             write_stl(fn, v, t, b.name)
-            files.append(f"{fn}  ({len(t)} tris, {time.time() - t0:.1f} s)")
+            r = mesh_report(v, t)
+            files.append(f"{fn}  ({r['triangles']} tris, {'closed' if r['closed'] else 'NOT closed'}, "
+                         f"{time.time() - t0:.1f} s)")
         (out / "params.json").write_text(json.dumps(params, indent=1))
         return files
 
