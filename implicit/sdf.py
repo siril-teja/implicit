@@ -701,6 +701,55 @@ class Morph(SDF):
         return self.a.eval(p) * (1 - s) + self.b.eval(p) * s
 
 
+def _rot_np(q, axis, a):
+    """Rotate rows of q by angle a (radians, right-hand rule) about axis 0/1/2."""
+    i, j = {0: (1, 2), 1: (2, 0), 2: (0, 1)}[axis]
+    c, s = np.cos(a), np.sin(a)
+    r = q.copy()
+    r[:, i] = c * q[:, i] - s * q[:, j]
+    r[:, j] = s * q[:, i] + c * q[:, j]
+    return r
+
+
+class FramePose(SDF):
+    """Rigid motion of a body in a local frame (e.g. a vertebra's own axes).
+
+    The frame has origin o and orthonormal axes ex (right), ey (anterior), ez
+    (cranial). The body is rotated about o by R = Rz(axial) Ry(lateral) Rx(-flexion)
+    in frame coordinates (degrees: flexion + bends forward, lateral bending + to the
+    right, axial rotation + turns the front to the left) and then moved by
+    ``shift`` (frame coordinates, mm). Exact (a rigid motion keeps distances).
+    """
+
+    def __init__(self, child, origin, ex, ey, ez, flexion, lateral, axial, shift):
+        self.child = child
+        self.o, self.ex, self.ey, self.ez = vec3(origin), vec3(ex), vec3(ey), vec3(ez)
+        self.flexion, self.lateral, self.axial = wrap(flexion), wrap(lateral), wrap(axial)
+        self.shift = vec3(shift)
+
+    def children(self): return [self.child]
+    def exprs(self): return [self.o, self.ex, self.ey, self.ez, self.flexion, self.lateral, self.axial, self.shift]
+
+    def emit(self, ctx, p):
+        o, ex, ey, ez = self.o.glsl(), self.ex.glsl(), self.ey.glsl(), self.ez.glsl()
+        t = self.shift.c
+        q = ctx.var("vec3", f"{p} - {o} - ({ex} * {t[0].glsl()} + {ey} * {t[1].glsl()} + {ez} * {t[2].glsl()})")
+        l0 = ctx.var("vec3", f"vec3(dot({q}, {ex}), dot({q}, {ey}), dot({q}, {ez}))")
+        l1 = ctx.var("vec3", f"rotZ({l0}, -radians({self.axial.glsl()}))")
+        l2 = ctx.var("vec3", f"rotY({l1}, -radians({self.lateral.glsl()}))")
+        l3 = ctx.var("vec3", f"rotX({l2}, radians({self.flexion.glsl()}))")
+        return ctx.sub(self.child, ctx.var("vec3", f"{o} + {ex} * {l3}.x + {ey} * {l3}.y + {ez} * {l3}.z"))
+
+    def eval(self, p):
+        o, E = _vv(self.o), np.stack([_vv(self.ex), _vv(self.ey), _vv(self.ez)])  # rows: axes
+        q = p - o - _vv(self.shift) @ E
+        loc = q @ E.T
+        loc = _rot_np(loc, 2, -np.radians(_v(self.axial)))
+        loc = _rot_np(loc, 1, -np.radians(_v(self.lateral)))
+        loc = _rot_np(loc, 0, np.radians(_v(self.flexion)))
+        return self.child.eval(o + loc @ E)
+
+
 class ScaleAbout(SDF):
     """Uniform scale by k about a centre point."""
 
@@ -750,6 +799,6 @@ __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
     "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
-    "ScaleAbout",
+    "ScaleAbout", "FramePose",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]

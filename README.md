@@ -52,9 +52,9 @@ and endplate planes from the implicit bones (`landmarks.json`), which the
 
 ## Block canvas and block graphs
 
-A block graph is a JSON file of blocks (bone, landmarks, smooth, booleans,
+A block graph is a JSON file of blocks (bone, landmarks, pose, smooth, booleans,
 transforms, offsets, cuts, outputs) joined by typed wires (body, bone, scalar,
-vector, plane, frame). In
+vector, plane, frame, vertebra). In
 the viewer, the panel at the bottom holds the **block canvas** and the settings:
 
 - Double-click the canvas (or **+ Block**) to add a block; drag from an output

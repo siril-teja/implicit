@@ -23,7 +23,8 @@ changing a value never rebuilds the shader; only rewiring does.
 
 Port types: ``body`` (a field), ``bone`` (a sampled field from a bone file,
 also accepted wherever a body is), ``scalar``, ``vec3``, ``plane`` (point and
-unit normal), ``frame`` (origin and right/anterior/cranial axes), and static
+unit normal), ``frame`` (origin and right/anterior/cranial axes), ``vertebra``
+(a frame with the superior and inferior endplate planes, moved together), and static
 settings ``number``, ``text``, ``color``, ``bool``, ``choice``, ``path``.
 
     python -m implicit.graph blocks             # block manifest (JSON) for the editor
@@ -41,19 +42,19 @@ from pathlib import Path
 
 import numpy as np
 
-from .expr import BinOp, Const, Expr, Func, Param, Vec3
+from .expr import BinOp, Const, Expr, Func, Param, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, Grid, GridSmooth, HalfSpace,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
 
 LIVE = {"scalar", "vec3"}                 # literal values become parameters
-WIRED = {"body", "bone", "scalar", "vec3", "plane", "frame"}  # types a wire can carry
-WIRE_ONLY = {"body", "bone", "plane", "frame"}  # inputs that need a wire (no literal)
+WIRED = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra"}  # types a wire can carry
+WIRE_ONLY = {"body", "bone", "plane", "frame", "vertebra"}  # inputs that need a wire (no literal)
 STATIC = {"number", "text", "color", "bool", "choice", "path"}
 ACCEPTS = {"body": {"body", "bone"}, "bone": {"bone"}, "scalar": {"scalar"}, "vec3": {"vec3"},
-           "plane": {"plane"}, "frame": {"frame"}}
+           "plane": {"plane"}, "frame": {"frame"}, "vertebra": {"vertebra"}}
 
 
 class GraphError(ValueError):
@@ -161,6 +162,14 @@ class FrameV:
     x: Vec3
     y: Vec3
     z: Vec3
+
+
+@dataclass
+class VertebraV:
+    """A vertebra's landmarks on one wire: frame and endplate planes (None if absent)."""
+    frame: FrameV
+    sup: PlaneV | None
+    inf: PlaneV | None
 
 
 def _const_vec(v):
@@ -440,8 +449,9 @@ def landmark_markers(lm):
 
 @block("landmarks", "Landmarks", "Anatomy",
        [Port("bone", "bone", label="Vertebra (or sacrum)")],
-       [Port("frame", "frame", label="Frame"), Port("superior", "plane", label="Superior endplate"),
-        Port("inferior", "plane", label="Inferior endplate"), Port("markers", "body", label="Markers")])
+       [Port("vertebra", "vertebra", label="Vertebra"), Port("frame", "frame", label="Frame"),
+        Port("superior", "plane", label="Superior endplate"), Port("inferior", "plane", label="Inferior endplate"),
+        Port("markers", "body", label="Markers")])
 def _landmarks(x, node):
     """Vertebral body frame (origin between the endplates; right, anterior, cranial axes) and the
     endplate planes (normals point away from the body), detected from the implicit bone."""
@@ -454,6 +464,7 @@ def _landmarks(x, node):
         out[port] = PlaneV(_const_vec(lm[k][0]), _const_vec(lm[k][1])) if k in lm else None
     sdf, b = landmark_markers(lm)
     out["markers"] = Field(sdf, lambda now: b)
+    out["vertebra"] = VertebraV(out["frame"], out["superior"], out["inferior"])
     return out
 
 
@@ -506,6 +517,149 @@ def _show_frame(x, node):
         oiv, lu, ru = _vec_interval(f.origin, now), _upper(length, now), _upper(r, now)
         return None if oiv is None or lu is None or ru is None else (oiv[0] - lu - ru, oiv[1] + lu + ru)
     return {"body": Field(_axes(f, length, r), bounds)}
+
+
+# ---------------------------------------------------------------- pose
+
+def _dot(a: Vec3, b: Vec3):
+    return a.c[0] * b.c[0] + a.c[1] * b.c[1] + a.c[2] * b.c[2]
+
+
+def _rot_matrix(axis, deg):
+    """Rotation matrix (rows of expressions) by ``deg`` degrees about axis 0/1/2."""
+    c, s = cos(radians(deg)), sin(radians(deg))
+    m = [[Const(1.0) if r == k else Const(0.0) for k in range(3)] for r in range(3)]
+    i, j = {0: (1, 2), 1: (2, 0), 2: (0, 1)}[axis]
+    m[i][i], m[i][j], m[j][i], m[j][j] = c, -s, s, c
+    return m
+
+
+def _matmul(a, b):
+    def term(r, k):
+        parts = [_mul(a[r][m], b[m][k]) for m in range(3)
+                 if not (_is_zero(a[r][m]) or _is_zero(b[m][k]))]
+        if not parts:
+            return Const(0.0)
+        out = parts[0]
+        for q in parts[1:]:
+            out = out + q
+        return out
+    return [[term(r, k) for k in range(3)] for r in range(3)]
+
+
+def _is_zero(e):
+    return isinstance(e, Const) and e.v == 0.0
+
+
+def _mul(a, b):
+    if isinstance(a, Const) and a.v == 1.0:
+        return b
+    if isinstance(b, Const) and b.v == 1.0:
+        return a
+    return a * b
+
+
+class _Pose:
+    """The rigid motion of the Pose block, applied to points and directions (as expressions).
+
+    In frame coordinates R = Rz(axial) Ry(lateral) Rx(-flexion); the frame axes are
+    orthonormal, so a moved axis is the frame combination of a column of R.
+    """
+
+    def __init__(self, f: FrameV, flexion, lateral, axial, shift: Vec3):
+        self.f, self.shift = f, shift
+        self.R = _matmul(_matmul(_rot_matrix(2, axial), _rot_matrix(1, lateral)), _rot_matrix(0, -flexion))
+
+    def _to_world(self, loc):
+        f = self.f
+        return f.x * loc[0] + f.y * loc[1] + f.z * loc[2]
+
+    def _rotate(self, w: Vec3):
+        f = self.f
+        loc = [_dot(w, f.x), _dot(w, f.y), _dot(w, f.z)]
+        return self._to_world([self.R[r][0] * loc[0] + self.R[r][1] * loc[1] + self.R[r][2] * loc[2]
+                               for r in range(3)])
+
+    def direction(self, n: Vec3):
+        return self._rotate(n)
+
+    def point(self, p: Vec3):
+        f, t = self.f, self.shift.c
+        return f.origin + self._rotate(p - f.origin) + (f.x * t[0] + f.y * t[1] + f.z * t[2])
+
+    def plane(self, pl):
+        return None if pl is None else PlaneV(self.point(pl.point), self.direction(pl.normal))
+
+    def frame(self):
+        f, t = self.f, self.shift.c
+        axes = [self._to_world([self.R[r][k] for r in range(3)]) for k in range(3)]
+        return FrameV(f.origin + (f.x * t[0] + f.y * t[1] + f.z * t[2]), *axes)
+
+
+@block("pose", "Pose", "Anatomy",
+       [BODY(label="Body"), Port("vertebra", "vertebra", label="Vertebra (its frame)"),
+        S("flexion", 0, -30, 30, 0.5, "deg", "Flexion (+) / extension (−)"),
+        S("lateral", 0, -30, 30, 0.5, "deg", "Lateral bending (+ right)"),
+        S("axial", 0, -30, 30, 0.5, "deg", "Axial rotation (+ front turns left)"),
+        Port("shift", "vec3", [0.0, 0.0, 0.0], step=0.5, unit="mm", span=20.0,
+             label="Shift (right, anterior, cranial)")],
+       [Port("body", "body", label="Body"), Port("vertebra", "vertebra", label="Vertebra")])
+def _pose(x, node):
+    """Move a vertebra in its own frame: rotations about its body centre (flexion,
+    lateral bending, axial rotation) and a shift along its axes. Its frame and
+    endplates move with it, so blocks downstream (discs, cages) follow."""
+    b, v = x["body"], x["vertebra"]
+    f = v.frame
+    pose = _Pose(f, x["flexion"], x["lateral"], x["axial"], x["shift"])
+    sdf = FramePose(b.sdf, f.origin, f.x, f.y, f.z, x["flexion"], x["lateral"], x["axial"], x["shift"])
+
+    def bounds(now):
+        bb, oiv = _child(b, now), _vec_interval(f.origin, now)
+        if bb is None or oiv is None:
+            return None
+        corners = np.array([[bb[i][0], bb[j][1], bb[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
+        if now:  # exact: the corners moved by the current pose
+            c = np.array([[e.value() for e in pose.point(Vec3(*map(float, q))).c] for q in corners])
+            return c.min(0), c.max(0)
+        # Any rotation about the origin stays in the sphere through the farthest corner; the
+        # shift adds at most its length.
+        far = np.maximum(np.abs(corners - oiv[0]), np.abs(corners - oiv[1]))
+        siv = _vec_interval(x["shift"], now)
+        if siv is None:
+            return None
+        r = np.linalg.norm(far, axis=1).max() + np.linalg.norm(np.maximum(np.abs(siv[0]), np.abs(siv[1])))
+        return oiv[0] - r, oiv[1] + r
+    return {"body": Field(sdf, bounds), "vertebra": VertebraV(pose.frame(), pose.plane(v.sup), pose.plane(v.inf))}
+
+
+@block("show_vertebra", "Show vertebra", "Anatomy",
+       [Port("vertebra", "vertebra", label="Vertebra"), S("radius", 14, 1, 60, 0.5, "mm", "Endplate disc radius"),
+        S("length", 12, 1, 60, 0.5, "mm", "Axis length")], [Port("body", "body")])
+def _show_vertebra(x, node):
+    """A vertebra's frame axes and endplate discs, to check them in 3D (follows Pose)."""
+    v, r, length = x["vertebra"], x["radius"], x["length"]
+    sdf = _axes(v.frame, length, AXIS_R)
+    for pl in (v.sup, v.inf):
+        if pl is not None:
+            sdf = Union(sdf, _disc(pl.point, pl.normal, r, MARK_T))
+
+    def bounds(now):
+        parts = [_vec_interval(v.frame.origin, now)] + [_vec_interval(pl.point, now) for pl in (v.sup, v.inf) if pl]
+        ru, lu = _upper(r, now), _upper(length, now)
+        if any(q is None for q in parts) or ru is None or lu is None:
+            return None
+        e = max(ru, lu) + AXIS_R + MARK_T
+        return np.min([q[0] for q in parts], axis=0) - e, np.max([q[1] for q in parts], axis=0) + e
+    return {"body": Field(sdf, bounds)}
+
+
+@block("vertebra_parts", "Vertebra parts", "Anatomy", [Port("vertebra", "vertebra", label="Vertebra")],
+       [Port("frame", "frame", label="Frame"), Port("superior", "plane", label="Superior endplate"),
+        Port("inferior", "plane", label="Inferior endplate")])
+def _vertebra_parts(x, node):
+    """Frame and endplate planes of a vertebra (e.g. after Pose)."""
+    v = x["vertebra"]
+    return {"frame": v.frame, "superior": v.sup, "inferior": v.inf}
 
 
 @block("output", "Output body", "Output",
@@ -586,7 +740,10 @@ class _Context:
         if not e:
             return None
         off = getattr(self, "offset", np.zeros(3))
-        R = np.array(e["R"], float)
+        # Stored to 4 decimals: restore exact orthonormal axes (nearest rotation), so a
+        # pose with zero angles is exactly the identity.
+        u, _, vt = np.linalg.svd(np.array(e["R"], float))
+        R = u @ vt
         out = {"origin": np.array(e["body_center"], float) - off, "axes": R.T.copy()}
         for k in ("sup", "inf"):
             if k in e:
@@ -838,7 +995,12 @@ def trace(sdf, holes=None):
 
 
 def _block_templates(blk: Block):
-    """Templates of a body block, one per combination of its choice inputs ("" if none)."""
+    """Templates of a block's outputs, per combination of its choice inputs ("" if none).
+
+    {combo: {port: template}}: a body output is a traced shader program; a value
+    output (vector, plane, frame, vertebra) holds the GLSL expressions of its
+    components, written with the same "${input}" placeholders.
+    """
     choices = [p for p in blk.inputs if p.type == "choice"]
     combos = [{}]
     for p in choices:
@@ -851,22 +1013,44 @@ def _block_templates(blk: Block):
                 h = _Hole(p.name)
                 holes[id(h)] = p.name
                 x[p.name] = Field(h, None)
-            elif p.type == "plane":
-                x[p.name] = PlaneV(*(_vec_hole(f"{p.name}.{k}") for k in ("point", "normal")))
-            elif p.type == "frame":
-                x[p.name] = FrameV(*(_vec_hole(f"{p.name}.{k}") for k in ("origin", "x", "y", "z")))
+            elif p.type in ("plane", "frame", "vertebra", "vec3"):
+                x[p.name] = _value_hole(p.type, p.name)
             elif p.type == "scalar":
                 x[p.name] = _ScalarHole(p.name)
-            elif p.type == "vec3":
-                x[p.name] = Vec3(*(_ScalarHole(f"{p.name}.{a}") for a in "xyz"))
             elif p.type == "choice":
                 x[p.name] = combo[p.name]
             else:
                 x[p.name] = p.default
         node = Node("trace", blk, {}, blk.title)
-        res = blk.build(x, node)["body"]
-        out[",".join(f"{k}={v}" for k, v in combo.items())] = trace(res.sdf, holes)
+        res = blk.build(x, node)
+        ports = {}
+        for op in blk.outputs:
+            v = res[op.name]
+            ports[op.name] = trace(v.sdf, holes) if op.type == "body" else _value_glsl(v)
+        out[",".join(f"{k}={v}" for k, v in combo.items())] = ports
     return out
+
+
+def _value_hole(kind, name):
+    if kind == "vec3":
+        return _vec_hole(name)
+    if kind == "plane":
+        return PlaneV(*(_vec_hole(f"{name}.{k}") for k in ("point", "normal")))
+    if kind == "frame":
+        return FrameV(*(_vec_hole(f"{name}.{k}") for k in ("origin", "x", "y", "z")))
+    return VertebraV(_value_hole("frame", f"{name}.frame"), _value_hole("plane", f"{name}.sup"),
+                     _value_hole("plane", f"{name}.inf"))
+
+
+def _value_glsl(v):
+    """GLSL expressions of a value output's scalar components (nested like the value)."""
+    if v is None:
+        return None
+    if isinstance(v, Vec3):
+        return [c.glsl() for c in v.c]
+    if isinstance(v, Expr):
+        return v.glsl()
+    return {k: _value_glsl(getattr(v, k)) for k in v.__dataclass_fields__}
 
 
 def _vec_hole(name):
@@ -874,7 +1058,8 @@ def _vec_hole(name):
 
 
 # Handled in viewer/graph.js: value plumbing and per-bone data from the library.
-BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts"}
+BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts",
+                 "vertebra_parts"}
 
 
 def browser_manifest():

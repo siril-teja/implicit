@@ -25,7 +25,8 @@ class TestBlocks(unittest.TestCase):
         m = json.loads(json.dumps(manifest()))
         names = [b["name"] for b in m["blocks"]]
         self.assertEqual(len(names), len(set(names)))
-        types = {"body", "bone", "scalar", "vec3", "plane", "frame", "number", "text", "color", "bool", "choice", "path"}
+        types = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra", "number", "text", "color", "bool",
+                 "choice", "path"}
         for b in m["blocks"]:
             self.assertTrue(b["doc"], b["name"])
             for p in b["inputs"] + b["outputs"]:
@@ -123,12 +124,20 @@ class TestBrowserBuild(unittest.TestCase):
             self.assertIn("glsl", b, b["name"])
             n_choice = [len(p["choices"]) for p in b["inputs"] if p["type"] == "choice"]
             self.assertEqual(len(b["glsl"]), int(np.prod(n_choice)) if n_choice else 1, b["name"])
-            for tmpl in b["glsl"].values():
-                self.assertTrue(tmpl["out"].startswith("$"))
-                for op in tmpl["ops"]:
-                    self.assertIn(op[0], ("var", "sub"))
+            for ports in b["glsl"].values():
+                self.assertEqual(set(ports), {o["name"] for o in b["outputs"]}, b["name"])
+                for o in b["outputs"]:
+                    if o["type"] != "body":
+                        continue
+                    tmpl = ports[o["name"]]
+                    self.assertTrue(tmpl["out"].startswith("$"))
+                    for op in tmpl["ops"]:
+                        self.assertIn(op[0], ("var", "sub"))
         self.assertEqual(set(next(b for b in m["blocks"] if b["name"] == "rotate")["glsl"]),
                          {"axis=x", "axis=y", "axis=z"})
+        pose = next(b for b in m["blocks"] if b["name"] == "pose")["glsl"][""]
+        self.assertEqual(set(pose["vertebra"]), {"frame", "sup", "inf"})
+        self.assertEqual(len(pose["vertebra"]["sup"]["normal"]), 3)
 
     def test_positions_slide_around_their_value(self):
         sc = build_graph(graph({"s": {"block": "sphere", "in": {"center": [120, 0, -7]}}, "o": out("@s")}))
@@ -204,6 +213,31 @@ class TestLandmarkBlocks(unittest.TestCase):
         self.sc.set_params({"rot_angle": -6})
         self.assertAlmostEqual(d1[0], d0[0], places=9)  # the origin does not move
         self.assertNotAlmostEqual(d1[1], d0[1], places=3)  # points off the axis do
+
+    def test_pose_moves_body_and_landmarks_together(self):
+        """Pose is one rigid motion: the field at a moved point equals the original field at the
+        original point, for landmark points; moved frames stay orthonormal."""
+        from implicit.expr import Vec3
+        from implicit.graph import _Pose, FrameV
+        lm = json.loads((BONES / "landmarks.json").read_text())["landmarks"]["L5"]
+        off = np.array(self.sc.frame_offset)
+        posed, orig = self.sc.body("L5 posed"), self.sc.body("L5 rotated")
+        self.sc.set_params({"rot_angle": 0})  # "L5 rotated" at 0 deg is the plain bone
+        cst = lambda v: Vec3(*map(float, v))
+        u, _, vt = np.linalg.svd(np.array(lm["R"]))
+        R = u @ vt  # as the Landmarks block: exact orthonormal axes
+        f = FrameV(cst(np.array(lm["body_center"]) - off), *(cst(R[:, k]) for k in range(3)))
+        p = {q.name: q for q in self.sc.params()}
+        pose = _Pose(f, p["pose5_flexion"], p["pose5_lateral"], p["pose5_axial"],
+                     Vec3(p["pose5_shift_x"], p["pose5_shift_y"], p["pose5_shift_z"]))
+        rng = np.random.default_rng(5)
+        pts = np.array(lm["sup"]["point"]) - off + rng.normal(0, 4.0, (50, 3))
+        moved = np.array([[e.value() for e in pose.point(cst(q)).c] for q in pts])
+        np.testing.assert_allclose(posed.sdf.eval(moved), orig.sdf.eval(pts), atol=1e-6)
+        fr = pose.frame()
+        E = np.array([[e.value() for e in a.c] for a in (fr.x, fr.y, fr.z)])
+        np.testing.assert_allclose(E @ E.T, np.eye(3), atol=1e-9)
+        self.sc.set_params({"rot_angle": -6})
 
     def test_sacrum_has_no_inferior_endplate(self):
         g = read_graph(ROOT / "tests" / "graphs" / "landmarks.json")
