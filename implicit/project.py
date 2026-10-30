@@ -13,7 +13,10 @@ VIEWER_DIR = Path(__file__).resolve().parent.parent / "viewer"
 
 
 def load_scene(script) -> Scene:
-    """Run a Python scene script and return its module-level ``scene``."""
+    """Scene from a block graph (``.json``) or a Python script's module-level ``scene``."""
+    if Path(script).suffix == ".json":
+        from .graph import load_graph
+        return load_graph(script)
     ns = runpy.run_path(str(script), run_name="__scene__")
     scene = ns.get("scene")
     if not isinstance(scene, Scene):

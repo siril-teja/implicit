@@ -9,6 +9,7 @@ endplate planes can be shown as thin markers.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -133,3 +134,34 @@ def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "m
             scene.add_template("endplate", marker_template(), inst, [
                 ("plane", COLORS["marker"], "Endplate planes", False)], bounds)
     return scene, m
+
+
+def anatomy_graph(bone_dir, relative_to=None, name=None):
+    """Block graph equivalent of build_scene's bones (bone -> smooth -> output per bone).
+
+    File paths are written relative to ``relative_to`` (the graph file's folder).
+    """
+    bone_dir = Path(bone_dir)
+    base = Path(relative_to) if relative_to else bone_dir
+    loaded = load_bones(bone_dir)
+    subject = next(iter(loaded.values()))[1].get("subject", "")
+    hexc = lambda c: "#" + "".join(f"{round(v * 255):02x}" for v in c)
+    nodes = {"smooth_preserve": {"block": "number", "title": "Keep bone volume", "pos": [0, -120],
+                                 "in": {"value": 1, "min": 0, "max": 1, "step": 1,
+                                        "label": "Smoothing keeps bone volume (1 = on)"}}}
+    for row, (bname, (_, meta)) in enumerate(loaded.items()):
+        kind = meta["kind"]
+        key = bname[0] if kind == "vertebra" else kind
+        y = row * 110
+        rel = Path(os.path.relpath(bone_dir / f"{bname}.npz", base)).as_posix()
+        nodes[bname] = {"block": "bone", "title": bname, "pos": [0, y], "in": {"file": rel}}
+        src = f"@{bname}"
+        if kind != "reference":
+            nodes[f"{bname}_smooth"] = {"block": "smooth", "title": f"{bname} smoothing", "pos": [260, y],
+                                        "in": {"bone": src, "sigma": 0, "preserve": "@smooth_preserve"}}
+            src = f"@{bname}_smooth"
+        nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [520, y],
+                                 "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
+                                        "group": GROUP[key], "visible": kind != "reference"}}
+    return {"format": "implicit.graph", "version": 1,
+            "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}

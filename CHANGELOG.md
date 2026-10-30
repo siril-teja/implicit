@@ -5,6 +5,25 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.3.0] - 2026-10-30
+
+### Added
+- **Block graphs** (`implicit.graph`): a model can be a JSON graph of blocks
+  joined by typed wires (body, bone, scalar, vector) instead of a Python script.
+  This is the file format for the upcoming block canvas in the viewer.
+  - Blocks: number, vector, bone; sphere, box, cylinder; union, intersect,
+    subtract (with blend radius); move, rotate; offset, shell, plane cut,
+    smooth; output body.
+  - Every literal number or vector in a graph is a live parameter, so editing a
+    value never rebuilds the shader; only rewiring does.
+  - Body bounds are propagated through the graph and hold over each slider's
+    whole range (tested), so the viewer can still skip far-away bodies.
+  - Graphs work wherever scripts do: `implicit.serve`, `implicit.build`,
+    `implicit.export`. `python -m implicit.graph check GRAPH` validates one;
+    `python -m implicit.graph blocks` prints the block list for the editor.
+- `examples/lumbar.json`: the bundled bones as a graph (bone → smooth → output
+  per bone, one shared "keep volume" number).
+
 ## [0.2.1] - 2026-10-30
 
 ### Changed
