@@ -15,8 +15,9 @@ rendered live, and exported for meshing.
   marching tetrahedra to closed, manifold STL. Next: anatomy blocks (endplates,
   discs, ligaments, osteotomies, cages), then a lightweight FE solver in the browser.
 
-Read [docs/primer.md](docs/primer.md) for the background, the math, and the
-roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
+Read [docs/primer.md](docs/primer.md) for the background and the math, and
+[docs/ROADMAP.md](docs/ROADMAP.md) for the roadmap: one objective and its acceptance
+criteria per step, each step one pull request. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
 ## Average spine (VIVA+)

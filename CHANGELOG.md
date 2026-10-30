@@ -5,6 +5,13 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.11.1] - 2026-10-31
+
+### Added
+- `docs/ROADMAP.md`: the roadmap to virtual patients in six phases (posture, soft
+  tissue, morphology, generator, realism, FE), one objective and acceptance
+  criteria per step; each step is one pull request.
+
 ## [0.11.0] - 2026-10-31
 
 ### Added
