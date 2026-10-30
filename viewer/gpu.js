@@ -17,6 +17,9 @@ uniform float u_fov;
 uniform vec3 u_bmin, u_bmax;
 uniform vec4 u_clip;     // xyz normal, w offset
 uniform float u_clipOn;
+uniform float u_pick;    // 1: write the body id under u_pickPx instead of a colour
+uniform vec2 u_pickPx;
+uniform highp uvec4 u_hl[2];  // highlighted bodies, one bit per body (first 256)
 `;
 
   const FRAG_TAIL = `
@@ -46,13 +49,21 @@ vec2 boxHit(vec3 ro, vec3 rd) {
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
+bool highlighted(int i) {
+  if (i < 0 || i >= 256) return false;
+  uvec4 w = u_hl[i >> 7];
+  int j = (i >> 5) & 3;
+  uint bits = j == 0 ? w.x : j == 1 ? w.y : j == 2 ? w.z : w.w;
+  return ((bits >> uint(i & 31)) & 1u) != 0u;
+}
 void main() {
-  vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
+  vec2 fc = u_pick > 0.5 ? u_pickPx : gl_FragCoord.xy;
+  vec2 uv = (2.0 * fc - u_res) / u_res.y;
   vec3 rd = normalize(u_fwd + uv.x * u_fov * u_right + uv.y * u_fov * u_up);
   vec3 ro = u_eye;
   vec3 bg = mix(vec3(0.13, 0.14, 0.17), vec3(0.24, 0.26, 0.31), 0.5 + 0.5 * uv.y);
   vec2 bh = boxHit(ro, rd);
-  if (bh.x > bh.y || bh.y < 0.0) { outColor = vec4(pow(bg, vec3(0.4545)), 1.0); return; }
+  if (bh.x > bh.y || bh.y < 0.0) { outColor = u_pick > 0.5 ? vec4(0.0) : vec4(pow(bg, vec3(0.4545)), 1.0); return; }
   float t = max(bh.x, 0.0);
   float id = -1.0;
   for (int i = 0; i < 300; i++) {
@@ -60,6 +71,11 @@ void main() {
     if (m.x < 0.002 * t + 0.01) { id = m.y; break; }
     t += 0.85 * m.x;
     if (t > bh.y) break;
+  }
+  if (u_pick > 0.5) {
+    float v = id + 1.0;
+    outColor = vec4(mod(v, 256.0) / 255.0, floor(v / 256.0) / 255.0, 0.0, 1.0);
+    return;
   }
   vec3 col = bg;
   if (id >= 0.0) {
@@ -74,6 +90,10 @@ void main() {
     float ao = calcAO(p, n);
     float spec = pow(max(dot(reflect(rd, n), l1), 0.0), 32.0);
     col = base * (0.85 * dif + 0.35 * hemi * ao) + 0.15 * spec;
+    if (highlighted(int(id))) {
+      float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
+      col = mix(col, vec3(0.42, 0.66, 1.0), 0.28) + vec3(0.35, 0.55, 1.0) * rim * 0.9;
+    }
   }
   outColor = vec4(pow(col, vec3(0.4545)), 1.0);
 }`;

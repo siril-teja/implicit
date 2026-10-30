@@ -1,16 +1,19 @@
 # implicit
 
 Implicit (signed-distance-field) modeling for parametric spine FE
-models. Geometry is written as Python scripts, rendered live in the browser,
-and exported for meshing.
+models. A model is a graph of blocks (bones, smoothing, booleans, transforms,
+offsets, cuts) edited on a block canvas in the browser or written in Python,
+rendered live, and exported for meshing.
 
-- **Python** builds a graph of field operations (primitives, booleans, smooth
-  blends, offsets/shells, cuts, rigid transforms) with named `Param`s.
+- **Block canvas** (browser): wire blocks together and the 3D view rebuilds as
+  you connect them; click a bone in 3D to see and edit every block that builds it.
+- **Python** builds the same kind of graph of field operations with named `Param`s.
 - **Browser** (WebGL2) ray-marches the same graph compiled to GLSL. Params are
   shader uniforms, so sliders update the whole assembly in real time with no
   rebuild.
 - **Export:** the graph is evaluated in NumPy and meshed with narrow-band
-  marching tetrahedra to closed, manifold STL. FE mesh export (Marc/Abaqus) is next.
+  marching tetrahedra to closed, manifold STL. Next: anatomy blocks (endplates,
+  discs, ligaments, osteotomies, cages), then a lightweight FE solver in the browser.
 
 Read [docs/primer.md](docs/primer.md) for the background, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
@@ -25,46 +28,59 @@ With the CT available, each surface is placed on the CT iso-surface (half-maximu
 threshold) and the label only guards it to ±2 mm. From then on all modelling
 works on these fields; masks are never read again.
 
-`examples/anatomy.py` shows `assets/bones/s0751`: L1–L5, sacrum, hips and proximal
-femurs from a TotalSegmentator v2 CT (CC BY 4.0).
+`examples/anatomy.json` (a block graph) shows `assets/bones/s0751`: L1–L5,
+sacrum, hips and proximal femurs from a TotalSegmentator v2 CT (CC BY 4.0).
 
 ```bash
 python -m implicit.anatomy.totalseg s0751 --out data/totalseg --ct      # masks + CT, ~40 MB
 python -m implicit.anatomy.convert data/totalseg/s0751 --out assets/bones/s0751 --select lumbar
-python -m implicit.serve examples/anatomy.py
+python -m implicit.serve examples/anatomy.json
 ```
 
-Each bone has a **smoothing** slider (σ in mm, Gaussian blur of the implicit
+Each bone feeds a **Smooth** block (σ in mm, Gaussian blur of the implicit
 field) that keeps the bone volume by default. To mesh
-bodies at chosen slider values (closed, manifold STL):
+bodies at chosen values (closed, manifold STL):
 
 ```bash
-python -m implicit.export examples/anatomy.py --body L3 --set smooth_L3=1.0 --voxel 0.4 --out out/
+python -m implicit.export examples/anatomy.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
 ```
 
 `--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Optional:
 `python -m implicit.anatomy.landmarks assets/bones/s0751` fits vertebral frames
 and endplate planes from the implicit bones (`landmarks.json`; L5 is not yet reliable).
 
-## Block graphs
+## Block canvas and block graphs
 
-A model can also be a JSON graph of blocks (bone, smooth, booleans, transforms,
-offsets, outputs) joined by typed wires; it is the format of the upcoming block
-canvas. Literal values in a graph are live sliders named `<node>_<input>`.
+A block graph is a JSON file of blocks (bone, smooth, booleans, transforms,
+offsets, cuts, outputs) joined by typed wires (body, bone, scalar, vector). In
+the viewer, the panel at the bottom holds the **block canvas** and the settings:
+
+- Double-click the canvas (or **+ Block**) to add a block; drag from an output
+  socket to an input socket to connect; drag a wire off an input to disconnect.
+- Click a block to edit its values; values update the 3D view instantly,
+  rewiring rebuilds the shader (in the browser, so it works on the live site).
+- Click a body in the 3D view to highlight it and list every block that builds it.
+- **Tab** hides or shows the panel (full-window 3D); drag its top edge to resize.
+- Edits are kept in the browser; **Download** saves the graph as a file,
+  **Open…** loads one, **Reset** returns to the published graph. With the dev
+  server, **Save** writes the graph back to its file.
+
+Literal values in a graph are live parameters named `<node>_<input>`.
 
 ```bash
-python -m implicit.graph check examples/lumbar.json
-python -m implicit.serve examples/lumbar.json
-python -m implicit.export examples/lumbar.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
+python -m implicit.graph check examples/anatomy.json
+python -m implicit.graph blocks          # every block, its inputs and outputs
 ```
 
-Format and block list: `implicit/graph.py` (`python -m implicit.graph blocks`).
+Format: `implicit/graph.py`. The browser builds each block's shader from code
+recorded from the Python implementation, and the GPU check compares the
+browser-built shader with NumPy too.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion)
-python -m implicit.serve examples/spine_segment.py
+python -m implicit.serve examples/anatomy.json examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```
 
@@ -73,7 +89,7 @@ meshes the visible bodies at the current slider values into `out/`.
 
 ```bash
 python -m unittest discover -s tests     # tests
-python -m implicit.build examples/*.py --out site            # static site
+python -m implicit.build examples/*.json examples/*.py --out site            # static site
 python -m implicit.build examples/spine_segment.py --single-file spine.html
 ```
 

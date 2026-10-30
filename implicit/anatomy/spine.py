@@ -146,21 +146,22 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     loaded = load_bones(bone_dir)
     subject = next(iter(loaded.values()))[1].get("subject", "")
     hexc = lambda c: "#" + "".join(f"{round(v * 255):02x}" for v in c)
-    nodes = {"smooth_preserve": {"block": "number", "title": "Keep bone volume", "pos": [0, -120],
+    nodes = {"smooth_preserve": {"block": "number", "title": "Keep bone volume", "pos": [0, -110],
                                  "in": {"value": 1, "min": 0, "max": 1, "step": 1,
                                         "label": "Smoothing keeps bone volume (1 = on)"}}}
-    for row, (bname, (_, meta)) in enumerate(loaded.items()):
+    rows = (len(loaded) + 1) // 2  # two columns of bone -> smooth -> output chains
+    for i, (bname, (_, meta)) in enumerate(loaded.items()):
         kind = meta["kind"]
         key = bname[0] if kind == "vertebra" else kind
-        y = row * 110
+        x0, y = 760 * (i // rows), (i % rows) * 100
         rel = Path(os.path.relpath(bone_dir / f"{bname}.npz", base)).as_posix()
-        nodes[bname] = {"block": "bone", "title": bname, "pos": [0, y], "in": {"file": rel}}
+        nodes[bname] = {"block": "bone", "title": bname, "pos": [x0, y], "in": {"file": rel}}
         src = f"@{bname}"
         if kind != "reference":
-            nodes[f"{bname}_smooth"] = {"block": "smooth", "title": f"{bname} smoothing", "pos": [260, y],
+            nodes[f"{bname}_smooth"] = {"block": "smooth", "title": f"{bname} smoothing", "pos": [x0 + 240, y],
                                         "in": {"bone": src, "sigma": 0, "preserve": "@smooth_preserve"}}
             src = f"@{bname}_smooth"
-        nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [520, y],
+        nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [x0 + 480, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
     return {"format": "implicit.graph", "version": 1,

@@ -93,6 +93,8 @@ class Scene:
         self.templates: list[Template] = []
         self.attribution = ""
         self.frame_offset = None  # optional: scene coordinates = source frame - offset (mm)
+        self.packed_atlas = None  # set when grids were packed beforehand (shared library atlas)
+        self.extra = {}  # extra keys for the viewer JSON
 
     def add(self, name, sdf, color=(0.8, 0.8, 0.8), group=None, bounds=None, visible=True,
             share=None):
@@ -168,7 +170,7 @@ class Scene:
         Parameters are uniforms, so slider changes never recompile the shader.
         """
         grids = self.grids()
-        if atlas:
+        if atlas and self.packed_atlas is None:
             pack_grids(grids)
         groups = self.groups()
         out = [f"uniform float {p.uniform};" for p in self.params()]
@@ -295,7 +297,7 @@ class Scene:
             "frame_offset": None if self.frame_offset is None else [float(x) for x in self.frame_offset],
         }
         h = hashlib.sha1(glsl.encode())
-        atlas = pack_grids(self.grids())
+        atlas = self.packed_atlas if self.packed_atlas is not None else pack_grids(self.grids())
         if atlas is not None:
             raw = gzip.compress(atlas.tobytes(), compresslevel=6, mtime=0)
             h.update(raw)
@@ -308,6 +310,7 @@ class Scene:
             h.update(data.tobytes())
             d["data"] = {"size": [data.shape[1], data.shape[0]],
                          "f32_b64": base64.b64encode(data.tobytes()).decode()}
+        d.update(self.extra)
         d["hash"] = h.hexdigest()[:12]
         return d
 

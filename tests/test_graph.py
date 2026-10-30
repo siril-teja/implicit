@@ -112,10 +112,69 @@ class TestBlocks(unittest.TestCase):
             self.assertEqual(len(path.read_text().splitlines()), 4)  # header, one line per node, close
 
 
+class TestBrowserBuild(unittest.TestCase):
+    def test_templates_for_every_body_block(self):
+        from implicit.graph import BROWSER_BUILT, browser_manifest
+        m = browser_manifest()
+        self.assertIn("gridSDF", m["glsl_lib"])
+        for b in m["blocks"]:
+            if b["name"] in BROWSER_BUILT:
+                continue
+            self.assertIn("glsl", b, b["name"])
+            n_choice = [len(p["choices"]) for p in b["inputs"] if p["type"] == "choice"]
+            self.assertEqual(len(b["glsl"]), int(np.prod(n_choice)) if n_choice else 1, b["name"])
+            for tmpl in b["glsl"].values():
+                self.assertTrue(tmpl["out"].startswith("$"))
+                for op in tmpl["ops"]:
+                    self.assertIn(op[0], ("var", "sub"))
+        self.assertEqual(set(next(b for b in m["blocks"] if b["name"] == "rotate")["glsl"]),
+                         {"axis=x", "axis=y", "axis=z"})
+
+    def test_positions_slide_around_their_value(self):
+        sc = build_graph(graph({"s": {"block": "sphere", "in": {"center": [120, 0, -7]}}, "o": out("@s")}))
+        p = {q.name: q for q in sc.params()}
+        self.assertEqual((p["s_center_x"].lo, p["s_center_x"].hi), (70.0, 170.0))
+        self.assertEqual((p["s_center_z"].lo, p["s_center_z"].hi), (-57.0, 43.0))
+
+    def test_current_bounds_are_tight_and_hold(self):
+        sc = load_graph(ROOT / "tests" / "graphs" / "all_blocks.json")
+        rng = np.random.default_rng(3)
+        for b in sc.bodies:
+            lo, hi = (np.array(x) for x in b.bounds_now())
+            rlo, rhi = (np.array(x) for x in b.bounds)
+            self.assertTrue(np.all(rlo <= lo) and np.all(hi <= rhi))
+            self.assertLess(np.max(hi - lo), 120)
+            pts = rng.uniform(rlo.clip(-200), rhi.clip(max=200), (200000, 3))
+            inside = pts[b.sdf.eval(pts) < 0]
+            self.assertGreater(len(inside), 0, b.name)
+            self.assertTrue(np.all(inside >= lo - 1e-6) and np.all(inside <= hi + 1e-6), b.name)
+
+    def test_library_shares_one_atlas(self):
+        from implicit.graph import Library
+        with tempfile.TemporaryDirectory() as d:
+            sub = Path(d) / "bones"
+            sub.mkdir()
+            for n in ("L3", "L4", "spinal_cord"):
+                (sub / f"{n}.npz").write_bytes((BONES / f"{n}.npz").read_bytes())
+            g = graph({"b": {"block": "bone", "in": {"file": "bones/L3.npz"}},
+                       "s": {"block": "smooth", "in": {"bone": "@b", "sigma": 1}}, "o": out("@s")})
+            lib = Library(g, d)
+            j = lib.to_json("x.atlas.gz")
+            self.assertEqual(set(j["bones"]), {"bones/L3.npz", "bones/L4.npz", "bones/spinal_cord.npz"})
+            for b in j["bones"].values():
+                self.assertEqual(b["smooth"]["ops"][1], ["sub", "bone", "$p"])
+            offsets = {k: lib.ctx.grid(k).atlas_offset for k in j["bones"]}
+            sc = build_graph(g, d, library=lib)
+            sc.glsl()
+            self.assertIs(sc.packed_atlas, lib.atlas)
+            self.assertEqual({k: lib.ctx.grid(k).atlas_offset for k in j["bones"]}, offsets)  # not repacked
+            self.assertEqual(sc.to_json("x.atlas.gz")["atlas"]["size"], j["atlas"]["size"])
+
+
 class TestAnatomyGraph(unittest.TestCase):
     def test_example_graph_matches_bone_files(self):
-        """examples/lumbar.json: one bone -> smooth -> output chain per bone file, all files present."""
-        g = read_graph(ROOT / "examples" / "lumbar.json")
+        """examples/anatomy.json: one bone -> smooth -> output chain per bone file, all files present."""
+        g = read_graph(ROOT / "examples" / "anatomy.json")
         files = {n["in"]["file"] for n in g["nodes"].values() if n["block"] == "bone"}
         self.assertEqual({Path(f).stem for f in files}, {p.stem for p in BONES.glob("*.npz")})
         for f in files:

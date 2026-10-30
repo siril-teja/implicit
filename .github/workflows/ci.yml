@@ -23,7 +23,7 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -v
       - name: Build viewer
-        run: python -m implicit.build examples/*.py --out site
+        run: python -m implicit.build examples/*.json examples/*.py --out site
       - name: Version bump and CHANGELOG entry
         if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no-release')
         run: python ci/release.py check origin/${{ github.base_ref }}
@@ -59,9 +59,9 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -r requirements.txt
-      - name: Build viewer
+      - name: Build viewer (plus a test graph that uses every block)
         shell: bash
-        run: python -m implicit.build examples/*.py --out site
+        run: python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json --out site
       - name: Install Playwright Chromium
         shell: bash
         run: |

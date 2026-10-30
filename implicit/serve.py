@@ -1,10 +1,11 @@
-"""Local dev server: viewer + live reload of scene scripts + STL export.
+"""Local dev server: viewer + live reload of scene scripts and block graphs + STL export.
 
-    python -m implicit.serve examples/spine_segment.py [more.py ...] [--port 8000]
+    python -m implicit.serve examples/anatomy.json examples/spine_segment.py [--port 8000]
 
-Edit a scene script and save: the browser recompiles the shader within ~1 s.
-Moving sliders never touches Python; "Export STL" meshes on the Python side
-with the slider values currently shown in the browser.
+Edit a scene script or graph file and save: the browser reloads it within ~1 s.
+Block graphs are edited in the browser's block canvas; "Save" writes the graph
+back to its file. Moving sliders never touches Python; "Export STL" meshes on
+the Python side with the graph and slider values currently shown in the browser.
 """
 
 from __future__ import annotations
@@ -19,14 +20,15 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .export import mesh_body, mesh_report
+from .graph import browser_manifest, build_graph, save_graph
 from .mesh import write_stl
-from .project import VIEWER_DIR, load_scene
+from .project import VIEWER_DIR, load_graph_scene, load_scene
 
 
 class Project:
     def __init__(self, scripts, out_dir, voxel):
         self.scripts = {Path(s).stem: Path(s).resolve() for s in scripts}
-        self.cache = {}  # key -> (mtime, scene, json_bytes, atlas_gz)
+        self.cache = {}  # key -> (mtime, scene, json_bytes, atlas_gz, {graph, library json bytes})
         self.out_dir = Path(out_dir)
         self.voxel = voxel
 
@@ -36,9 +38,15 @@ class Project:
         hit = self.cache.get(key)
         if hit and hit[0] == mtime:
             return hit[1], hit[2]
-        scene = load_scene(path)
+        extra = {}
+        if path.suffix == ".json":
+            scene, g, lib = load_graph_scene(path)
+            extra = {"graph": json.dumps(g).encode(),
+                     "library": json.dumps(lib.to_json(f"{key}.atlas.gz")).encode()}
+        else:
+            scene = load_scene(path)
         data = json.dumps(scene.to_json(atlas_url=f"{key}.atlas.gz")).encode()
-        self.cache[key] = (mtime, scene, data, scene.atlas_gz())
+        self.cache[key] = (mtime, scene, data, scene.atlas_gz(), extra)
         print(f"[implicit] compiled {key} ({len(scene.bodies)} bodies, {len(scene.params())} params)")
         return scene, data
 
@@ -46,9 +54,23 @@ class Project:
         self.get(key)
         return self.cache[key][3]
 
-    def export(self, key, params, visible):
+    def extra(self, key, what):
+        self.get(key)
+        return self.cache[key][4].get(what)
+
+    def save_graph(self, key, graph):
+        path = self.scripts[key]
+        if path.suffix != ".json":
+            raise ValueError(f"{key} is not a block graph")
+        build_graph(graph, path.parent)  # refuse graphs that do not build
+        save_graph(graph, path)
+        return str(path)
+
+    def export(self, key, params, visible, graph=None):
         scene, _ = self.get(key)
-        scene.set_params(params)
+        if graph is not None:  # the graph as edited in the browser (may be unsaved)
+            scene = build_graph(graph, self.scripts[key].parent)
+        scene.set_params({k: v for k, v in params.items() if k in {p.name for p in scene.params()}})
         out = self.out_dir / key
         out.mkdir(parents=True, exist_ok=True)
         files = []
@@ -92,6 +114,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True})
         if path == "/scenes/index.json":
             return self._json(200, list(self.project.scripts))
+        if path == "/scenes/blocks.json":
+            return self._json(200, browser_manifest())
+        m = re.fullmatch(r"/scenes/(\w+)\.(graph|library)\.json", path)
+        if m and m.group(1) in self.project.scripts:
+            data = self.project.extra(m.group(1), m.group(2))
+            return self._json(200, raw=data) if data else self._json(404, {"error": "not a block graph"})
         m = re.fullmatch(r"/scenes/(\w+)\.atlas\.gz", path)
         if m and m.group(1) in self.project.scripts:
             data = self.project.atlas(m.group(1)) or b""
@@ -113,12 +141,14 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        if self.path != "/api/export":
+        if self.path not in ("/api/export", "/api/graph"):
             return self._json(404, {"error": "not found"})
         try:
             req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             key = req.get("scene") or next(iter(self.project.scripts))
-            files = self.project.export(key, req.get("params", {}), req.get("visible"))
+            if self.path == "/api/graph":
+                return self._json(200, {"file": self.project.save_graph(key, req["graph"])})
+            files = self.project.export(key, req.get("params", {}), req.get("visible"), req.get("graph"))
             return self._json(200, {"files": files})
         except Exception as e:
             traceback.print_exc()

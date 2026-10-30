@@ -32,16 +32,18 @@ also accepted wherever a body is), ``scalar``, ``vec3``, and static settings
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from .expr import BinOp, Const, Expr, Func, Param, Vec3
-from .scene import Scene
-from .sdf import (Box, Cylinder, Difference, Grid, HalfSpace, Intersect, Offset, Rotate,
-                  Shell, Sphere, Translate, Union, smooth)
+from .scene import Scene, pack_grids
+from .sdf import (GLSL_LIB, SDF, Box, Ctx, Cylinder, Difference, Grid, GridSmooth, HalfSpace,
+                  Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
 
@@ -67,10 +69,11 @@ class Port:
     label: str = ""
     choices: tuple = ()
     optional: bool = False
+    span: float | None = None  # slider range = value +- span (instead of lo..hi)
 
     def to_json(self):
         d = {"name": self.name, "type": self.type, "label": self.label or self.name}
-        for k in ("default", "lo", "hi", "step"):
+        for k in ("default", "lo", "hi", "step", "span"):
             if getattr(self, k) is not None:
                 d[k] = getattr(self, k)
         if self.unit:
@@ -123,20 +126,34 @@ def manifest():
 
 @dataclass
 class Field:
-    """A body on a wire: its SDF and an axis-aligned box that contains it (or None)."""
+    """A body on a wire: its SDF and how to bound it.
+
+    ``bfun(now)`` returns an axis-aligned box (lo, hi) containing the body, or None:
+    with ``now`` False for every slider value in range (baked into shaders, so the
+    renderer can skip the body safely), with ``now`` True at the current values
+    (tight; for the camera, export and probes).
+    """
     sdf: object
-    bounds: tuple | None
+    bfun: object = None
+
+    @property
+    def bounds(self):
+        return self.bfun(False) if self.bfun else None
+
+    def now(self):
+        return self.bfun(True) if self.bfun else None
 
 
-def _interval(e: Expr):
-    """(lo, hi) of an expression over its parameters' slider ranges, or None if unknown."""
+def _interval(e: Expr, now=False):
+    """(lo, hi) of an expression over its parameters' slider ranges (``now``: at their
+    current values), or None if unknown."""
     if isinstance(e, Param):
-        return min(e.lo, e.v), max(e.hi, e.v)
+        return (e.v, e.v) if now else (min(e.lo, e.v), max(e.hi, e.v))
     if isinstance(e, Const) or e.is_const():
         v = e.value()
         return v, v
     if isinstance(e, BinOp):
-        a, b = _interval(e.a), _interval(e.b)
+        a, b = _interval(e.a, now), _interval(e.b, now)
         if a is None or b is None:
             return None
         if e.op == "+":
@@ -151,13 +168,13 @@ def _interval(e: Expr):
     return None
 
 
-def _upper(e: Expr):
-    iv = _interval(e)
+def _upper(e: Expr, now=False):
+    iv = _interval(e, now)
     return None if iv is None else iv[1]
 
 
-def _vec_interval(v: Vec3):
-    ivs = [_interval(c) for c in v.c]
+def _vec_interval(v: Vec3, now=False):
+    ivs = [_interval(c, now) for c in v.c]
     if any(iv is None for iv in ivs):
         return None
     return np.array([iv[0] for iv in ivs]), np.array([iv[1] for iv in ivs])
@@ -186,6 +203,11 @@ def _intersect_b(a, b):
 
 S = lambda name, default, lo, hi, step, unit="", label="": Port(name, "scalar", default, lo, hi, step, unit, label)
 V = lambda name, default, lo, hi, step, unit="", label="": Port(name, "vec3", list(default), lo, hi, step, unit, label)
+# Positions (centres, offsets, plane points) slide +-SPAN mm around their value, so a
+# body's bounds (which must hold over the whole slider range) stay tight; typing a
+# value outside the range re-centres it.
+SPAN = 50.0
+P = lambda name, label="": Port(name, "vec3", [0.0, 0.0, 0.0], None, None, 0.5, "mm", label, span=SPAN)
 BODY = lambda name="body", label="": Port(name, "body", label=label)
 
 
@@ -202,7 +224,7 @@ def _number(x, node):
 
 
 @block("vector", "Vector", "Inputs",
-       [S("x", 0, -100, 100, 0.5, "mm"), S("y", 0, -100, 100, 0.5, "mm"), S("z", 0, -100, 100, 0.5, "mm")],
+       [Port("x", "scalar", 0.0, step=0.5, unit="mm", span=SPAN), Port("y", "scalar", 0.0, step=0.5, unit="mm", span=SPAN), Port("z", "scalar", 0.0, step=0.5, unit="mm", span=SPAN)],
        [Port("vector", "vec3")])
 def _vector(x, node):
     """Point or direction from three scalars."""
@@ -213,51 +235,60 @@ def _vector(x, node):
 def _bone(x, node):
     """One implicit bone converted from a segmentation (implicit.anatomy.convert)."""
     g = node.ctx.grid(x["file"])
-    return {"bone": Field(g, _grow(g.bounds(), 0.5))}
+    return {"bone": Field(g, lambda now: _grow(g.bounds(), 0.5))}
 
 
 @block("sphere", "Sphere", "Shapes",
-       [S("radius", 10, 0.1, 100, 0.1, "mm"), V("center", (0, 0, 0), -200, 200, 0.5, "mm")],
+       [S("radius", 10, 0.1, 100, 0.1, "mm"), P("center")],
        [Port("body", "body")])
 def _sphere(x, node):
     """Sphere of a given radius."""
     c, r = x["center"], x["radius"]
-    civ, riv = _vec_interval(c), _upper(r)
-    b = None if civ is None or riv is None else (civ[0] - riv, civ[1] + riv)
-    return {"body": Field(Translate(Sphere(r), c), b)}
+
+    def bounds(now):
+        civ, riv = _vec_interval(c, now), _upper(r, now)
+        return None if civ is None or riv is None else (civ[0] - riv, civ[1] + riv)
+    return {"body": Field(Translate(Sphere(r), c), bounds)}
 
 
 @block("box", "Box", "Shapes",
        [V("size", (20, 20, 20), 0.1, 200, 0.5, "mm", "Size (full extents)"),
-        V("center", (0, 0, 0), -200, 200, 0.5, "mm"), S("round", 0, 0, 20, 0.1, "mm", "Edge radius")],
+        P("center"), S("round", 0, 0, 20, 0.1, "mm", "Edge radius")],
        [Port("body", "body")])
 def _box(x, node):
     """Axis-aligned box with optional rounded edges."""
     half = x["size"] * 0.5
-    civ, hiv = _vec_interval(x["center"]), _vec_interval(half)
-    b = None if civ is None or hiv is None else (civ[0] - hiv[1], civ[1] + hiv[1])
-    return {"body": Field(Translate(Box(half, x["round"]), x["center"]), b)}
+
+    def bounds(now):
+        civ, hiv = _vec_interval(x["center"], now), _vec_interval(half, now)
+        return None if civ is None or hiv is None else (civ[0] - hiv[1], civ[1] + hiv[1])
+    return {"body": Field(Translate(Box(half, x["round"]), x["center"]), bounds)}
 
 
 @block("cylinder", "Cylinder", "Shapes",
        [S("radius", 10, 0.1, 100, 0.1, "mm"), S("height", 20, 0.1, 200, 0.5, "mm"),
-        V("center", (0, 0, 0), -200, 200, 0.5, "mm")],
+        P("center")],
        [Port("body", "body")])
 def _cylinder(x, node):
     """Cylinder along z (cranial)."""
     c = x["center"]
-    civ, r, h = _vec_interval(c), _upper(x["radius"]), _upper(x["height"])
-    b = None if civ is None or r is None or h is None else (
-        civ[0] - [r, r, h / 2], civ[1] + [r, r, h / 2])
-    return {"body": Field(Translate(Cylinder(x["radius"], x["height"] * 0.5), c), b)}
+
+    def bounds(now):
+        civ, r, h = _vec_interval(c, now), _upper(x["radius"], now), _upper(x["height"], now)
+        return None if civ is None or r is None or h is None else (
+            civ[0] - [r, r, h / 2], civ[1] + [r, r, h / 2])
+    return {"body": Field(Translate(Cylinder(x["radius"], x["height"] * 0.5), c), bounds)}
 
 
-def _boolean(cls, bounds):
+def _boolean(cls, combine):
     def build(x, node):
         a, b, k = x["a"], x["b"], x["blend"]
-        bb = bounds(a.bounds, b.bounds)
         smooth_k = not (k.is_const() and k.value() == 0)
-        return {"body": Field(cls(a.sdf, b.sdf, k if smooth_k else 0.0), _grow(bb, _upper(k)) if smooth_k else bb)}
+
+        def bounds(now):
+            bb = combine(a.bfun(now) if a.bfun else None, b.bfun(now) if b.bfun else None)
+            return _grow(bb, _upper(k, now)) if smooth_k else bb
+        return {"body": Field(cls(a.sdf, b.sdf, k if smooth_k else 0.0), bounds)}
     return build
 
 
@@ -273,58 +304,65 @@ BLOCKS["intersect"].doc = "Common part of A and B."
 BLOCKS["subtract"].doc = "A with B removed."
 
 
+def _child(f: Field, now):
+    return f.bfun(now) if f.bfun else None
+
+
 @block("translate", "Move", "Transforms",
-       [BODY(), V("offset", (0, 0, 0), -100, 100, 0.5, "mm")], [Port("body", "body")])
+       [BODY(), P("offset")], [Port("body", "body")])
 def _translate(x, node):
     """Move a body by an offset vector."""
     b, t = x["body"], x["offset"]
-    tiv = _vec_interval(t)
-    bb = None if b.bounds is None or tiv is None else (b.bounds[0] + tiv[0], b.bounds[1] + tiv[1])
-    return {"body": Field(Translate(b.sdf, t), bb)}
+
+    def bounds(now):
+        bb, tiv = _child(b, now), _vec_interval(t, now)
+        return None if bb is None or tiv is None else (bb[0] + tiv[0], bb[1] + tiv[1])
+    return {"body": Field(Translate(b.sdf, t), bounds)}
 
 
 @block("rotate", "Rotate", "Transforms",
        [BODY(), Port("axis", "choice", "x", choices=("x", "y", "z"), label="Axis"),
-        S("angle", 0, -45, 45, 0.5, "deg"), V("center", (0, 0, 0), -200, 200, 0.5, "mm")],
+        S("angle", 0, -45, 45, 0.5, "deg"), P("center")],
        [Port("body", "body")])
 def _rotate(x, node):
     """Rotate a body about an axis through a centre point (right-hand rule)."""
     b, c = x["body"], x["center"]
     sdf = Translate(Rotate(Translate(b.sdf, -c), x["axis"], x["angle"]), c)
-    civ = _vec_interval(c)
-    bb = None
-    if b.bounds is not None and civ is not None:
+
+    def bounds(now):
+        bb, civ = _child(b, now), _vec_interval(c, now)
+        if bb is None or civ is None:
+            return None
         # Any rotation stays inside the sphere about the centre through the farthest corner.
-        corners = np.array([[b.bounds[i][0], b.bounds[j][1], b.bounds[k][2]]
-                            for i in (0, 1) for j in (0, 1) for k in (0, 1)])
+        corners = np.array([[bb[i][0], bb[j][1], bb[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
         far = np.maximum(np.abs(corners - civ[0]), np.abs(corners - civ[1]))  # any centre in range
         r = np.linalg.norm(far, axis=1).max()
-        bb = (civ[0] - r, civ[1] + r)
-    return {"body": Field(sdf, bb)}
+        return civ[0] - r, civ[1] + r
+    return {"body": Field(sdf, bounds)}
 
 
 @block("offset", "Offset", "Modify", [BODY(), S("distance", 0, -10, 10, 0.1, "mm")], [Port("body", "body")])
 def _offset(x, node):
     """Grow (> 0) or shrink (< 0) a body by a distance."""
     b, d = x["body"], x["distance"]
-    return {"body": Field(Offset(b.sdf, d), _grow(b.bounds, _upper(d)))}
+    return {"body": Field(Offset(b.sdf, d), lambda now: _grow(_child(b, now), _upper(d, now)))}
 
 
 @block("shell", "Shell", "Modify", [BODY(), S("thickness", 1, 0.1, 10, 0.1, "mm")], [Port("body", "body")])
 def _shell(x, node):
     """Hollow a body, keeping an inner wall of the given thickness (e.g. a cortex)."""
     b = x["body"]
-    return {"body": Field(Shell(b.sdf, x["thickness"]), b.bounds)}
+    return {"body": Field(Shell(b.sdf, x["thickness"]), lambda now: _child(b, now))}
 
 
 @block("plane_cut", "Plane cut", "Modify",
-       [BODY(), V("point", (0, 0, 0), -200, 200, 0.5, "mm"),
+       [BODY(), P("point"),
         V("normal", (0, 0, 1), -1, 1, 0.01, "", "Normal (removed side)")],
        [Port("body", "body")])
 def _plane_cut(x, node):
     """Remove the part of a body on the normal side of a plane."""
     b = x["body"]
-    return {"body": Field(Intersect(b.sdf, HalfSpace(x["point"], x["normal"])), b.bounds)}
+    return {"body": Field(Intersect(b.sdf, HalfSpace(x["point"], x["normal"])), lambda now: _child(b, now))}
 
 
 @block("smooth", "Smooth", "Modify",
@@ -334,7 +372,7 @@ def _plane_cut(x, node):
 def _smooth(x, node):
     """Gaussian smoothing of a bone surface, width σ; optionally keeps the bone volume."""
     b = x["bone"]
-    return {"body": Field(smooth(b.sdf, x["sigma"], x["preserve"]), b.bounds)}
+    return {"body": Field(smooth(b.sdf, x["sigma"], x["preserve"]), lambda now: _child(b, now))}
 
 
 @block("output", "Output body", "Output",
@@ -358,20 +396,27 @@ class Node:
 
 
 class _Context:
-    def __init__(self, base: Path, files):
-        self.base = base
-        self._grids = {}
-        self.kinds = {}
+    """Bone grids of a graph (and, with ``whole_dirs``, every bone file next to them)."""
+
+    def __init__(self, base: Path, files, whole_dirs=False):
+        self.base = Path(base)
+        self._grids, self.kinds, self.names = {}, {}, {}
+        self.attribution = ""
         from .anatomy.convert import load_bone
-        for f in files:
-            path = self.resolve(f)
-            if path not in self._grids:
-                if not path.exists():
-                    raise GraphError(f"bone file not found: {f} ({path})")
-                g, meta = load_bone(path)
-                self._grids[path] = g
-                self.kinds[path] = meta.get("kind", "")
-                self.attribution = getattr(self, "attribution", "") or meta.get("attribution", "")
+        self.graph_paths = [self.resolve(f) for f in files]
+        for f, path in zip(files, self.graph_paths):
+            if not path.exists():
+                raise GraphError(f"bone file not found: {f} ({path})")
+        paths = list(dict.fromkeys(self.graph_paths))
+        if whole_dirs:
+            for d in dict.fromkeys(q.parent for q in self.graph_paths):
+                paths += [q.resolve() for q in sorted(d.glob("*.npz")) if q.resolve() not in paths]
+        for path in paths:
+            g, meta = load_bone(path)
+            self._grids[path] = g
+            self.kinds[path] = meta.get("kind", "")
+            self.names[path] = meta.get("name", path.stem)
+            self.attribution = self.attribution or meta.get("attribution", "")
 
     def resolve(self, f):
         p = Path(f)
@@ -382,8 +427,9 @@ class _Context:
 
     def auto_offset(self):
         """Display frame: bones (not references) centred at the origin, whole mm."""
-        bs = [g.bounds() for p, g in self._grids.items() if self.kinds[p] != "reference"]
-        bs = bs or [g.bounds() for g in self._grids.values()]
+        own = {p: self._grids[p] for p in self.graph_paths}
+        bs = [g.bounds() for p, g in own.items() if self.kinds[p] != "reference"]
+        bs = bs or [g.bounds() for g in own.values()]
         if not bs:
             return np.zeros(3)
         lo = np.min([b[0] - 0.5 for b in bs], axis=0)
@@ -438,10 +484,14 @@ def _color(v):
 def _literal(node: Node, port: Port, v):
     """A literal input value; scalar and vec3 literals become live parameters."""
     label = f"{node.title}: {port.label or port.name}"
+    def rng(v):
+        if port.span is not None:
+            return v - port.span, v + port.span
+        return (min(port.lo if port.lo is not None else v, v), max(port.hi if port.hi is not None else v, v))
+
     if port.type == "scalar":
         v = float(v)
-        lo = min(port.lo if port.lo is not None else v, v)
-        hi = max(port.hi if port.hi is not None else v, v)
+        lo, hi = rng(v)
         return Param(f"{node.id}_{port.name}", v, lo, hi, port.step, label, port.unit)
     if port.type == "vec3":
         if not (isinstance(v, (list, tuple)) and len(v) == 3):
@@ -449,8 +499,7 @@ def _literal(node: Node, port: Port, v):
         comps = []
         for axis, c in zip("xyz", v):
             c = float(c)
-            lo = min(port.lo if port.lo is not None else c, c)
-            hi = max(port.hi if port.hi is not None else c, c)
+            lo, hi = rng(c)
             comps.append(Param(f"{node.id}_{port.name}_{axis}", c, lo, hi, port.step, f"{label} {axis}", port.unit))
         return Vec3(*comps)
     if port.type == "number":
@@ -478,8 +527,24 @@ def read_graph(path):
     return g
 
 
-def build_graph(g: dict, base=".") -> Scene:
-    """Build a Scene from a graph dict (``base``: directory that relative file paths start from)."""
+def _bone_files(nodes):
+    files = [n["in"].get("file") if isinstance(n.get("in"), dict) else None
+             for n in nodes.values() if n.get("block") == "bone"]
+    if any(f is None for f in files):
+        raise GraphError("every bone block needs a file")
+    return files
+
+
+def _frame_offset(g, ctx):
+    frame = g.get("frame", "auto")
+    return ctx.auto_offset() if frame == "auto" else np.asarray(frame.get("offset", (0, 0, 0)), float)
+
+
+def build_graph(g: dict, base=".", library=None) -> Scene:
+    """Build a Scene from a graph dict (``base``: directory that relative file paths start from).
+
+    With a ``Library`` the bones come from its shared, already packed atlas (as in the viewer).
+    """
     raw_nodes = g.get("nodes") or {}
     nodes: dict[str, Node] = {}
     for nid, raw in raw_nodes.items():
@@ -493,13 +558,16 @@ def build_graph(g: dict, base=".") -> Scene:
             raise GraphError(f"{nid}: block {blk.name!r} has no input(s) {sorted(unknown)}")
         nodes[nid] = Node(nid, blk, raw, raw.get("title") or nid)
 
-    files = [n.raw.get("in", {}).get("file") for n in nodes.values() if n.block.name == "bone"]
-    if any(f is None for f in files):
-        raise GraphError("every bone block needs a file")
-    ctx = _Context(Path(base), files)
-    frame = g.get("frame", "auto")
-    offset = ctx.auto_offset() if frame == "auto" else np.asarray(frame.get("offset", (0, 0, 0)), float)
-    ctx.shift(offset)
+    files = _bone_files(raw_nodes)
+    if library is not None:
+        ctx, offset = library.ctx, library.offset
+        missing = [f for f in files if ctx.resolve(f) not in ctx._grids]
+        if missing:
+            raise GraphError(f"bone(s) not in the library: {missing}")
+    else:
+        ctx = _Context(Path(base), files)
+        offset = _frame_offset(g, ctx)
+        ctx.shift(offset)
 
     values: dict[str, dict] = {}
     outputs = []
@@ -547,12 +615,154 @@ def build_graph(g: dict, base=".") -> Scene:
         raise GraphError("no output has finite bounds; give the graph \"bounds\": [[x,y,z],[x,y,z]]")
     scene = Scene(g.get("name") or "graph", (lo, hi))
     scene.frame_offset = offset
-    scene.attribution = getattr(ctx, "attribution", "")
+    scene.attribution = ctx.attribution
+    scene.extra = {"graph": True}
+    if library is not None:
+        scene.packed_atlas = library.atlas
     for node, x in outputs:
         f = x["body"]
         scene.add(x["name"] or node.id, f.sdf, x["color"], group=x["group"] or None,
                   bounds=f.bounds, visible=x["visible"])
+        scene.bodies[-1].bounds_now = f.now
+    now = [b for _, x in outputs if (b := x["body"].now()) is not None]
+    if now:  # where the bodies are at the current values: the viewer frames this
+        scene.extra["view_bounds"] = [np.min([b[0] for b in now], axis=0).tolist(),
+                                      np.max([b[1] for b in now], axis=0).tolist()]
     return scene
+
+
+# ---------------------------------------------------------------- browser code generation
+#
+# The viewer builds the shader of an edited graph itself. Each block's GLSL is
+# recorded once here by running its Python emitter on placeholders ("tracing"),
+# so the browser assembles the same code without a second implementation:
+#   {"ops": [["var", "float", "length($p) - ${radius}"], ["sub", "body", "$0"], ...], "out": "$1"}
+# "$p" is the point the block is evaluated at, "$k" the result of op k,
+# "${name}" a scalar input ("${center.x}" a vector component), and a "sub" op
+# evaluates the body wired to an input at a point.
+
+class _Hole(SDF):
+    def __init__(self, name):
+        self.name = name
+
+
+class _ScalarHole(Expr):
+    def __init__(self, name):
+        self.name = name
+
+    def glsl(self):
+        return "${" + self.name + "}"
+
+
+class _TraceCtx(Ctx):
+    def __init__(self, holes):
+        super().__init__()
+        self.ops, self.holes = [], holes
+
+    def var(self, kind, expr):
+        self.ops.append(["var", kind, expr])
+        return f"${len(self.ops) - 1}"
+
+    def sub(self, node, p):
+        key = (id(node), p)
+        if key not in self.memo:
+            if id(node) in self.holes:
+                self.ops.append(["sub", self.holes[id(node)], p])
+                r = f"${len(self.ops) - 1}"
+            else:
+                r = node.emit(self, p)
+            self.memo[key] = (node, r)
+        return self.memo[key][1]
+
+
+def trace(sdf, holes=None):
+    """GLSL template of ``sdf`` evaluated at "$p"; ``holes`` maps id(node) -> input name."""
+    ctx = _TraceCtx(holes or {})
+    return {"ops": ctx.ops, "out": ctx.sub(sdf, "$p")}
+
+
+def _block_templates(blk: Block):
+    """Templates of a body block, one per combination of its choice inputs ("" if none)."""
+    choices = [p for p in blk.inputs if p.type == "choice"]
+    combos = [{}]
+    for p in choices:
+        combos = [{**c, p.name: v} for c in combos for v in p.choices]
+    out = {}
+    for combo in combos:
+        holes, x = {}, {}
+        for p in blk.inputs:
+            if p.type in ("body", "bone"):
+                h = _Hole(p.name)
+                holes[id(h)] = p.name
+                x[p.name] = Field(h, None)
+            elif p.type == "scalar":
+                x[p.name] = _ScalarHole(p.name)
+            elif p.type == "vec3":
+                x[p.name] = Vec3(*(_ScalarHole(f"{p.name}.{a}") for a in "xyz"))
+            elif p.type == "choice":
+                x[p.name] = combo[p.name]
+            else:
+                x[p.name] = p.default
+        node = Node("trace", blk, {}, blk.title)
+        res = blk.build(x, node)["body"]
+        out[",".join(f"{k}={v}" for k, v in combo.items())] = trace(res.sdf, holes)
+    return out
+
+
+BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output"}  # handled in viewer/graph.js
+
+
+def browser_manifest():
+    """Block manifest plus GLSL templates and the shared GLSL library, for viewer/graph.js."""
+    m = manifest()
+    for b in m["blocks"]:
+        if b["name"] not in BROWSER_BUILT:
+            b["glsl"] = _block_templates(BLOCKS[b["name"]])
+    m["glsl_lib"] = GLSL_LIB
+    return m
+
+
+class Library:
+    """Every bone file next to a graph's bones, in the graph's frame, packed in one atlas.
+
+    The viewer can add any of these bones to the graph. Smoothing pyramids are
+    built for all of them, so a Smooth block works on any bone without Python.
+    """
+
+    def __init__(self, g: dict, base):
+        self.base = Path(base)
+        files = _bone_files(g.get("nodes") or {})
+        self.ctx = _Context(self.base, files, whole_dirs=True)
+        self.offset = _frame_offset(g, self.ctx)
+        self.ctx.shift(self.offset)
+        grids = list(self.ctx._grids.values())
+        levels = [lv for gr in grids for lv in _pyramid(gr, GridSmooth.LEVELS)[0]]
+        self.atlas = pack_grids(grids + levels)  # None without bones
+        self.keys = {}
+        for f, path in zip(files, self.ctx.graph_paths):
+            self.keys.setdefault(path, f)
+        for path in self.ctx._grids:
+            self.keys.setdefault(path, Path(os.path.relpath(path, self.base.resolve())).as_posix())
+
+    def to_json(self, atlas_url=None):
+        bones = {}
+        for path, g in self.ctx._grids.items():
+            lo, hi = g.bounds()
+            sm = GridSmooth(g, _ScalarHole("sigma"), _ScalarHole("preserve"))
+            bones[self.keys[path]] = {
+                "name": self.ctx.names[path], "kind": self.ctx.kinds[path],
+                "bounds": [(lo - 0.5).tolist(), (hi + 0.5).tolist()],
+                "bone": trace(g), "smooth": trace(sm, {id(g): "bone"}),
+            }
+        a = self.atlas
+        atlas = None if a is None else {"size": [a.shape[2], a.shape[1], a.shape[0]], "url": atlas_url}
+        return {"frame_offset": [float(x) for x in self.offset], "attribution": self.ctx.attribution,
+                "atlas": atlas, "bones": bones}
+
+    def atlas_gz(self):
+        if self.atlas is None:
+            return None
+        return gzip.compress(self.atlas.tobytes(), compresslevel=6, mtime=0)
 
 
 def load_graph(path) -> Scene:

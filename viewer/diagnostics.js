@@ -60,13 +60,30 @@ vec2 probeBox(vec3 ro, vec3 rd) {
 #define MARCH(UNIT, RO, TARGET) { vec3 rd = normalize(TARGET - RO); vec2 bh = probeBox(RO, rd); float t = max(bh.x, 0.0), mind = 1e9, it = 0.0, hit = 0.0; for (int k = 0; k < 300; k++) { float d = UNIT(RO + rd * t).x; mind = min(mind, d); it += 1.0; if (d < 0.002 * t + 0.01) { hit = 1.0; break; } t += 0.85 * d; if (t > bh.y) break; } o = vec4(it, t, mind, hit); }
 `;
 
+const getJson = async (url) => (await fetch(url, { cache: "no-store" })).json();
+
+// Block-graph scenes are checked twice: the shader Python wrote, and the one the
+// viewer builds in the browser from the graph (graph.js), as used when editing.
 async function diagnose(gl, key) {
-  const scene = await (await fetch(`scenes/${key}.json`, { cache: "no-store" })).json();
-  const probes = await (await fetch(`scenes/${key}.probes.json`, { cache: "no-store" })).json();
+  const scene = await getJson(`scenes/${key}.json`);
+  const probes = await getJson(`scenes/${key}.probes.json`);
   const atlas = scene.atlas ? (await GPU.atlasTexture(gl, scene)).tex : null;
   GPU.dataTexture(gl, scene);
+  await check(gl, key, scene, probes, atlas, "");
+  if (scene.graph) {
+    const [manifest, graph, library] = await Promise.all([
+      getJson("scenes/blocks.json"), getJson(`scenes/${key}.graph.json`), getJson(`scenes/${key}.library.json`)]);
+    const built = Graph.build(graph, manifest, library);
+    const errs = Object.entries(built.errors);
+    if (errs.length) throw new Error(`browser build: ${errs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
+    await check(gl, key, built.scene, probes, atlas, ", built in the browser");
+  }
+  gl.deleteTexture(atlas);
+}
+
+async function check(gl, key, scene, probes, atlas, how) {
   for (const [b, batch] of probes.batches.entries()) {
-    const label = b === 0 ? "slider defaults" : "sliders moved";
+    const label = (b === 0 ? "slider defaults" : "sliders moved") + how;
     log(`\n== ${scene.name} (${key}), ${label}: ${batch.units.length} units`);
     // 1) distances at probe points
     const exprs = [], meta = [];
@@ -86,7 +103,7 @@ async function diagnose(gl, key) {
     });
     log(`distance probes: ${meta.length - bad}/${meta.length} match NumPy`);
     // 2) one ray per unit toward its deepest point, from a fixed eye outside the scene
-    const [lo, hi] = scene.bounds;
+    const [lo, hi] = scene.view_bounds || scene.bounds;
     const c = lo.map((v, i) => (v + hi[i]) / 2);
     const ext = Math.max(...hi.map((v, i) => v - lo[i]));
     const eye = [c[0] + 1.6 * ext, c[1] + 0.6 * ext, c[2] + 0.3 * ext];

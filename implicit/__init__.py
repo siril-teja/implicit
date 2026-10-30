@@ -1,6 +1,6 @@
 """Field-driven (implicit / SDF) modeling with a browser viewer."""
 
-__version__ = "0.3.0"  # single source of truth; bump in every release PR (see CONTRIBUTING.md)
+__version__ = "0.4.0"  # single source of truth; bump in every release PR (see CONTRIBUTING.md)
 
 from .expr import Param, cos, radians, sin, tan, vec3
 from .scene import Scene

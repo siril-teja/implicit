@@ -1,5 +1,7 @@
-// Real-time SDF ray marcher. Scene GLSL comes from Python (implicit.scene.Scene.glsl).
-// Params are uniforms: moving a slider sets a uniform and redraws, no recompile.
+// Real-time SDF ray marcher. Scene GLSL comes from Python (implicit.scene.Scene.glsl)
+// or, for block-graph scenes, is built here from the graph (graph.js) so the block
+// canvas (editor.js) can change it. Params are uniforms: moving a slider sets a
+// uniform and redraws, no recompile; only rewiring blocks rebuilds the shader.
 // Shaders and GL helpers live in gpu.js (shared with the diagnostics page).
 "use strict";
 
@@ -14,7 +16,12 @@ const state = {
   cam: { yaw: -0.9, pitch: 0.25, dist: 260, target: [0, 0, 0] },
   clip: { on: false, axis: 0, offset: 0 },
   dirty: true, interacting: 0, server: false,
+  key: null, g: null,  // block-graph state: { graph, manifest, library, built, published, editor }
+  hl: new Uint32Array(8),
 };
+const LS = (k) => `implicit.graph.${k}`;
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private mode */ } }
 
 function buildProgram(sceneGlsl) {
   return GPU.sceneProgram(gl, sceneGlsl);
@@ -29,11 +36,12 @@ function setStatus(msg, err = false) {
 async function uploadAtlas(scene) {
   if (state.dataTex) gl.deleteTexture(state.dataTex);
   state.dataTex = GPU.dataTexture(gl, scene);
-  if (!scene.atlas || state.atlasKey === scene.hash) return;
+  const key = scene.atlas && (scene.atlas.url || scene.hash);
+  if (!scene.atlas || state.atlasKey === key) return;
   if (state.atlas) gl.deleteTexture(state.atlas);
   const { tex, mb } = await GPU.atlasTexture(gl, scene);
   state.atlas = tex;
-  state.atlasKey = scene.hash;
+  state.atlasKey = key;
   state.atlasMB = mb;
 }
 
@@ -46,7 +54,11 @@ function showDiag() {
     + "the implicit bodies may render with speckle.", true);
 }
 
-async function loadScene(scene) {
+async function loadScene(scene, key) {
+  if (scene.graph && !window.SCENES) return loadGraphScene(scene, key);
+  state.g = null;
+  state.key = key;
+  setGraphUI(null);
   try {
     setStatus("Loading anatomy…");
     await uploadAtlas(scene);
@@ -55,13 +67,18 @@ async function loadScene(scene) {
     console.error(e);
     return;
   }
+  useScene(scene, true);
+}
+
+// Compile and show a scene; keeps slider values (by name) and visibility when ``keep``.
+function useScene(scene, keep) {
   let built;
   try {
     built = buildProgram(scene.glsl);
   } catch (e) {
     setStatus("Shader error:\n" + e.message, true);
     console.error(e);
-    return;
+    return false;
   }
   const first = !state.scene;
   if (state.prog) gl.deleteProgram(state.prog);
@@ -69,15 +86,194 @@ async function loadScene(scene) {
   state.uniforms = built.uniforms;
   const oldVals = state.values;
   state.values = {};
-  for (const p of scene.params) state.values[p.name] = p.name in oldVals ? oldVals[p.name] : p.value;
-  if (state.vis.length !== scene.groups.length) state.vis = scene.groups.map((g) => g.visible !== false);
+  for (const p of scene.params) state.values[p.name] = keep && p.name in oldVals ? oldVals[p.name] : p.value;
+  const oldGroups = state.scene ? state.scene.groups.map((g) => g.name) : [];
+  state.vis = scene.groups.map((g, i) => {
+    const j = oldGroups.indexOf(g.name);
+    return keep && j >= 0 && state.vis[j] !== undefined ? state.vis[j] : g.visible !== false;
+  });
   state.scene = scene;
   if (first) fitView();
   buildPanel();
   setStatus(`${scene.name} · shader compiled in ${built.ms.toFixed(0)} ms`);
   showDiag();
   state.dirty = true;
+  return true;
 }
+
+// ---------------------------------------------------------------- block graphs
+async function loadGraphScene(pyScene, key) {
+  try {
+    setStatus("Loading blocks and anatomy…");
+    const [manifest, published, library] = await Promise.all([
+      fetchJson("scenes/blocks.json"), fetchJson(`scenes/${key}.graph.json`), fetchJson(`scenes/${key}.library.json`)]);
+    await uploadAtlas({ ...pyScene, atlas: library.atlas });
+    let graph = published, note = "";
+    const saved = lsGet(LS(key));
+    if (saved) {
+      try {
+        const s = JSON.parse(saved);
+        if (s.published === JSON.stringify(published)) { graph = s.graph; note = "Your edits were restored (Reset discards them)."; }
+        else lsSet(LS(key), null);  // the published graph changed: drop stale edits
+      } catch { lsSet(LS(key), null); }
+    }
+    state.key = key;
+    state.g = { graph: JSON.parse(JSON.stringify(graph)), manifest, library, published, built: null, editor: null };
+    setGraphUI(state.g);
+    rebuild(false);
+    state.g.editor.fit();
+    if (note) $("#graphNote").textContent = note;
+  } catch (e) {
+    setStatus("Could not load the block graph: " + e.message, true);
+    console.error(e);
+  }
+}
+
+function rebuild(keep = true) {
+  const g = state.g;
+  g.built = Graph.build(g.graph, g.manifest, g.library);
+  const ok = useScene(g.built.scene, keep);
+  const nerr = Object.keys(g.built.errors).length;
+  $("#graphNote").textContent = nerr ? `${nerr} block${nerr > 1 ? "s" : ""} with problems (red)` : "";
+  g.editor.render();
+  g.editor.sidePanel();
+  updateHighlight();
+  return ok;
+}
+
+let saveTimer = null;
+function graphChanged(kind) {
+  const g = state.g;
+  if (!g) return;
+  if (kind === "structure") rebuild(true);
+  else if (kind === "value") { g.editor.render(); state.dirty = true; }
+  else g.editor.render();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const same = JSON.stringify(g.graph) === JSON.stringify(g.published);
+    lsSet(LS(state.key), same ? null : JSON.stringify({ published: JSON.stringify(g.published), graph: g.graph }));
+  }, 400);
+}
+
+function setGraphUI(g) {
+  const has = !!g;
+  for (const id of ["gAdd", "gUndo", "gRedo", "gFit", "gOpen", "gDownload", "gReset"]) $("#" + id).disabled = !has;
+  $("#gSave").hidden = !(has && state.server);
+  $("#noGraph").hidden = has;
+  $("#editor").style.visibility = has ? "visible" : "hidden";
+  $("#graphNote").textContent = "";
+  $("#editor").replaceChildren();
+  if (!has) { setTab("scene"); $("#selPane").replaceChildren(); return; }
+  setTab("sel");
+  g.editor = Editor.create({
+    svg: $("#editor"), side: $("#selPane"), manifest: g.manifest, library: g.library,
+    getGraph: () => g.graph, getBuilt: () => g.built,
+    getValue: (name) => state.values[name],
+    onChange: graphChanged,
+    onValue: (name, v) => { state.values[name] = v; state.dirty = true; },
+    onSelect: () => updateHighlight(),
+    replaceGraph: (ng) => { g.graph = ng; graphChanged("structure"); },
+    status: (msg) => { $("#graphNote").textContent = msg; },
+  });
+}
+
+// Bodies to highlight in 3D: the clicked body, or every body the selected block feeds.
+function updateHighlight() {
+  state.hl.fill(0);
+  const g = state.g;
+  const set = (i) => { if (i >= 0 && i < 256) state.hl[i >> 5] |= 1 << (i & 31); };
+  if (g && g.built && g.editor) {
+    if (g.editor.focusBody !== null) set(g.editor.focusBody);
+    else if (g.editor.selected) {
+      g.built.scene.bodies.forEach((b, i) => { if (g.built.upstream(b.node).has(g.editor.selected)) set(i); });
+    }
+  } else if (state.pickedBody !== undefined && state.pickedBody !== null) set(state.pickedBody);
+  state.dirty = true;
+}
+
+function setTab(name) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  $("#selPane").hidden = name !== "sel";
+  $("#scenePane").hidden = name !== "scene";
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+$("#gAdd").addEventListener("click", () => state.g && state.g.editor.addAtCenter());
+$("#gUndo").addEventListener("click", () => state.g && state.g.editor.undo());
+$("#gRedo").addEventListener("click", () => state.g && state.g.editor.redo());
+$("#gFit").addEventListener("click", () => state.g && state.g.editor.fit());
+$("#gReset").addEventListener("click", () => {
+  const g = state.g;
+  if (!g || !confirm("Discard your edits to this graph?")) return;
+  g.editor.snapshot();
+  g.graph = JSON.parse(JSON.stringify(g.published));
+  lsSet(LS(state.key), null);
+  graphChanged("structure");
+});
+$("#gDownload").addEventListener("click", () => {
+  const g = state.g;
+  if (!g) return;
+  const blob = new Blob([JSON.stringify(g.graph, null, 1) + "\n"], { type: "application/json" });
+  const a = el("a", { href: URL.createObjectURL(blob), download: `${state.key}.json` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$("#gOpen").addEventListener("click", () => $("#gFile").click());
+$("#gFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f || !state.g) return;
+  try {
+    const ng = JSON.parse(await f.text());
+    if (ng.format !== "implicit.graph") throw new Error("not an implicit.graph file");
+    state.g.editor.snapshot();
+    state.g.graph = ng;
+    graphChanged("structure");
+    state.g.editor.fit();
+  } catch (err) { setStatus("Could not open the graph: " + err.message, true); }
+});
+$("#gSave").addEventListener("click", async () => {
+  const r = await fetch("/api/graph", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scene: state.key, graph: state.g.graph }) });
+  const j = await r.json();
+  if (r.ok) { state.g.published = JSON.parse(JSON.stringify(state.g.graph)); lsSet(LS(state.key), null); }
+  $("#graphNote").textContent = r.ok ? `Saved to ${j.file}` : "Save failed: " + j.error;
+});
+
+// ---------------------------------------------------------------- dock
+function setDock(open) {
+  $("#dock").hidden = !open;
+  $("#dockToggle").textContent = open ? "Hide panel" : "Show panel";
+  lsSet("implicit.dock", open ? "1" : "0");
+  state.dirty = true;
+}
+$("#dockToggle").addEventListener("click", () => setDock($("#dock").hidden));
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement && document.activeElement.tagName);
+  if (e.key === "Tab" && !typing && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); setDock($("#dock").hidden); }
+});
+(() => {
+  const h = lsGet("implicit.dockH");
+  if (h) document.documentElement.style.setProperty("--dock-h", h);
+  if (lsGet("implicit.dock") === "0") setDock(false);
+  const grip = $("#grip");
+  let start = null;
+  grip.addEventListener("pointerdown", (e) => {
+    grip.setPointerCapture(e.pointerId);
+    start = { y: e.clientY, h: $("#dock").getBoundingClientRect().height };
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const hh = Math.max(120, Math.min(window.innerHeight - 140, start.h - (e.clientY - start.y)));
+    document.documentElement.style.setProperty("--dock-h", hh + "px");
+    state.dirty = true;
+  });
+  grip.addEventListener("pointerup", () => {
+    if (!start) return;
+    start = null;
+    lsSet("implicit.dockH", getComputedStyle(document.documentElement).getPropertyValue("--dock-h"));
+  });
+})();
 
 // ---------------------------------------------------------------- panel
 function el(tag, attrs = {}, ...kids) {
@@ -102,7 +298,10 @@ function buildPanel() {
   $("#attribution").textContent = s.attribution || "";
   const params = $("#params");
   params.replaceChildren();
-  for (const p of s.params) {
+  // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
+  const shown = s.graph ? s.params.filter((p) => p.number) : s.params;
+  $("#paramsHead").hidden = !shown.length;
+  for (const p of shown) {
     const out = el("output", { value: fmt(state.values[p.name], p.step) });
     const range = el("input", {
       type: "range", min: p.min, max: p.max, step: p.step, value: state.values[p.name],
@@ -110,6 +309,7 @@ function buildPanel() {
         state.values[p.name] = parseFloat(e.target.value);
         out.value = fmt(state.values[p.name], p.step);
         state.dirty = true;
+        syncGraphValue(p);
       },
     });
     const reset = el("button", {
@@ -119,6 +319,7 @@ function buildPanel() {
         range.value = p.default;
         out.value = fmt(p.default, p.step);
         state.dirty = true;
+        syncGraphValue(p);
       },
     });
     params.append(el("div", { className: "param" },
@@ -136,11 +337,18 @@ function buildPanel() {
     });
     bodies.append(el("label", { className: "body" }, cb, sw, b.name));
   });
-  const [lo, hi] = s.bounds;
+  const [lo, hi] = viewBox();
   const ax = state.clip.axis;
   const off = $("#clipOffset");
   off.min = lo[ax]; off.max = hi[ax]; off.step = 0.1;
   off.value = state.clip.offset;
+}
+
+// A Number slider moved in the Scene tab: store the value in the graph too.
+function syncGraphValue(p) {
+  if (!state.g || !p.number) return;
+  const n = state.g.graph.nodes[p.node];
+  if (n) { n.in = n.in || {}; n.in.value = state.values[p.name]; graphChanged("value"); }
 }
 
 $("#clipOn").addEventListener("change", (e) => { state.clip.on = e.target.checked; state.dirty = true; });
@@ -162,15 +370,22 @@ $("#exportStl").addEventListener("click", async () => {
   setStatus("Meshing on the Python side…");
   const r = await fetch("/api/export", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scene: $("#scenePick").value, params: state.values, visible: state.vis }),
+    body: JSON.stringify({ scene: $("#scenePick").value, params: state.values, visible: state.vis,
+      graph: state.g ? state.g.graph : undefined }),
   });
   const j = await r.json();
   setStatus(r.ok ? "Wrote:\n" + j.files.join("\n") : "Export failed: " + j.error, !r.ok);
 });
 
 // ---------------------------------------------------------------- camera
+// Where the bodies are now (graph scenes: at the current slider values), else the scene box.
+function viewBox() {
+  const s = state.scene;
+  return (s._bodies && Graph.viewBounds(s, state.values)) || s.view_bounds || s.bounds;
+}
+
 function fitView() {
-  const [lo, hi] = state.scene.bounds;
+  const [lo, hi] = viewBox();
   state.cam.target = lo.map((v, i) => (v + hi[i]) / 2);
   const ext = hi.map((v, i) => v - lo[i]);
   const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
@@ -196,7 +411,7 @@ function camBasis() {
 let drag = null;
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
-  drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+  drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, pan: e.button === 2 || e.shiftKey, button: e.button };
   state.interacting++;
 });
 canvas.addEventListener("pointermove", (e) => {
@@ -214,7 +429,11 @@ canvas.addEventListener("pointermove", (e) => {
   state.dirty = true;
 });
 const endDrag = () => { if (drag) { drag = null; state.interacting--; state.dirty = true; } };
-canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointerup", (e) => {
+  const click = drag && drag.button === 0 && Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) < 5;
+  endDrag();
+  if (click) pickAt(e);
+});
 canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {
@@ -247,6 +466,46 @@ function ensureLow(w, h) {
   low.w = w; low.h = h;
 }
 
+// Body under the mouse: render one pixel with the pick flag (id + 1 in red/green).
+const pickFb = { fb: null, tex: null };
+function pickAt(e) {
+  if (!state.prog) return;
+  if (!pickFb.fb) {
+    pickFb.tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, pickFb.tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, 1, 1);
+    pickFb.fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, pickFb.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, pickFb.tex, 0);
+  }
+  const r = canvas.getBoundingClientRect();
+  const sx = canvas.width / r.width, sy = canvas.height / r.height;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, pickFb.fb);
+  gl.viewport(0, 0, 1, 1);
+  setUniforms(canvas.width, canvas.height);
+  gl.uniform1f(state.uniforms.u_pick, 1);
+  gl.uniform2f(state.uniforms.u_pickPx, (e.clientX - r.left) * sx, canvas.height - (e.clientY - r.top) * sy);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const px = new Uint8Array(4);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const id = px[0] + 256 * px[1] - 1;
+  selectBody(id >= 0 ? id : null);
+}
+
+function selectBody(i) {
+  const b = i !== null && state.scene ? state.scene.bodies[i] : null;
+  if (state.g) {
+    state.g.editor.selectBody(b ? i : null);
+    if (b) { setTab("sel"); if ($("#dock").hidden) setDock(true); }
+  } else {
+    state.pickedBody = b ? i : null;
+    setStatus(b ? `Selected: ${b.name}` : "");
+  }
+  updateHighlight();
+}
+
 function setUniforms(w, h) {
   gl.useProgram(state.prog);
   const U = state.uniforms, s = state.scene;
@@ -276,6 +535,8 @@ function setUniforms(w, h) {
     gl.uniform1i(U.u_atlas, 0);
   }
   for (const p of s.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], state.values[p.name]);
+  if (U.u_pick) gl.uniform1f(U.u_pick, 0);
+  if (U.u_hl) gl.uniform4uiv(U.u_hl, state.hl);
   s.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], state.vis[i] ? 1 : 0); });
 }
 
@@ -337,7 +598,7 @@ async function main() {
   showAbout();
   if (!gl) { setStatus("WebGL2 is not available in this browser.", true); return; }
   if (window.SCENES) {  // single-file build: scenes inlined
-    initPicker(Object.keys(window.SCENES), (k) => loadScene(window.SCENES[k]));
+    initPicker(Object.keys(window.SCENES), (k) => loadScene(window.SCENES[k], k));
     return requestAnimationFrame(frame);
   }
   state.server = false;
@@ -347,14 +608,15 @@ async function main() {
   $("#exportStl").hidden = !state.server;
   const index = await fetchJson("scenes/index.json");
   const qs = new URLSearchParams(location.search).get("scene");
-  initPicker(index, async (k) => loadScene(await fetchJson(`scenes/${k}.json`)), qs);
+  initPicker(index, async (k) => loadScene(await fetchJson(`scenes/${k}.json`), k), qs);
   requestAnimationFrame(frame);
   if (state.server) {  // live reload when the Python script changes
     setInterval(async () => {
       try {
         const k = $("#scenePick").value;
         const sc = await fetchJson(`scenes/${k}.json`);
-        if (state.scene && sc.hash !== state.scene.hash) loadScene(sc);
+        if (state.lastPyHash && sc.hash !== state.lastPyHash) loadScene(sc, k);
+        state.lastPyHash = sc.hash;
       } catch { /* server restarting */ }
     }, 1000);
   }
@@ -385,7 +647,7 @@ function initPicker(keys, load, initial) {
   pick.replaceChildren(...keys.map((k) => el("option", { value: k, textContent: k })));
   if (initial && keys.includes(initial)) pick.value = initial;
   pick.hidden = keys.length < 2;
-  pick.addEventListener("change", () => { state.scene = null; load(pick.value); });
+  pick.addEventListener("change", () => { state.scene = null; state.lastPyHash = null; load(pick.value); });
   load(pick.value);
 }
 
