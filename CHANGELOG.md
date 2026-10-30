@@ -29,7 +29,9 @@ publishes that section as the GitHub release notes. Versions follow
   the L5 inferior endplate (was tilted up to 20°) and hence S1, also for
   `s0751` (landmarks regenerated).
 - GPU check: probes read their point and body from a data texture through one
-  dispatch function, so large scenes (40 bodies) no longer read back zeros.
+  dispatch function, so large scenes (40 bodies) no longer read back zeros;
+  at most 8 bodies per probe program (keeps D3D compile times short), and
+  progress is printed to the CI log.
 
 ## [0.7.0] - 2026-10-30
 

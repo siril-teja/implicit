@@ -8,7 +8,7 @@
 const $ = (s) => document.querySelector(s);
 const TOL = (d) => 0.15 + 0.002 * Math.abs(d);  // mm; trilinear filtering differs slightly per GPU
 const lines = [];
-const log = (s) => { lines.push(s); $("#report").value = lines.join("\n"); };
+const log = (s) => { lines.push(s); $("#report").value = lines.join("\n"); console.log("diag: " + s); };
 window.DIAG = { done: false, pass: false, failures: [], checks: 0 };
 
 
@@ -26,9 +26,24 @@ function setUniforms(gl, U, scene, atlas, values = {}) {
 // each unit's code appears once in the program however many probes there are (large
 // scenes otherwise make programs too big for some drivers). mode 0: field value at the
 // point; mode 1: ray from ``eye`` toward the point with that unit alone.
+// Probes run in programs of at most UNITS_PER_PROGRAM units: functions a program
+// never calls are dropped before the driver compiles it, which keeps each program
+// small enough for slow compilers (D3D) in scenes of many bodies.
+const UNITS_PER_PROGRAM = 8;
 function runProbes(gl, scene, atlas, rows, values, mode, eye = [0, 0, 0]) {
+  const px = new Float32Array(rows.length * 4);
+  const units = [...new Set(rows.map((r) => r[0]))];
+  for (let k = 0; k < units.length; k += UNITS_PER_PROGRAM) {
+    const chunk = new Set(units.slice(k, k + UNITS_PER_PROGRAM));
+    const idx = rows.map((r, i) => (chunk.has(r[0]) ? i : -1)).filter((i) => i >= 0);
+    const out = runProbeProgram(gl, scene, atlas, idx.map((i) => rows[i]), values, mode, eye, [...chunk]);
+    idx.forEach((i, j) => px.set(out.subarray(j * 4, j * 4 + 4), i * 4));
+  }
+  return px;
+}
+
+function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   const n = rows.length;
-  const units = [...scene.glsl.matchAll(/vec2 unit(\d+)\(vec3 p\)/g)].map((m) => +m[1]);
   const dispatch = "vec2 unitAt(int u, vec3 p) {\n"
     + units.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n  return vec2(1e10, -1.0);\n}\n";
   const frag = GPU.FRAG_HEAD + scene.glsl + "\n" + dispatch + PROBE_LIB;
