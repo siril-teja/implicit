@@ -20,6 +20,7 @@ uniform float u_clipOn;
 uniform float u_pick;    // 1: write the body id under u_pickPx instead of a colour
 uniform vec2 u_pickPx;
 uniform highp uvec4 u_hl[2];  // highlighted bodies, one bit per body (first 256)
+uniform float u_fast;    // 1 while the view is moving: cheaper shading (no ambient occlusion)
 `;
 
   const FRAG_TAIL = `
@@ -28,20 +29,20 @@ vec2 mapClip(vec3 p) {
   if (u_clipOn > 0.5) m.x = max(m.x, dot(p, u_clip.xyz) - u_clip.w);
   return m;
 }
-vec3 calcNormal(vec3 p) {
-  const vec2 k = vec2(1.0, -1.0);
-  float e = 0.02;
-  return normalize(k.xyy * mapClip(p + k.xyy * e).x + k.yyx * mapClip(p + k.yyx * e).x +
-                   k.yxy * mapClip(p + k.yxy * e).x + k.xxx * mapClip(p + k.xxx * e).x);
+// Forward differences from the field value d0 already known at p: 3 scene evaluations.
+vec3 calcNormal(vec3 p, float d0) {
+  const float e = 0.02;
+  return normalize(vec3(mapClip(p + vec3(e, 0.0, 0.0)).x, mapClip(p + vec3(0.0, e, 0.0)).x,
+                        mapClip(p + vec3(0.0, 0.0, e)).x) - d0);
 }
 float calcAO(vec3 p, vec3 n) {
   float occ = 0.0, w = 1.0;
-  for (int i = 1; i <= 5; i++) {
-    float h = 0.6 * float(i);
+  for (int i = 1; i <= 3; i++) {
+    float h = 0.9 * float(i);
     occ += w * (h - mapClip(p + n * h).x);
     w *= 0.7;
   }
-  return clamp(1.0 - 0.12 * occ, 0.0, 1.0);
+  return clamp(1.0 - 0.15 * occ, 0.0, 1.0);
 }
 vec2 boxHit(vec3 ro, vec3 rd) {
   vec3 inv = 1.0 / rd;
@@ -65,10 +66,11 @@ void main() {
   vec2 bh = boxHit(ro, rd);
   if (bh.x > bh.y || bh.y < 0.0) { outColor = u_pick > 0.5 ? vec4(0.0) : vec4(pow(bg, vec3(0.4545)), 1.0); return; }
   float t = max(bh.x, 0.0);
-  float id = -1.0;
+  float id = -1.0, d0 = 0.0;
+  float tol = u_fast > 0.5 ? 0.004 : 0.002;  // hit tolerance per mm of ray length
   for (int i = 0; i < 300; i++) {
     vec2 m = mapClip(ro + rd * t);
-    if (m.x < 0.002 * t + 0.01) { id = m.y; break; }
+    if (m.x < tol * t + 0.01) { id = m.y; d0 = m.x; break; }
     t += 0.85 * m.x;
     if (t > bh.y) break;
   }
@@ -80,14 +82,14 @@ void main() {
   vec3 col = bg;
   if (id >= 0.0) {
     vec3 p = ro + rd * t;
-    vec3 n = calcNormal(p);
+    vec3 n = calcNormal(p, d0);
     vec3 base = bodyColor(int(id));
     bool cut = u_clipOn > 0.5 && abs(dot(p, u_clip.xyz) - u_clip.w) < 0.05;
     if (cut) base *= 0.75 + 0.25 * step(0.5, fract((p.x + p.y + p.z) * 0.35));
     vec3 l1 = normalize(-u_fwd + u_up * 0.6 + u_right * 0.4);
     float dif = max(dot(n, l1), 0.0);
     float hemi = 0.5 + 0.5 * n.z;
-    float ao = calcAO(p, n);
+    float ao = u_fast > 0.5 ? 0.85 : calcAO(p, n);
     float spec = pow(max(dot(reflect(rd, n), l1), 0.0), 32.0);
     col = base * (0.85 * dif + 0.35 * hemi * ao) + 0.15 * spec;
     if (highlighted(int(id))) {

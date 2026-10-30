@@ -361,6 +361,12 @@ $("#clipAxis").addEventListener("change", (e) => {
 $("#clipFlip").addEventListener("change", () => { state.dirty = true; });
 $("#clipOffset").addEventListener("input", (e) => { state.clip.offset = +e.target.value; state.dirty = true; });
 $("#resetView").addEventListener("click", () => { fitView(); state.dirty = true; });
+$("#quality").value = state.quality;
+$("#quality").addEventListener("change", (e) => {
+  state.quality = e.target.value;
+  lsSet("implicit.quality", state.quality);
+  state.dirty = true;
+});
 $("#copyParams").addEventListener("click", async () => {
   const txt = JSON.stringify(state.values, null, 1);
   try { await navigator.clipboard.writeText(txt); setStatus("Params copied to clipboard"); }
@@ -536,8 +542,32 @@ function setUniforms(w, h) {
   }
   for (const p of s.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], state.values[p.name]);
   if (U.u_pick) gl.uniform1f(U.u_pick, 0);
+  if (U.u_fast) gl.uniform1f(U.u_fast, 0);
   if (U.u_hl) gl.uniform4uiv(U.u_hl, state.hl);
   s.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], state.vis[i] ? 1 : 0); });
+}
+
+// Quality: the pixel density of the sharp (refined) image on high-DPI screens.
+const QUALITY = { high: 2, balanced: 1.5, fast: 1 };
+state.quality = QUALITY[lsGet("implicit.quality")] ? lsGet("implicit.quality") : "balanced";
+
+// Frame-rate readout (top right): frames per second while the view changes, then
+// how long the sharp image took. Updated a few times per second.
+const perf = { frames: [], shown: 0 };
+function showFps(t, text) {
+  if (text === undefined) {
+    perf.frames.push(t);
+    while (perf.frames.length && perf.frames[0] < t - 1000) perf.frames.shift();
+    if (t - perf.shown < 250) return;
+    const fps = perf.frames.length;
+    text = `${fps} fps · preview ${Math.round(low.scale * 100)}%`;
+    $("#fps").className = fps < 15 ? "slow" : fps < 30 ? "mid" : "";
+  } else {
+    perf.frames.length = 0;
+    $("#fps").className = "";
+  }
+  perf.shown = t;
+  $("#fps").textContent = text;
 }
 
 function frame(t) {
@@ -545,19 +575,21 @@ function frame(t) {
   if (!state.prog) return;
   const dt = t - (refine.lastT || t);
   refine.lastT = t;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, QUALITY[state.quality]);
   const W = Math.max(1, Math.floor(canvas.clientWidth * dpr));
   const H = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; state.dirty = true; }
 
   if (state.dirty) {
-    if (state.previewed && dt > 90) low.scale = Math.max(0.15, low.scale * 0.8);
-    else if (dt < 25) low.scale = Math.min(0.5, low.scale * 1.05);
+    // Preview resolution adapts to keep moving the view at ~30 fps or better.
+    if (state.previewed && dt > 45) low.scale = Math.max(0.12, low.scale * 0.85);
+    else if (dt < 25) low.scale = Math.min(0.6, low.scale * 1.05);
     const lw = Math.max(1, Math.round(W * low.scale)), lh = Math.max(1, Math.round(H * low.scale));
     ensureLow(lw, lh);
     gl.bindFramebuffer(gl.FRAMEBUFFER, low.fb);
     gl.viewport(0, 0, lw, lh);
     setUniforms(lw, lh);
+    gl.uniform1f(state.uniforms.u_fast, 1);  // cheaper shading while moving
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, low.fb);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
@@ -565,8 +597,16 @@ function frame(t) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     state.dirty = false;
     state.previewed = true;
+    if (refine.fence) { gl.deleteSync(refine.fence); refine.fence = null; }
     Object.assign(refine, { active: true, row: 0, lastInput: t, start: 0 });
+    showFps(t);
     return;
+  }
+  if (refine.fence && gl.getSyncParameter(refine.fence, gl.SYNC_STATUS) === gl.SIGNALED) {
+    // The GPU has finished the last tile (draw calls return before the GPU is done).
+    showFps(t, `sharp in ${(t - refine.start).toFixed(0)} ms · ${W}×${H}`);
+    gl.deleteSync(refine.fence);
+    refine.fence = null;
   }
   if (!refine.active || state.interacting > 0 || t - refine.lastInput < 100) return;
   if (refine.row === 0) refine.start = t;
@@ -582,7 +622,9 @@ function frame(t) {
   refine.row += refine.tileH;
   if (refine.row >= H) {
     refine.active = false;
-    $("#fps").textContent = `${W}×${H} · refined in ${(t - refine.start).toFixed(0)} ms`;
+    if (refine.fence) gl.deleteSync(refine.fence);
+    refine.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
   }
 }
 window.addEventListener("resize", () => { state.dirty = true; });
