@@ -7,9 +7,9 @@
 
 const Graph = (() => {
   const ACCEPTS = { body: ["body", "bone"], bone: ["bone"], scalar: ["scalar"], vec3: ["vec3"],
-    plane: ["plane"], frame: ["frame"] };
-  const WIRED = new Set(["body", "bone", "scalar", "vec3", "plane", "frame"]);
-  const WIRE_ONLY = new Set(["body", "bone", "plane", "frame"]);
+    plane: ["plane"], frame: ["frame"], vertebra: ["vertebra"] };
+  const WIRED = new Set(["body", "bone", "scalar", "vec3", "plane", "frame", "vertebra"]);
+  const WIRE_ONLY = new Set(["body", "bone", "plane", "frame", "vertebra"]);
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -105,9 +105,48 @@ const Graph = (() => {
     shell: (x, iv) => child(x.body, iv),
     plane_cut: (x, iv) => child(x.body, iv),
     smooth: (x, iv) => child(x.bone, iv),
+    pose(x, iv) {
+      const b = child(x.body, iv), o = vecIv(x.vertebra.frame.origin, iv), s = vecIv(x.shift, iv);
+      if (!b || !o || !s) return null;
+      const corners = [];
+      for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) corners.push([b[i][0], b[j][1], b[k][2]]);
+      if (iv.now) {  // exact: the corners moved by the current pose
+        const E = ["x", "y", "z"].map((a) => vecIv(x.vertebra.frame[a], iv));
+        if (E.some((e) => !e)) return null;
+        const e = E.map((r) => r[0]), oo = o[0], sh = s[0];
+        const [f, l, a] = ["flexion", "lateral", "axial"].map((k) => iv(x[k])[0] * Math.PI / 180);
+        const rot = (v, ax, ang) => {
+          const [i, j] = [[1, 2], [2, 0], [0, 1]][ax], c = Math.cos(ang), sn = Math.sin(ang), r = v.slice();
+          r[i] = c * v[i] - sn * v[j]; r[j] = sn * v[i] + c * v[j]; return r;
+        };
+        const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+        for (const c of corners) {
+          const q = c.map((v, k) => v - oo[k]);
+          const loc = rot(rot(rot([dot(q, e[0]), dot(q, e[1]), dot(q, e[2])], 0, -f), 1, l), 2, a);
+          for (let k = 0; k < 3; k++) {
+            const w = oo[k] + e[0][k] * (loc[0] + sh[0]) + e[1][k] * (loc[1] + sh[1]) + e[2][k] * (loc[2] + sh[2]);
+            lo[k] = Math.min(lo[k], w); hi[k] = Math.max(hi[k], w);
+          }
+        }
+        return [lo, hi];
+      }
+      let r = 0;
+      for (const c of corners) r = Math.max(r, Math.hypot(...c.map((v, a) => Math.max(Math.abs(v - o[0][a]), Math.abs(v - o[1][a])))));
+      r += Math.hypot(...[0, 1, 2].map((a) => Math.max(Math.abs(s[0][a]), Math.abs(s[1][a]))));
+      return [o[0].map((v) => v - r), o[1].map((v) => v + r)];
+    },
     show_plane(x, iv) {
       const p = vecIv(x.plane.point, iv), r = upper(x.radius, iv), t = upper(x.thickness, iv);
       return p && r !== null && t !== null ? [p[0].map((v) => v - r - t), p[1].map((v) => v + r + t)] : null;
+    },
+    show_vertebra(x, iv) {
+      const v = x.vertebra, r = upper(x.radius, iv), l = upper(x.length, iv);
+      const parts = [vecIv(v.frame.origin, iv), ...[v.sup, v.inf].filter(Boolean).map((pl) => vecIv(pl.point, iv))];
+      if (parts.some((q) => !q) || r === null || l === null) return null;
+      const e = Math.max(r, l) + 0.6 + 0.35;
+      return [[0, 1, 2].map((k) => Math.min(...parts.map((q) => q[0][k])) - e),
+        [0, 1, 2].map((k) => Math.max(...parts.map((q) => q[1][k])) + e)];
     },
     show_frame(x, iv) {
       const o = vecIv(x.frame.origin, iv), l = upper(x.length, iv), r = upper(x.radius, iv);
@@ -116,10 +155,30 @@ const Graph = (() => {
   };
   const rangeIv = (s) => s.iv || null;
   const nowIv = (values) => Object.assign((s) => {
-    if (!s.param) return s.iv || null;
-    const v = s.param.name in values ? values[s.param.name] : s.param.value;
-    return [v, v];
+    if (s.param) {
+      const v = s.param.name in values ? values[s.param.name] : s.param.value;
+      return [v, v];
+    }
+    if (s.ev) {  // derived value (e.g. a posed frame): evaluate its expression
+      const v = s.ev(values);
+      return Number.isFinite(v) ? [v, v] : null;
+    }
+    return s.iv || null;
   }, { now: true });
+
+  // JavaScript evaluator for a derived scalar's GLSL (arithmetic, sin, cos, radians only).
+  function evaluator(g, params) {
+    if (!/^[\w\s.+\-*/(),]*$/.test(g)) return null;
+    const ids = new Set(g.match(/[A-Za-z_]\w*/g) || []);
+    for (const w of ids) if (!["cos", "sin", "radians", "e"].includes(w) && !w.startsWith("u_")) return null;
+    const byUniform = Object.fromEntries(params.map((p) => [p.uniform, p]));
+    const js = g.replace(/\bu_\w+/g, (u) => `V(${JSON.stringify(u)})`).replace(/\bradians\(/g, "R(")
+      .replace(/\bcos\(/g, "Math.cos(").replace(/\bsin\(/g, "Math.sin(");
+    let f;
+    try { f = new Function("V", "R", `return (${js});`); } catch { return null; }
+    return (values) => f((u) => { const p = byUniform[u]; return p ? (p.name in values ? values[p.name] : p.value) : NaN; },
+      (d) => d * Math.PI / 180);
+  }
   // Constant values (from the library): scalars and vectors that are not parameters.
   const cs = (v) => ({ g: glslFloat(v), iv: [v, v] });
   const cvec = (a) => ({ c: a.map(cs) });
@@ -236,24 +295,55 @@ const Graph = (() => {
       const lm = b && b.landmarks;
       if (!lm) throw new Error("no landmarks for this bone (vertebrae and sacrum only)");
       const plane = (e) => (e ? { point: cvec(e.point), normal: cvec(e.normal) } : null);
+      const frame = { origin: cvec(lm.origin), x: cvec(lm.axes[0]), y: cvec(lm.axes[1]), z: cvec(lm.axes[2]) };
       return {
-        frame: { origin: cvec(lm.origin), x: cvec(lm.axes[0]), y: cvec(lm.axes[1]), z: cvec(lm.axes[2]) },
-        superior: plane(lm.sup), inferior: plane(lm.inf),
+        frame, superior: plane(lm.sup), inferior: plane(lm.inf),
+        vertebra: { frame, sup: plane(lm.sup), inf: plane(lm.inf) },
         markers: { node: `${id}.markers`, tmpl: lm.markers, inputs: {}, bf: () => lm.markers_bounds },
       };
     }
     if (name === "plane") return { plane: { point: x.point, normal: x.normal } };
     if (name === "plane_parts") return { point: x.plane.point, normal: x.plane.normal };
     if (name === "frame_parts") return { origin: x.frame.origin, x: x.frame.x, y: x.frame.y, z: x.frame.z };
+    if (name === "vertebra_parts") return { frame: x.vertebra.frame, superior: x.vertebra.sup, inferior: x.vertebra.inf };
     if (name === "smooth") {
       const b = library.bones[x.bone.lib];
       if (!b) throw new Error("smooth needs a bone directly");
       return { body: { node: id, tmpl: b.smooth, inputs: x, bf: (iv) => BOUNDS.smooth(x, iv) } };
     }
     const key = blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`).join(",");
-    const tmpl = blk.glsl && blk.glsl[key];
-    if (!tmpl) throw new Error(`no GLSL for block ${name} (${key})`);
-    return { body: { node: id, tmpl, inputs: x, bf: BOUNDS[name] ? (iv) => BOUNDS[name](x, iv) : null } };
+    const tmpls = blk.glsl && blk.glsl[key];
+    if (!tmpls) throw new Error(`no GLSL for block ${name} (${key})`);
+    const out = {};
+    for (const op of blk.outputs) {
+      const tmpl = tmpls[op.name];
+      if (op.type === "body") {
+        out[op.name] = { node: op.name === "body" ? id : `${id}:${op.name}`, tmpl, inputs: x,
+          bf: BOUNDS[name] ? (iv) => BOUNDS[name](x, iv, op.name) : null };
+      } else {
+        out[op.name] = valueFrom(tmpl, x, params);
+      }
+    }
+    return out;
+  }
+
+  // A value output (vector, plane, frame, vertebra) from its component expressions; a part
+  // whose inputs are missing (e.g. the sacrum's inferior endplate) becomes null.
+  function valueFrom(t, inputs, params) {
+    if (t === null || t === undefined) return null;
+    const scalar = (s) => {
+      const g = collapseVec(s, inputs).replace(/\$\{([^}]+)\}/g, (_, inp) => scalarGlsl(inputs, inp));
+      return { g, iv: null, ev: evaluator(g, params) };
+    };
+    if (typeof t === "string") return scalar(t);
+    if (Array.isArray(t)) return { c: t.map(scalar) };
+    const out = {};
+    for (const [k, v] of Object.entries(t)) {
+      try { out[k] = valueFrom(v, inputs, params); } catch (e) {
+        if (v && !Array.isArray(v) && typeof v === "object") out[k] = null; else throw e;
+      }
+    }
+    return out;
   }
 
   // ------------------------------------------------------------ GLSL
@@ -284,9 +374,19 @@ const Graph = (() => {
     return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.g) ? v.g : `(${v.g})`;
   }
 
+  // vec3(${a.x}, ${a.y}, ${a.z}) where the three are the parts of one vector call
+  // (e.g. posePoint(...).x/.y/.z): emit the call once, as the Python side does.
+  function collapseVec(s, inputs) {
+    return s.replace(/vec3\(\$\{([^}]+)\.x\}, \$\{\1\.y\}, \$\{\1\.z\}\)/g, (whole, base) => {
+      const g = ["x", "y", "z"].map((a) => scalarGlsl(inputs, `${base}.${a}`).replace(/^\((.*)\)$/, "$1"));
+      const m = g[0].match(/^(.*)\.x$/);
+      return m && g[1] === `${m[1]}.y` && g[2] === `${m[1]}.z` ? m[1] : whole;
+    });
+  }
+
   function expand(ctx, body, p) {
     const res = [];
-    const subst = (s) => s.replace(/\$\{([^}]+)\}|\$(p|\d+)/g, (_, inp, tok) =>
+    const subst = (s) => collapseVec(s, body.inputs).replace(/\$\{([^}]+)\}|\$(p|\d+)/g, (_, inp, tok) =>
       inp ? scalarGlsl(body.inputs, inp) : tok === "p" ? p : res[+tok]);
     for (const op of body.tmpl.ops) {
       if (op[0] === "var") res.push(ctx.var(op[1], subst(op[2])));

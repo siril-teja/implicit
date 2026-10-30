@@ -152,5 +152,5 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | 3 | Speed: narrow-band / octree sampling and GPU sampling for export, plus GLSL↔NumPy parity tests | Export is ~20 s per body at 0.5 mm today |
 | 4 | Field-driven FE: CT HU → density → modulus as a field, DOE batch runs driving Marc headless | Parameter studies without manual rebuilds |
 | **5, done** | Block graphs: JSON graph format and block registry, browser block canvas with live rebuild, selection between canvas and 3D view | `implicit/graph.py`, `viewer/editor.js` |
-| **6, in progress** | Anatomy blocks: vertebral frames and endplates (done), pose, discs (annulus, nucleus, fibres), cages, osteotomies, ligaments | Each a block that wires into the others |
+| **6, in progress** | Anatomy blocks: vertebral frames and endplates (done), pose (done), discs (annulus, nucleus, fibres), cages, osteotomies, ligaments | Each a block that wires into the others |
 | 7 | Lightweight FE solver in the browser (open source) | After the model is complete |

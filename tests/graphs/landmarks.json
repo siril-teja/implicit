@@ -14,5 +14,16 @@
   "o2": {"block": "output", "pos": [1200, 100], "in": {"body": "@sp", "name": "S1 plane", "color": "#ff8a65"}},
   "o3": {"block": "output", "pos": [1200, 200], "in": {"body": "@sf", "name": "S1 frame", "color": "#f06bd0"}},
   "o4": {"block": "output", "pos": [1200, 300], "in": {"body": "@lm5.markers", "name": "L5 markers", "color": "#33d980"}},
-  "o5": {"block": "output", "pos": [1200, 400], "in": {"body": "@cut", "name": "sacrum cut"}}
+  "o5": {"block": "output", "pos": [1200, 400], "in": {"body": "@cut", "name": "sacrum cut"}},
+  "pose5": {"block": "pose", "pos": [480, 520], "in": {"body": "@L5", "vertebra": "@lm5.vertebra", "flexion": 8, "lateral": -4, "axial": 3, "shift": [1, 2, -1]}},
+  "vp": {"block": "vertebra_parts", "pos": [720, 520], "in": {"vertebra": "@pose5.vertebra"}},
+  "sp2": {"block": "show_plane", "pos": [960, 520], "in": {"plane": "@vp.superior", "radius": 12}},
+  "sf2": {"block": "show_frame", "pos": [960, 640], "in": {"frame": "@vp.frame"}},
+  "pose_s": {"block": "pose", "pos": [480, 700], "in": {"body": "@S", "vertebra": "@lms.vertebra", "flexion": -5}},
+  "o6": {"block": "output", "pos": [1200, 520], "in": {"body": "@pose5", "name": "L5 posed"}},
+  "o7": {"block": "output", "pos": [1200, 620], "in": {"body": "@sp2", "name": "L5 posed sup", "color": "#ff8a65"}},
+  "o8": {"block": "output", "pos": [1200, 720], "in": {"body": "@sf2", "name": "L5 posed frame", "color": "#f06bd0"}},
+  "o9": {"block": "output", "pos": [1200, 820], "in": {"body": "@pose_s", "name": "sacrum posed"}},
+  "sv": {"block": "show_vertebra", "pos": [960, 760], "in": {"vertebra": "@pose5.vertebra"}},
+  "o10": {"block": "output", "pos": [1200, 920], "in": {"body": "@sv", "name": "L5 posed markers", "color": "#33d980"}}
 }}

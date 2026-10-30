@@ -137,8 +137,12 @@ def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "m
 
 
 def anatomy_graph(bone_dir, relative_to=None, name=None):
-    """Block graph equivalent of build_scene's bones (bone -> smooth -> output per bone).
+    """Block graph of a converted subject.
 
+    Per vertebra: bone -> smooth -> pose -> output, with the vertebra's landmarks
+    feeding the pose (so it moves in its own frame) and a hidden marker output.
+    Other bones: bone -> smooth -> output (the sacrum also gets landmarks; the
+    spinal cord is shown as is). One shared Number keeps bone volume when smoothing.
     File paths are written relative to ``relative_to`` (the graph file's folder).
     """
     bone_dir = Path(bone_dir)
@@ -146,14 +150,19 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     loaded = load_bones(bone_dir)
     subject = next(iter(loaded.values()))[1].get("subject", "")
     hexc = lambda c: "#" + "".join(f"{round(v * 255):02x}" for v in c)
+    lm_file = bone_dir / "landmarks.json"
+    levels = set(json.loads(lm_file.read_text())["landmarks"]) if lm_file.exists() else set()
     nodes = {"smooth_preserve": {"block": "number", "title": "Keep bone volume", "pos": [0, -110],
                                  "in": {"value": 1, "min": 0, "max": 1, "step": 1,
                                         "label": "Smoothing keeps bone volume (1 = on)"}}}
-    rows = (len(loaded) + 1) // 2  # two columns of bone -> smooth -> output chains
-    for i, (bname, (_, meta)) in enumerate(loaded.items()):
+    ys = {"vertebra": 0, "other": 0}
+    for bname, (_, meta) in loaded.items():
         kind = meta["kind"]
         key = bname[0] if kind == "vertebra" else kind
-        x0, y = 760 * (i // rows), (i % rows) * 100
+        has_lm = ("S1" if bname == "sacrum" else bname) in levels
+        col = "vertebra" if kind == "vertebra" else "other"
+        x0, y = (0, ys[col]) if col == "vertebra" else (1000, ys[col])
+        ys[col] += 240 if has_lm else 110
         rel = Path(os.path.relpath(bone_dir / f"{bname}.npz", base)).as_posix()
         nodes[bname] = {"block": "bone", "title": bname, "pos": [x0, y], "in": {"file": rel}}
         src = f"@{bname}"
@@ -161,23 +170,26 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
             nodes[f"{bname}_smooth"] = {"block": "smooth", "title": f"{bname} smoothing", "pos": [x0 + 240, y],
                                         "in": {"bone": src, "sigma": 0, "preserve": "@smooth_preserve"}}
             src = f"@{bname}_smooth"
-        nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [x0 + 480, y],
+        if has_lm:
+            nodes[f"{bname}_lm"] = {"block": "landmarks", "title": f"{bname} landmarks",
+                                    "pos": [x0 + 240, y + 115], "in": {"bone": f"@{bname}"}}
+        if has_lm and kind == "vertebra":
+            nodes[f"{bname}_pose"] = {"block": "pose", "title": f"{bname} pose", "pos": [x0 + 480, y],
+                                      "in": {"body": src, "vertebra": f"@{bname}_lm.vertebra"}}
+            src = f"@{bname}_pose"
+        right = x0 + (720 if kind == "vertebra" else 480)
+        nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
-    # Landmarks (frame and endplates) of every vertebra and the sacrum; markers hidden at first.
-    lm_file = bone_dir / "landmarks.json"
-    levels = set(json.loads(lm_file.read_text())["landmarks"]) if lm_file.exists() else set()
-    row = 0
-    for bname, (_, meta) in loaded.items():
-        if ("S1" if bname == "sacrum" else bname) not in levels:
-            continue
-        y = row * 130
-        nodes[f"{bname}_lm"] = {"block": "landmarks", "title": f"{bname} landmarks", "pos": [1520, y],
-                                "in": {"bone": f"@{bname}"}}
-        nodes[f"{bname}_lm_out"] = {"block": "output", "title": f"{bname} landmarks", "pos": [1760, y],
-                                    "in": {"body": f"@{bname}_lm.markers", "name": f"{bname} landmarks",
-                                           "color": hexc(COLORS["marker"]), "group": "Landmarks",
-                                           "visible": False}}
-        row += 1
+        if has_lm:
+            markers = f"@{bname}_lm.markers"
+            if kind == "vertebra":  # markers that follow the pose
+                nodes[f"{bname}_show"] = {"block": "show_vertebra", "title": f"{bname} markers",
+                                          "pos": [x0 + 480, y + 125], "in": {"vertebra": f"@{bname}_pose.vertebra"}}
+                markers = f"@{bname}_show"
+            nodes[f"{bname}_lm_out"] = {"block": "output", "title": f"{bname} landmarks", "pos": [right, y + 125],
+                                        "in": {"body": markers, "name": f"{bname} landmarks",
+                                               "color": hexc(COLORS["marker"]), "group": "Landmarks",
+                                               "visible": False}}
     return {"format": "implicit.graph", "version": 1,
             "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}
