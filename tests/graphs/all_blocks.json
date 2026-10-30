@@ -1,0 +1,21 @@
+{"format": "implicit.graph", "version": 1, "name": "All blocks (test)", "nodes": {
+  "r": {"block": "number", "pos": [0, 0], "in": {"value": 6, "min": 3, "max": 9, "step": 0.1, "label": "Radius", "unit": "mm"}},
+  "c": {"block": "vector", "pos": [0, 120], "in": {"x": -20, "y": 0, "z": 0}},
+  "sph": {"block": "sphere", "pos": [240, 0], "in": {"radius": "@r", "center": "@c"}},
+  "box": {"block": "box", "pos": [240, 120], "in": {"size": [16, 10, 8], "center": [-14, 0, 0], "round": 1}},
+  "uni": {"block": "union", "pos": [480, 60], "in": {"a": "@sph", "b": "@box", "blend": 2}},
+  "cyl": {"block": "cylinder", "pos": [0, 260], "in": {"radius": 5, "height": 24, "center": [10, 0, 0]}},
+  "rx": {"block": "rotate", "pos": [240, 260], "in": {"body": "@cyl", "axis": "x", "angle": 20, "center": [10, 0, 0]}},
+  "ry": {"block": "rotate", "pos": [480, 260], "in": {"body": "@rx", "axis": "y", "angle": -15, "center": [10, 0, 0]}},
+  "rz": {"block": "rotate", "pos": [720, 260], "in": {"body": "@ry", "axis": "z", "angle": 30, "center": [0, 0, 0]}},
+  "hole": {"block": "sphere", "pos": [480, 400], "in": {"radius": 3, "center": [10, 0, 6]}},
+  "sub": {"block": "subtract", "pos": [960, 260], "in": {"a": "@rz", "b": "@hole", "blend": 1}},
+  "mv": {"block": "translate", "pos": [720, 60], "in": {"body": "@uni", "offset": [0, 4, 2]}},
+  "isec": {"block": "intersect", "pos": [960, 60], "in": {"a": "@mv", "b": "@big", "blend": 0.5}},
+  "big": {"block": "box", "pos": [720, 140], "in": {"size": [60, 13, 40]}},
+  "off": {"block": "offset", "pos": [1200, 60], "in": {"body": "@isec", "distance": 0.8}},
+  "sh": {"block": "shell", "pos": [1200, 260], "in": {"body": "@sub", "thickness": 1.5}},
+  "cut": {"block": "plane_cut", "pos": [1440, 260], "in": {"body": "@sh", "point": [10, 0, 4], "normal": [0.2, 0.1, 1]}},
+  "o1": {"block": "output", "pos": [1440, 60], "in": {"body": "@off", "name": "blob", "color": "#c9a27e"}},
+  "o2": {"block": "output", "pos": [1680, 260], "in": {"body": "@cut", "name": "tube", "color": "#7ea8c9", "group": "Tubes"}}
+}}

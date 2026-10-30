@@ -5,6 +5,37 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.4.0] - 2026-10-30
+
+### Added
+- **Block canvas** in the viewer: the panel at the bottom shows the scene's
+  block graph. Add blocks from a searchable palette (double-click the canvas),
+  wire outputs to inputs by dragging (wires are typed and refuse wrong
+  connections and loops), drag a wire off an input to disconnect, delete,
+  undo/redo. The 3D view rebuilds as you connect blocks; values update it
+  instantly. Edits are kept in the browser; Download / Open… / Reset, and Save
+  to the file with the dev server.
+- **Selecting bodies in 3D**: click a bone to highlight it and list every block
+  that builds it (e.g. its smoothing) with their settings; selecting a block
+  highlights the bodies it feeds.
+- **Collapsible panel**: Tab hides or shows it for a full-window 3D view; drag
+  its top edge to resize.
+- The browser builds the shader of an edited graph itself (`viewer/graph.js`),
+  from GLSL recorded once from the Python blocks (`blocks.json`) and a library
+  of every bone of the subject (`<scene>.library.json`), so editing works on
+  the static site. The GPU check also tests the browser-built shader, and CI
+  runs it on a test graph that uses every block.
+- Block bounds at the current values (camera framing, STL export, probes) in
+  addition to bounds over the whole slider range (shader).
+
+### Changed
+- `examples/anatomy.json` (block graph) replaces `examples/anatomy.py`. The
+  endplate markers of the old script are not shown for now; landmarks will come
+  back as blocks.
+- Position inputs of blocks (centres, offsets, plane points) slide ±50 mm
+  around their value; typing a value outside re-centres the range.
+- The viewer's settings moved from the right-hand column into the panel's Scene tab.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

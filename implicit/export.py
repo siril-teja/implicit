@@ -1,7 +1,7 @@
 """Mesh bodies of a scene to STL at chosen parameter values.
 
-    python -m implicit.export examples/anatomy.py --body L3 --set smooth_L3=1.5 --voxel 0.4 --out out/
-    python -m implicit.export examples/anatomy.py --out out/            # every visible body
+    python -m implicit.export examples/anatomy.json --body L3 --set L3_smooth_sigma=1.5 --voxel 0.4 --out out/
+    python -m implicit.export examples/anatomy.json --out out/            # every visible body
 
 Each body is meshed with narrow-band marching tetrahedra at spacing ``--voxel``
 (mm): closed, manifold, outward-oriented triangles (see implicit.mesh.mesh_sdf).
@@ -33,7 +33,8 @@ def mesh_report(v, t):
 def mesh_body(scene, name, voxel=0.5):
     """Closed mesh of one scene body at the scene's current parameter values."""
     body = scene.body(name)
-    lo, hi = body.bounds or scene.bounds
+    now = getattr(body, "bounds_now", None)  # graph bodies: bounds at the current values
+    lo, hi = (now() if now else None) or body.bounds or scene.bounds
     return mesh_sdf(body.sdf.eval, np.array(lo) - 2 * voxel, np.array(hi) + 2 * voxel, voxel)
 
 
@@ -63,7 +64,7 @@ def export(script, out, bodies=None, values=None, voxel=0.5):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("script", help="scene script, e.g. examples/anatomy.py")
+    ap.add_argument("script", help="scene script or block graph, e.g. examples/anatomy.json")
     ap.add_argument("--body", action="append", help="body to mesh (repeatable; default: all visible)")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="parameter value")
     ap.add_argument("--voxel", type=float, default=0.5, help="sampling grid spacing (mm)")

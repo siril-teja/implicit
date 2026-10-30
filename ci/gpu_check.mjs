@@ -53,9 +53,26 @@ try {
   await page.waitForFunction(() => window.DIAG && window.DIAG.done, null, { timeout: 10 * 60 * 1000, polling: 2000 });
   const report = await page.inputValue("#report");
   const diag = await page.evaluate(() => window.DIAG);
+  // The viewer's own render shader (picking, highlighting) must compile here too.
+  const viewerErrors = [];
+  const keys = JSON.parse(fs.readFileSync(path.join(siteDir, "scenes", "index.json"), "utf8"));
+  for (const key of keys) {
+    const v = await browser.newPage();
+    const errs = [];
+    v.on("pageerror", (e) => errs.push(e.message));
+    await v.goto(url.replace("diagnostics.html", `index.html?scene=${key}`), { timeout: 60000 });
+    await v.waitForFunction(() => /compiled|error|could not/i.test(document.querySelector("#status").textContent),
+      null, { timeout: 5 * 60 * 1000, polling: 1000 });
+    const status = await v.textContent("#status");
+    console.log(`viewer ${key}: ${status.split("\n")[0]}`);
+    if (!/compiled/.test(status) || errs.length) viewerErrors.push(`${key}: ${status} ${errs.join("; ")}`);
+    await v.close();
+  }
   console.log(report);
   if (expectRenderer && !String(diag.gpu || "").toLowerCase().includes(expectRenderer.toLowerCase())) {
     console.log(`\nFAIL: expected a renderer containing "${expectRenderer}", got "${diag.gpu}"`);
+  } else if (viewerErrors.length) {
+    console.log(`\nFAIL: viewer shader: ${viewerErrors.join(" | ")}`);
   } else if (diag.pass) {
     code = 0;
   }

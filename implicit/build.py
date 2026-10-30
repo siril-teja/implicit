@@ -1,6 +1,6 @@
 """Build the static viewer site (for GitHub Pages or any static host).
 
-    python -m implicit.build examples/*.py --out site
+    python -m implicit.build examples/*.json examples/*.py --out site
     python -m implicit.build examples/spine_segment.py --single-file site/spine.html
 
 ``--commit`` and ``--repo`` (set by the release workflow) stamp the build so the
@@ -31,7 +31,7 @@ def build_site(scripts, out, commit=None, repo=None):
     out.mkdir(parents=True, exist_ok=True)
     html = (VIEWER_DIR / "index.html").read_text()
     (out / "index.html").write_text(_stamp(html, app_info(commit, repo)))
-    for f in ("gpu.js", "viewer.js", "diagnostics.html", "diagnostics.js"):
+    for f in ("gpu.js", "graph.js", "editor.js", "viewer.js", "diagnostics.html", "diagnostics.js"):
         shutil.copy(VIEWER_DIR / f, out / f)
     (out / ".nojekyll").touch()
     return write_scenes(scripts, out)
@@ -39,12 +39,13 @@ def build_site(scripts, out, commit=None, repo=None):
 
 def build_single_file(scripts, path, commit=None, repo=None):
     """One self-contained HTML file with the scenes and viewer inlined."""
-    scenes = {Path(s).stem: load_scene(s).to_json() for s in scripts}
+    scenes = {Path(s).stem: load_scene(s).to_json() for s in scripts}  # graphs: view only
     html = _stamp((VIEWER_DIR / "index.html").read_text(), app_info(commit, repo))
-    js = (VIEWER_DIR / "gpu.js").read_text() + "\n" + (VIEWER_DIR / "viewer.js").read_text()
+    js = "\n".join((VIEWER_DIR / f).read_text() for f in ("gpu.js", "graph.js", "editor.js", "viewer.js"))
     data = json.dumps(scenes).replace("</", "<\\/")
     html = html.replace("<!--SCENES-->", f"<script>window.SCENES = {data};</script>")
-    html = html.replace('<script src="gpu.js"></script>\n', "")
+    for f in ("gpu.js", "graph.js", "editor.js"):
+        html = html.replace(f'<script src="{f}"></script>\n', "")
     html = html.replace('<script src="viewer.js"></script>', f"<script>\n{js}\n</script>")
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(html)

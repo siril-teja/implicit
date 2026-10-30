@@ -145,8 +145,10 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | **1, done** | **Conversion**: TotalSegmentator masks + CT → one implicit bone file per bone (CT half-maximum surface, label as ±2 mm guard), scanner frame | `implicit/anatomy/convert.py` |
 | 1b | Landmarks on implicit bones: body frames, endplate planes (L5 not yet reliable) | `implicit/anatomy/landmarks.py` |
 | 1e | Pose params per vertebra (alignment), osteotomies on patient anatomy, cortical shell | |
-| **2** | **FE export**: voxel-hex (C3D8 / Marc hex8) with body material IDs, plus Marc `.dat` and Abaqus `.inp` writers, and auto node/face sets for contact and loading | Pure NumPy, no mesher dependency |
+| 2, on hold | **FE meshing** (feeds phase 7): voxel-hex (C3D8 / Marc hex8) with body material IDs, plus Marc `.dat` and Abaqus `.inp` writers, and auto node/face sets for contact and loading | Pure NumPy, no mesher dependency |
 | 2b | Conforming tet mesh with a permissive-licence mesher, sizing field from |f| | See LICENSING.md for candidates |
 | 3 | Speed: narrow-band / octree sampling and GPU sampling for export, plus GLSL↔NumPy parity tests | Export is ~20 s per body at 0.5 mm today |
 | 4 | Field-driven FE: CT HU → density → modulus as a field, DOE batch runs driving Marc headless | Parameter studies without manual rebuilds |
-| **5, in progress** | Block graphs: JSON graph format and block registry (done), browser block canvas with live rebuild, two-way selection between canvas and 3D view | `implicit/graph.py` |
+| **5, done** | Block graphs: JSON graph format and block registry, browser block canvas with live rebuild, selection between canvas and 3D view | `implicit/graph.py`, `viewer/editor.js` |
+| 6 | Anatomy blocks: vertebral frames and endplates, pose, osteotomies, cages, discs (annulus, nucleus, fibres), ligaments | Each a block that wires into the others |
+| 7 | Lightweight FE solver in the browser (open source) | After the model is complete |

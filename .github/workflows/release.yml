@@ -46,7 +46,7 @@ jobs:
           fi
       - name: Build viewer
         run: |
-          python -m implicit.build examples/*.py --out site --commit "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+          python -m implicit.build examples/*.json examples/*.py --out site --commit "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
           cp NOTICE.md CHANGELOG.md site/
       - name: Create release
         if: steps.v.outputs.release == 'true'

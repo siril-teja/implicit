@@ -48,16 +48,24 @@ def probes(scene, n_random=8, seed=0):
     return {"batches": batches}
 
 
+def _now(body):
+    """Body bounds at the current parameter values when known (graph bodies), else its bounds."""
+    f = getattr(body, "bounds_now", None)
+    b = f() if f else None
+    return b if b is not None else body.bounds
+
+
 def _units(scene, n_random, seed):
     rng = np.random.default_rng(seed)
     out = []
     for k, unit in enumerate(scene._units()):
         bodies = [scene.bodies[i] for i in unit]
         sdfs = [b.sdf for b in bodies]
-        lo, hi = (np.array(x) for x in (bodies[0].bounds or scene.bounds))
-        for b in bodies[1:]:
-            if b.bounds:
-                lo, hi = np.minimum(lo, b.bounds[0]), np.maximum(hi, b.bounds[1])
+        bounds = [_now(b) for b in bodies]
+        lo, hi = (np.array(x) for x in (bounds[0] or scene.bounds))
+        for b in bounds[1:]:
+            if b:
+                lo, hi = np.minimum(lo, b[0]), np.maximum(hi, b[1])
         pts = [lo + (hi - lo) * rng.random(3) for _ in range(n_random)]
         for s in sdfs:
             if isinstance(s, Grid):

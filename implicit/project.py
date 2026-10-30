@@ -24,18 +24,39 @@ def load_scene(script) -> Scene:
     return scene
 
 
+def load_graph_scene(path):
+    """(scene, graph dict, library) for a block graph, bones in the shared library atlas."""
+    from .graph import Library, build_graph, read_graph
+    g = read_graph(path)
+    lib = Library(g, Path(path).parent)
+    return build_graph(g, Path(path).parent, library=lib), g, lib
+
+
 def write_scenes(scripts, out_dir) -> list[str]:
-    """Write scenes/<stem>.json and scenes/index.json; return the scene keys."""
+    """Write scenes/<stem>.json (+ atlas, probes) and scenes/index.json; return the scene keys.
+
+    Block graphs also get <stem>.graph.json and <stem>.library.json (bones and
+    their GLSL), and the site gets blocks.json, so the viewer can edit them.
+    """
     out = Path(out_dir) / "scenes"
     out.mkdir(parents=True, exist_ok=True)
-    keys = []
+    keys, graphs = [], False
     for s in scripts:
         key = Path(s).stem
-        scene = load_scene(s)
+        if Path(s).suffix == ".json":
+            scene, g, lib = load_graph_scene(s)
+            (out / f"{key}.graph.json").write_text(json.dumps(g))
+            (out / f"{key}.library.json").write_text(json.dumps(lib.to_json(f"{key}.atlas.gz")))
+            graphs = True
+        else:
+            scene = load_scene(s)
         scene.write_json(out / f"{key}.json", atlas_url=f"{key}.atlas.gz")
         if scene.atlas_gz():
             (out / f"{key}.atlas.gz").write_bytes(scene.atlas_gz())
         (out / f"{key}.probes.json").write_text(json.dumps(probes(scene)))
         keys.append(key)
+    if graphs:
+        from .graph import browser_manifest
+        (out / "blocks.json").write_text(json.dumps(browser_manifest()))
     (out / "index.json").write_text(json.dumps(keys))
     return keys
