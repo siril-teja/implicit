@@ -63,6 +63,97 @@ const Solvers = (() => {
   }
 
   function spinopelvic(d, v, light = false) {
+    const out = motions(d, v), res = {};
+    for (const [k, [R, t]] of Object.entries(out)) {
+      res[k] = [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], ...t];
+    }
+    if (light) return res;
+    const pairs = d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]);
+    res.tps = tpsTable(pairs);
+    res.chain = chainTable(d, out);
+    const G = gridPoints(d.grid), grid = new Array(G.length * 4), fwd = forward(d, out);
+    G.forEach((g, i) => {
+      const y = fwd(g), dd = [y[0] - g[0], y[1] - g[1], y[2] - g[2]];
+      grid[4 * i] = dd[0]; grid[4 * i + 1] = dd[1]; grid[4 * i + 2] = dd[2]; grid[4 * i + 3] = Math.hypot(...dd);
+    });
+    res.grid = grid;
+    [res.flow_cells, res.flow_segs] = flowTables(d, v);
+    return res;
+  }
+
+  // The forward soft-tissue map (rest point -> moved) for segment motions ``out``.
+  function forward(d, out) {
+    if (d.field === "polyrigid") { const T = chainTable(d, out); return (x) => polyForward(T, x); }
+    const F = tpsTable(d.tps_points.map((q) => [apply(out[q.segment], q.point), q.point]));  // fitted from the rest points
+    return (x) => tpsEval(F, x);
+  }
+
+  // Flow lines (alignment.py flow_tables): seed paths from the subject's values to ``v``.
+  const FLOW_STEPS = 10, FLOW_MARGIN = 6.0, FLOW_RMAX = 3.0, FLOW_ROW = 512;
+  function flowTables(d, v) {
+    const f = d.flow, S = f.seeds, start = {};
+    for (const k of ["PI", "PT", "LL", "TK", "MT", "TL", "CB"]) start[k] = k in d.base ? d.base[k] : (v[k] ?? 0);
+    start.PO = 0;
+    const P = [S];
+    for (let k = 1; k <= FLOW_STEPS; k++) {
+      const s = k / FLOW_STEPS, vk = { AR: v.AR ?? 0 };
+      for (const key of Object.keys(start)) vk[key] = start[key] + s * ((v[key] ?? 0) - start[key]);
+      const fwd = forward(d, motions(d, vk));
+      P.push(S.map(fwd));
+    }
+    const lo = f.lo, cs = f.cell, n = f.n, cells = Array.from({ length: n[0] * n[1] * n[2] }, () => []), segs = [];
+    const grow = FLOW_MARGIN + FLOW_RMAX, dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const cellOf = (x, i) => Math.min(Math.max(Math.floor((x - lo[i]) / cs), 0), n[i] - 1);
+    S.forEach((seed, i) => {
+      if (dist(P[FLOW_STEPS][i], seed) < 0.5) return;  // (nearly) still: no line
+      for (let k = 0; k < FLOW_STEPS; k++) {
+        const a = P[k][i], b = P[k + 1][i], e = segs.length;
+        const c0 = [0, 1, 2].map((j) => cellOf(Math.min(a[j], b[j]) - grow, j));
+        const c1 = [0, 1, 2].map((j) => cellOf(Math.max(a[j], b[j]) + grow, j));
+        segs.push([a, dist(a, seed), b, dist(b, seed)]);
+        for (let z = c0[2]; z <= c1[2]; z++) for (let y = c0[1]; y <= c1[1]; y++) {
+          for (let x = c0[0]; x <= c1[0]; x++) cells[x + n[0] * (y + n[1] * z)].push(e);
+        }
+      }
+    });
+    const empty = emptyLayers(cells.map((c) => c.length > 0), n);
+    const table = [], entries = [];
+    cells.forEach((lst, i) => {
+      table.push(entries.length / 8, lst.length, empty[i], 0);
+      for (const e of lst) { const [a, va, b, vb] = segs[e]; entries.push(...a, va, ...b, vb); }
+    });
+    const pad = (-entries.length % (4 * FLOW_ROW) + 4 * FLOW_ROW) % (4 * FLOW_ROW);
+    for (let i = 0; i < (pad || 4 * FLOW_ROW); i++) entries.push(0);
+    return [table, entries];
+  }
+
+  // Empty cell layers around each cell (alignment.py _empty_layers), x fastest.
+  const FLOW_SKIP = 4;
+  function emptyLayers(full, n) {
+    const at = (x, y, z) => x + n[0] * (y + n[1] * z);
+    const dilate = (m) => {
+      let out = m.slice();
+      for (let axis = 0; axis < 3; axis++) {
+        const a = out.slice(), st = [1, n[0], n[0] * n[1]][axis];
+        for (let z = 0; z < n[2]; z++) for (let y = 0; y < n[1]; y++) for (let x = 0; x < n[0]; x++) {
+          const c = [x, y, z][axis], i = at(x, y, z);
+          if (c > 0 && out[i - st]) a[i] = true;
+          if (c < n[axis] - 1 && out[i + st]) a[i] = true;
+        }
+        out = a;
+      }
+      return out;
+    };
+    let near = dilate(full);
+    const out = full.map(() => 0);
+    for (let k = 0; k < FLOW_SKIP; k++) {
+      near.forEach((v, i) => { if (!v) out[i] += 1; });
+      near = dilate(near);
+    }
+    return out;
+  }
+
+  function motions(d, v) {
     const base = d.base, meas = d.measured;
     const rel = (k, x) => (k in base ? x + meas[k] - base[k] : x);
     const PI = rel("PI", v.PI), PT = rel("PT", v.PT), CB = rel("CB", v.CB ?? 0);
@@ -103,23 +194,7 @@ const Solvers = (() => {
     const out = build(bal);
     levels.forEach((lv, i) => { const f = d.frames[lv]; out[lv] = compose(out[lv], rot(f.center, f.axes[2], axial[i])); });
     Object.assign(out, { legs, pelvis, sacrum });
-    const res = {};
-    for (const [k, [R, t]] of Object.entries(out)) {
-      res[k] = [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], ...t];
-    }
-    if (light) return res;
-    const pairs = d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]);
-    res.tps = tpsTable(pairs);
-    res.chain = chainTable(d, out);
-    const G = gridPoints(d.grid), grid = new Array(G.length * 4);
-    const fwd = d.field === "polyrigid" ? (x) => polyForward(res.chain, x)
-      : ((T) => (x) => tpsEval(T, x))(tpsTable(pairs.map(([a, b]) => [b, a])));  // forward: fitted from the rest points
-    G.forEach((g, i) => {
-      const y = fwd(g), dd = [y[0] - g[0], y[1] - g[1], y[2] - g[2]];
-      grid[4 * i] = dd[0]; grid[4 * i + 1] = dd[1]; grid[4 * i + 2] = dd[2]; grid[4 * i + 3] = Math.hypot(...dd);
-    });
-    res.grid = grid;
-    return res;
+    return out;
   }
 
   // ------------------------------------------------------------ polyrigid field (alignment.py)

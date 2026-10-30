@@ -44,7 +44,7 @@ import numpy as np
 
 from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, Warp, Lattice, Arrows, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -695,7 +695,8 @@ class AlignmentV:
         if self.table is None:
             self.table = {}
         if key not in self.table:
-            width = {"tps": 3, "chain": 7}.get(key) or self.solver.data["grid"]["n"][0]
+            width = {"tps": 3, "chain": 7, "flow_segs": 512}.get(key) or {
+                "grid": self.solver.data["grid"]["n"][0], "flow_cells": self.solver.data["flow"]["n"][0]}[key]
             self.table[key] = ComputedTexture(f"{self.solver.id}_{key}", self.solver, key, width)
         return self.table[key]
 
@@ -842,20 +843,30 @@ def _tps_warp(x, node):
 
 @block("field_view", "Field view", "Anatomy",
        [Port("alignment", "alignment", label="Alignment"),
-        Port("mode", "choice", "lattice", label="Display", choices=("lattice", "arrows", "slice")),
+        Port("mode", "choice", "flow", label="Display", choices=("flow", "lattice", "arrows", "slice")),
         S("spacing", 15, 4, 40, 1, "mm", "Lattice spacing"), S("radius", 0.5, 0.1, 3, 0.1, "mm", "Line / arrow radius"),
         Port("axis", "choice", "x", label="Slice across", choices=("x", "y", "z")),
         Port("offset", "scalar", 0.0, step=1, unit="mm", span=150.0, label="Slice position"),
         S("max", 50, 1, 200, 1, "mm", "Colour scale: displacement at the top colour")],
        [Port("body", "body", label="Body")])
 def _field_view(x, node):
-    """Show the soft-tissue field around the spine: a lattice carried by it, arrows of
-    the displacement on a grid (coloured by its length), or a slice coloured by it."""
+    """Show the soft-tissue field around the spine: flow lines (the paths of points
+    near the spine while the alignment goes from the subject's values to the current
+    ones, coloured by the distance travelled), a lattice carried by the field, arrows
+    of the displacement on a grid (coloured by its length), or a slice coloured by it."""
     a = x["alignment"]
     kind, table, n = a.field
     g = a.solver.data["grid"]
     lo = np.asarray(g["lo"], float)
     hi = lo + g["step"] * (np.asarray(g["n"]) - 1)
+    if x["mode"] == "flow":
+        f = a.solver.data["flow"]
+        cells, segs = a.texture("flow_cells"), a.texture("flow_segs")
+        sdf = FlowLines(cells, segs, f, x["radius"])
+        value = ColorValue(lambda p: f"{sdf.call(p)}.y", lambda p: sdf._np(p)[:, 1], [cells, segs, x["radius"]])
+        flo = np.asarray(f["lo"], float)
+        return {"body": Field(sdf, lambda now: (flo, flo + f["cell"] * np.asarray(f["n"])),
+                              colormap=(value, x["max"]))}
     if x["mode"] == "lattice":
         def bounds(now):
             return _grow((lo, hi), a.displacement(now) + 2.0)

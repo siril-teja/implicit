@@ -62,9 +62,11 @@ Spine alignment block:
   motion between its two vertebrae (log-Euclidean blend by position between the
   endplate planes); exactly rigid at the bones, but more costly to evaluate.
 
-The **Field view** block shows the field: a lattice it carries, arrows of the
-displacement on a 15 mm grid, or a slice coloured by it (with a colour scale). The
-average spine scene has all three as hidden groups in the Scene tab. Blocks: Spine
+The **Field view** block shows the field: flow lines (the paths tissue near the
+spine travels while the sliders go from the subject's values to the current ones,
+coloured by the distance travelled), a lattice it carries, arrows of the
+displacement on a 15 mm grid, or a slice coloured by it, with a colour scale. The
+average spine scene has all four as hidden groups in the Scene tab. Blocks: Spine
 alignment, Align (one per bone), Spine curve, Field warp, Field view. Model and
 definitions: `implicit/anatomy/alignment.py`.
 
@@ -138,7 +140,7 @@ browser-built shader with NumPy too.
 ## Quick start
 
 ```bash
-pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion)
+pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion); exact versions
 python -m implicit.serve examples/average_spine.json examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```

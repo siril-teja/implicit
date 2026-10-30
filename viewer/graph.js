@@ -450,7 +450,7 @@ const Graph = (() => {
   function tableParam(a, key, params) {
     const s = a.solver;
     if (!a.tables[key]) {
-      const width = { tps: 3, chain: 7 }[key] || s.data.grid.n[0];
+      const width = { tps: 3, chain: 7, flow_segs: 512 }[key] || { grid: s.data.grid.n[0], flow_cells: s.data.flow.n[0] }[key];
       a.tables[key] = { name: `${s.id}_${key}`, uniform: `u_${s.id}_${key}`, value: 0, default: 0, min: 0, max: 0, step: 0,
         label: `${s.id}_${key}`, unit: "", node: s.id, port: key, texture: { solver: s.id, key, width }, solver: s };
       params.push(a.tables[key]);
@@ -490,6 +490,13 @@ const Graph = (() => {
     const lo = g.lo, hi = g.lo.map((v, i) => v + g.step * (g.n[i] - 1));
     const v3 = (q) => `vec3(${q.map(glslFloat).join(", ")})`, box = [lo, hi];
     const sg = (s) => (/^[A-Za-z_]\w*$/.test(s.g) ? s.g : `(${s.g})`);
+    if (x.mode === "flow") {
+      const f = a.solver.data.flow, C = tableParam(a, "flow_cells", params).uniform, S = tableParam(a, "flow_segs", params).uniform;
+      const call = (p, r) => `flowLines(${p}, ${C}, ${S}, ${v3(f.lo)}, ${glslFloat(f.cell)}, ivec3(${f.n.join(", ")}), ${r})`;
+      const fb = [f.lo, f.lo.map((v, i) => v + f.cell * f.n[i])];
+      return { node: id, inputs: x, bf: () => fb, tmpl: { ops: [["var", "float", `${call("$p", "${radius}")}.x`]], out: "$0" },
+        colormap: { glsl: (p) => `${call(p, sg(x.radius))}.y`, max: x.max } };
+    }
     if (x.mode === "lattice") {
       const ops = [["var", "vec3", inv("$p")],
         ["var", "float", `${glslFloat(WARP_LIP)} * sdLattice($0, ${v3(lo)}, ${v3(hi)}, \${spacing}, \${radius})`]];

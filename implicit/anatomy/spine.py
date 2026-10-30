@@ -155,7 +155,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     pelvis, femurs as the legs, the sacrum as itself; the spinal cord stays). One
     Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
     CB) set to the subject's own values, feeds the Align blocks, the Field warp of
-    the spine curve and three hidden Field views (lattice, arrows, slice); it is left
+    the spine curve and four hidden Field views (flow lines, lattice, arrows, slice); it is left
     out when the subject has no pelvic landmarks. One shared Number keeps bone volume
     when smoothing.
     File paths are written relative to ``relative_to`` (the graph file's folder).
@@ -201,8 +201,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         nodes["spine_curve_out"] = {"block": "output", "title": "Spine curve", "pos": [1920, -340],
                                     "in": {"body": "@spine_curve_tps", "name": "Spine curve",
                                            "color": hexc(COLORS["curve"]), "group": "Spine curve", "visible": True}}
-        for i, (mode, title) in enumerate((("lattice", "Field: lattice"), ("arrows", "Field: arrows"),
-                                           ("slice", "Field: slice"))):
+        for i, (mode, title) in enumerate((("flow", "Field: flow lines"), ("lattice", "Field: lattice"),
+                                           ("arrows", "Field: arrows"), ("slice", "Field: slice"))):
             nodes[f"field_{mode}"] = {"block": "field_view", "title": title, "pos": [1440, -225 + 115 * i],
                                       "in": {"alignment": "@spp", "mode": mode}}
             nodes[f"field_{mode}_out"] = {"block": "output", "title": title, "pos": [1680, -225 + 115 * i],

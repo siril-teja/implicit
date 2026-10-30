@@ -62,12 +62,13 @@ class TestAlignment(unittest.TestCase):
     def test_identity_at_baseline(self):
         res = al.solve(self.data, **self.targets(AR=0.4))
         for seg, m in res.items():
-            if seg not in ("tps", "chain", "grid"):
+            if seg not in ("tps", "chain", "grid", "flow_cells", "flow_segs"):
                 np.testing.assert_allclose(m, [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], atol=1e-9, err_msg=seg)
         P = np.random.default_rng(0).uniform(-150, 150, (200, 3))
         np.testing.assert_allclose(al.tps_eval(res["tps"], P), P, atol=1e-6)
         np.testing.assert_allclose(al.poly_inverse(res["chain"], P), P, atol=1e-9)
         self.assertLess(max(res["grid"][3::4]), 1e-6)
+        self.assertEqual(max(res["flow_cells"][1::4]), 0)  # nothing moves: no flow lines
 
     def test_polyrigid_rigid_in_bodies_and_invertible_near_the_axis(self):
         data = {**self.data, "field": "polyrigid"}
@@ -142,6 +143,32 @@ class TestAlignment(unittest.TestCase):
             R, t = motion(motions[q["segment"]])
             y = R @ q["point"] + t
             np.testing.assert_allclose(al.tps_eval(motions["tps"], y[None])[0], q["point"], atol=1e-6)
+
+    def test_flow_lines_follow_the_seeds(self):
+        """Each line starts at its seed and ends where the field takes it; the cell
+        lookup finds the nearest line near the lines and a lower bound elsewhere."""
+        data = {**self.data, "field": "polyrigid"}
+        t = self.targets(PT=25.0, LL=62.0, MT=35.0, TL=-25.0, AR=0.3)
+        res = al.solve(data, **t)
+        f = data["flow"]
+        S = np.asarray(f["seeds"])
+        end = al._forward(data, al._motions(data, **t))(S)
+        moved = np.linalg.norm(end - S, axis=1) >= 0.5
+        r = 0.4
+        d = al.flow_eval(res["flow_cells"], res["flow_segs"], f, np.concatenate([S[moved], end[moved]]), r)
+        np.testing.assert_allclose(d[:, 0], -r, atol=1e-9)  # on the lines
+        np.testing.assert_allclose(d[len(S[moved]):, 1], np.linalg.norm(end - S, axis=1)[moved], atol=1e-9)
+        # Elsewhere never more than the true distance to the nearest line.
+        E = np.asarray(res["flow_segs"], float).reshape(-1, 2, 4)
+        E = E[np.any(E[:, :, :3] != 0, axis=(1, 2))]
+        P = S[::5] + np.random.default_rng(3).uniform(-20, 20, (len(S[::5]), 3))
+        a, b = E[:, 0, :3], E[:, 1, :3]
+        true = np.array([np.min(np.linalg.norm(p - a - (b - a) * np.clip(np.sum((p - a) * (b - a), 1)
+                                                                           / np.maximum(np.sum((b - a) ** 2, 1), 1e-12), 0, 1)[:, None], axis=1))
+                         for p in P]) - r
+        got = al.flow_eval(res["flow_cells"], res["flow_segs"], f, P, r)[:, 0]
+        self.assertTrue(np.all(got <= true + 1e-9))
+        np.testing.assert_allclose(got[got < al.FLOW_MARGIN], true[got < al.FLOW_MARGIN], atol=1e-9)
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_viewer_solver_matches(self):

@@ -949,6 +949,34 @@ def _round_cone_np(p, a, b, r1, r2):
                              (np.sqrt(np.maximum(x2 * a2 / l2, 0)) + y * rr) / l2 - r1))
 
 
+class FlowLines(SDF):
+    """Flow lines (implicit.anatomy.alignment.flow_tables): tubes of radius r along the
+    segments of two computed tables, looked up in a grid of cells (lo, cell size, n).
+    Exact near the lines; elsewhere a lower bound (the cell boundary + a margin)."""
+
+    def __init__(self, cells, segs, flow, r):
+        self.cells, self.segs, self.flow, self.r = cells, segs, flow, wrap(r)
+
+    def exprs(self): return [self.cells, self.segs, self.r]
+
+    def call(self, p):
+        f = self.flow
+        lo = "vec3(" + ", ".join(glsl_float(x) for x in f["lo"]) + ")"
+        n = "ivec3(" + ", ".join(str(int(k)) for k in f["n"]) + ")"
+        return (f"flowLines({p}, {self.cells.glsl()}, {self.segs.glsl()}, {lo}, {glsl_float(f['cell'])}, {n}, "
+                f"{self.r.glsl()})")
+
+    def emit(self, ctx, p):
+        return ctx.var("float", f"{self.call(p)}.x")
+
+    def _np(self, p):
+        from .anatomy.alignment import flow_eval
+        return flow_eval(self.cells.value(), self.segs.value(), self.flow, p, _v(self.r))
+
+    def eval(self, p):
+        return self._np(p)[:, 0]
+
+
 class Slab(SDF):
     """Exact. A slab of half-thickness h across the box lo-hi, perpendicular to an axis
     (0, 1, 2) at ``offset``."""
@@ -999,6 +1027,9 @@ class ScaleAbout(SDF):
 
 
 POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
+# Flow line lookup margin (mm; above the renderer's hit tolerance, 0.002 mm per mm of ray, at
+# viewing distances up to 3 m) and segment table width (alignment.py).
+FLOW_MARGIN, FLOW_ROW = 6.0, 512
 
 GLSL_LIB = f"""
 vec3 rotX(vec3 p, float a) {{ float c = cos(a), s = sin(a); return vec3(p.x, c*p.y - s*p.z, s*p.y + c*p.z); }}
@@ -1130,6 +1161,25 @@ vec2 arrows(vec3 p, highp sampler2D T, vec3 lo, float s, ivec3 n, float r) {{
     // and outside the grid box grown by an arrow's reach.
     vec3 hi = lo + s * vec3(n - 1);
     best.x = min(best.x, max(0.7 * s - 2.2 * r, sdAABB(p, lo, hi) - 0.8 * s - 2.2 * r));
+    return best;
+}}
+// Flow lines (see FlowLines): (distance, displacement so far) from the segments of p's cell.
+vec2 flowLines(vec3 p, highp sampler2D C, highp sampler2D S, vec3 lo, float cs, ivec3 n, float r) {{
+    vec3 hi = lo + cs * vec3(n);
+    ivec3 c = ivec3(floor((p - lo) / cs));
+    if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, n))) return vec2(sdAABB(p, lo, hi) + {FLOW_MARGIN}, 0.0);
+    vec3 clo = lo + cs * vec3(c), e = min(p - clo, clo + cs - p);
+    vec4 cell = texelFetch(C, ivec2(c.x, c.y + n.y * c.z), 0);
+    // Lines outside the cell (and its empty layers) are beyond its boundary + the margin.
+    vec2 best = vec2(min(e.x, min(e.y, e.z)) + cell.z * cs + {FLOW_MARGIN}, 0.0);
+    int off = int(cell.x + 0.5), cnt = int(cell.y + 0.5);
+    for (int i = 0; i < cnt; i++) {{
+        int k = 2 * (off + i);
+        vec4 A = texelFetch(S, ivec2(k % {FLOW_ROW}, k / {FLOW_ROW}), 0), B = texelFetch(S, ivec2((k + 1) % {FLOW_ROW}, (k + 1) / {FLOW_ROW}), 0);
+        vec3 pa = p - A.xyz, ba = B.xyz - A.xyz;
+        float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0), d = length(pa - ba * h) - r;
+        if (d < best.x) best = vec2(d, A.w + (B.w - A.w) * h);
+    }}
     return best;
 }}
 // Colour map for field magnitudes (0..1; a viridis-like polynomial fit).

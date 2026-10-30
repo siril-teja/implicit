@@ -24,12 +24,12 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       release: ${{ steps.v.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
       - run: pip install -r requirements.txt
       - name: Tests
         run: python -m unittest discover -s tests -v
@@ -58,7 +58,7 @@ jobs:
           (cd site && zip -qr "../implicit-viewer-v$v.zip" .)
           gh release create "v$v" "implicit-viewer-v$v.zip" \
             --target "$GITHUB_SHA" --title "v$v" --notes-file notes.md
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3.0.1
         if: steps.v.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
         with:
           path: site
@@ -72,4 +72,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4.0.5

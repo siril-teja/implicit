@@ -31,6 +31,15 @@ is updated from it.
      notes and the built viewer attached;
    - deploys the viewer to GitHub Pages: https://siril.me/implicit/
 
+## Third-party dependencies
+
+Every third-party dependency is pinned to one exact version, never a range
+(`==`, not `>=`): Python packages in `requirements.txt`, the Python and Node
+versions, Playwright and the GitHub Actions in `.github/workflows/`. A build then
+always uses the same versions. Update a pin deliberately, in its own change with a
+CHANGELOG entry, and only to a version whose licence allows commercial use
+(`docs/LICENSING.md`).
+
 ## One-time repository settings
 
 These are set in the GitHub web UI (repository **Settings**):

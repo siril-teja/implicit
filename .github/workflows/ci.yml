@@ -13,12 +13,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
       - run: pip install -r requirements.txt
       - name: Tests
         run: python -m unittest discover -s tests -v
@@ -51,13 +51,13 @@ jobs:
             renderer: Metal
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
+          python-version: "3.12.10"
+      - uses: actions/setup-node@v4.4.0
         with:
-          node-version: "22"
+          node-version: "22.22.0"
       - run: pip install -r requirements.txt
       - name: Build viewer (plus a test graph that uses every block)
         shell: bash

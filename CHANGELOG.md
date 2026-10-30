@@ -13,14 +13,19 @@ publishes that section as the GitHub release notes. Versions follow
   screw motion between neighbouring vertebrae in each disc space (log-Euclidean
   blend by position between the endplate planes); inverted in the shader by
   fixed-point iteration.
-- **Field view** block: the soft-tissue field as a lattice it carries, arrows of
-  the displacement on a grid, or a slice coloured by the displacement, with a
-  colour legend in the viewer. The average spine scene has all three as hidden
-  groups.
+- **Field view** block: the soft-tissue field as flow lines (paths of tissue points
+  near the spine while the sliders go from the subject's values to the current
+  ones, coloured by the distance travelled; drawn from a grid of cells built on the
+  CPU, exact near the lines), a lattice it carries, arrows of the displacement on a
+  grid, or a slice coloured by the displacement, with a colour legend in the
+  viewer. The average spine scene has all four as hidden groups.
 - Bodies coloured by a scalar field (per-point colour), used by the field views.
 
 ### Changed
 - The TPS warp block is now Field warp and uses the chosen field.
+- Every third-party dependency is pinned to one exact version: numpy 2.5.3,
+  scipy 1.18.1, nibabel 5.4.2, Python 3.12.10 and Node 22.22.0 in CI, and the
+  GitHub Actions by release (rule in CONTRIBUTING.md).
 
 ## [0.10.0] - 2026-10-31
 

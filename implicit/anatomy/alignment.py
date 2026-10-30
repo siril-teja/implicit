@@ -90,7 +90,7 @@ from pathlib import Path
 import numpy as np
 
 from ..expr import SOLVERS
-from ..sdf import POLY_ITERS, POLY_RELAX
+from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_ITERS, POLY_RELAX
 from .convert import VERTEBRAE, load_bone
 
 CURVE_STEPS = 4                                    # spine curve samples per span between centres
@@ -101,6 +101,11 @@ KNOBS = {"PI": (30.0, 90.0), "PT": (-10.0, 45.0), "LL": (0.0, 90.0), "TK": (0.0,
 CURVES = {"MT": ("T5", "T8", "T12"), "TL": ("T12", "L1", "L4")}  # default (upper end, apex, lower end)
 TPS_ARM = 15.0                                     # mm, control point offsets from a body centre
 GRID_STEP, GRID_PAD = 15.0, (60.0, 60.0, 20.0)     # mm, field display grid around the spine curve
+FLOW_STEPS = 10                                    # flow lines: steps from the subject's values to the current
+FLOW_SEED_STEP, FLOW_SEED_REACH = 25.0, 40.0       # mm: seed grid spacing, seeds this close to the spine curve
+FLOW_CELL, FLOW_PAD = 15.0, 100.0                  # mm: line lookup cells, their box around the display grid
+FLOW_RMAX = 3.0                                    # mm: largest line radius (lookup margin: sdf.FLOW_MARGIN)
+FLOW_SKIP = 4                                      # empty cell layers counted around a cell, at most
 
 
 # ---------------------------------------------------------------- pelvic landmarks
@@ -224,8 +229,15 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0)):
     C = np.reshape(curve, (-1, 3))
     lo, hi = C.min(0) - GRID_PAD, C.max(0) + GRID_PAD
     n = np.ceil((hi - lo) / GRID_STEP).astype(int) + 1
+    # Flow line seeds near the curve, and the cells their lines are looked up in.
+    sx, sy, sz = (np.arange(a, b + 1e-9, FLOW_SEED_STEP) for a, b in zip(lo, hi))
+    seeds = np.stack(np.meshgrid(sx, sy, sz, indexing="ij"), -1).reshape(-1, 3)
+    seeds = seeds[np.min(np.linalg.norm(seeds[:, None] - C[None], axis=2), axis=1) <= FLOW_SEED_REACH]
+    flo = lo - FLOW_PAD
+    fn = np.ceil((hi + FLOW_PAD - flo) / FLOW_CELL).astype(int)
     data = {"hip": H, "si": SI, "s1_point": pt(s1["sup"]["point"]), "s1_normal": list(s1["sup"]["normal"]),
             "planes": planes, "field": "tps", "grid": {"lo": lo.tolist(), "step": GRID_STEP, "n": n.tolist()},
+            "flow": {"seeds": seeds.tolist(), "lo": flo.tolist(), "cell": FLOW_CELL, "n": fn.tolist()},
             "levels": levels, "discs": discs, "frames": frames, "tps_points": tps,
             "curves": {k: list(c) for k, c in CURVES.items() if all(lv in levels for lv in c)},
             "curve": curve}
@@ -352,8 +364,36 @@ def _curve_plan(levels, curves):
 def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, light=False):
     """{segment: [R columns (9), t (3)]}: the rigid motion p -> R p + t of each segment
     ("legs", "pelvis", "sacrum" and the levels), plus the tables "tps" (inverse thin-
-    plate spline, see tps_table), "chain" (polyrigid field, see chain_table) and
-    "grid" (forward displacement of the display grid); ``light``: motions only."""
+    plate spline, see tps_table), "chain" (polyrigid field, see chain_table), "grid"
+    (forward displacement of the display grid) and "flow_cells", "flow_segs" (flow
+    lines, see flow_tables); ``light``: motions only."""
+    knobs = dict(PI=PI, PT=PT, LL=LL, TK=TK, MT=MT, TL=TL, AR=AR, PO=PO, CB=CB)
+    out = _motions(data, **knobs)
+    res = {k: [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], *t]
+           for k, (R, t) in out.items()}
+    if light:
+        return res
+    pairs = [(q["point"], _apply(out[q["segment"]], q["point"])) for q in data["tps_points"]]
+    res["tps"] = tps_table(pairs)
+    res["chain"] = chain_table(data, out)
+    G = grid_points(data["grid"])
+    D = _forward(data, out)(G) - G
+    res["grid"] = np.column_stack([D, np.linalg.norm(D, axis=1)]).ravel().tolist()
+    res["flow_cells"], res["flow_segs"] = flow_tables(data, knobs)
+    return res
+
+
+def _forward(data, out):
+    """The forward soft-tissue map (rest points -> moved) for segment motions ``out``."""
+    if data.get("field") == "polyrigid":
+        T = chain_table(data, out)
+        return lambda X: poly_forward(T, X)
+    F = tps_table([(_apply(out[q["segment"]], q["point"]), q["point"]) for q in data["tps_points"]])
+    return lambda X: tps_eval(F, X)  # forward: fitted from the rest points
+
+
+def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
+    """{segment: (R, t)} for the given parameter values (see solve)."""
     base, meas = data["base"], data["measured"]
     rel = lambda k, v: v + meas[k] - base[k] if k in base else v  # relative to the rounded starting values
     PI, PT, CB = rel("PI", PI), rel("PT", PT), rel("CB", CB)
@@ -403,20 +443,109 @@ def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, light=Fa
         f = data["frames"][lv]
         out[lv] = _compose(out[lv], _rot(f["center"], f["axes"][2], axial[i]))
     out.update(legs=legs, pelvis=pelvis, sacrum=sacrum)
-    res = {k: [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], *t]
-           for k, (R, t) in out.items()}
-    if light:
-        return res
-    pairs = [(q["point"], _apply(out[q["segment"]], q["point"])) for q in data["tps_points"]]
-    res["tps"] = tps_table(pairs)
-    res["chain"] = chain_table(data, out)
-    G = grid_points(data["grid"])
-    if data.get("field") == "polyrigid":
-        D = poly_forward(res["chain"], G) - G
-    else:
-        D = tps_eval(tps_table([(b, a) for a, b in pairs]), G) - G  # forward: fitted from the rest points
-    res["grid"] = np.column_stack([D, np.linalg.norm(D, axis=1)]).ravel().tolist()
-    return res
+    return out
+
+
+# ---------------------------------------------------------------- flow lines
+
+def flow_tables(data, knobs):
+    """Flow lines: the path of each seed point while the parameters go in FLOW_STEPS
+    equal steps from the subject's own values to ``knobs`` (AR held), through the
+    soft-tissue field. Segments (displacement so far at both ends) are binned into a
+    grid of cells for the shader (see flow_eval):
+      cells: per cell (offset, count, empty layers around it (see _empty_layers), 0), x fastest;
+      segs: per entry two texels (a, |a - seed|), (b, |b - seed|), FLOW_ROW texels a row.
+    """
+    f = data["flow"]
+    S = np.asarray(f["seeds"], float)
+    start = {k: data["base"].get(k, knobs[k]) for k in ("PI", "PT", "LL", "TK", "MT", "TL", "CB")}
+    start["PO"] = 0.0
+    P = [S]
+    for k in range(1, FLOW_STEPS + 1):
+        s = k / FLOW_STEPS
+        v = {key: start[key] + s * (knobs[key] - start[key]) for key in start}
+        P.append(_forward(data, _motions(data, **v, AR=knobs["AR"]))(S))
+    P = np.array(P)  # (steps + 1, seeds, 3)
+    lo, cs, n = np.asarray(f["lo"], float), f["cell"], np.asarray(f["n"])
+    cells = [[] for _ in range(int(np.prod(n)))]
+    segs = []
+    grow = FLOW_MARGIN + FLOW_RMAX
+    for i in range(len(S)):
+        if np.linalg.norm(P[-1, i] - S[i]) < 0.5:
+            continue  # (nearly) still: no line
+        for k in range(FLOW_STEPS):
+            a, b = P[k, i], P[k + 1, i]
+            c0 = np.clip(np.floor((np.minimum(a, b) - grow - lo) / cs).astype(int), 0, n - 1)
+            c1 = np.clip(np.floor((np.maximum(a, b) + grow - lo) / cs).astype(int), 0, n - 1)
+            e = len(segs)
+            segs.append((a, np.linalg.norm(a - S[i]), b, np.linalg.norm(b - S[i])))
+            for z in range(c0[2], c1[2] + 1):
+                for y in range(c0[1], c1[1] + 1):
+                    for x in range(c0[0], c1[0] + 1):
+                        cells[x + n[0] * (y + n[1] * z)].append(e)
+    empty = _empty_layers(np.array([len(c) > 0 for c in cells]).reshape(n[2], n[1], n[0]))
+    table, entries = [], []
+    for lst, k in zip(cells, empty.ravel()):
+        table += [float(len(entries) // 8), float(len(lst)), float(k), 0.0]  # offset: entry index
+        for e in lst:
+            a, va, b, vb = segs[e]
+            entries += [*map(float, a), float(va), *map(float, b), float(vb)]
+    pad = (-len(entries)) % (4 * FLOW_ROW)
+    return table, entries + [0.0] * (pad or 4 * FLOW_ROW)
+
+
+def _empty_layers(full):
+    """Per cell (array z, y, x): how many layers of cells around it hold no line, beyond
+    its direct neighbours (Chebyshev distance to the nearest full cell - 1, from 0 to
+    FLOW_SKIP); lets a ray cross empty space in long steps."""
+    near = _dilate(full)  # full cells and their neighbours: 0
+    out = np.zeros(full.shape, int)
+    for _ in range(FLOW_SKIP):
+        out += ~near
+        near = _dilate(near)
+    return out
+
+
+def _dilate(m):
+    """Boolean dilation by one cell in all 26 directions."""
+    out = m.copy()
+    for axis in range(3):
+        a = out.copy()
+        sl = [slice(None)] * 3
+        sl[axis] = slice(1, None)
+        sm = [slice(None)] * 3
+        sm[axis] = slice(None, -1)
+        a[tuple(sl)] |= out[tuple(sm)]
+        a[tuple(sm)] |= out[tuple(sl)]
+        out = a
+    return out
+
+
+def flow_eval(cells, segs, f, P, r):
+    """(distance, displacement so far) of the flow lines at points P: the shader's
+    flowLines (only the segments of a point's cell; others are beyond the cell
+    boundary + FLOW_MARGIN)."""
+    C, E = np.asarray(cells, float).reshape(-1, 4), np.asarray(segs, float).reshape(-1, 2, 4)
+    lo, cs, n = np.asarray(f["lo"], float), f["cell"], np.asarray(f["n"])
+    hi = lo + cs * n
+    out = np.zeros((len(P), 2))
+    for j, p in enumerate(P):
+        c = np.floor((p - lo) / cs).astype(int)
+        if np.any(c < 0) or np.any(c >= n):
+            q = np.abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo)
+            out[j] = (np.linalg.norm(np.maximum(q, 0)) + min(q.max(), 0) + FLOW_MARGIN, 0.0)
+            continue
+        clo = lo + cs * c
+        off, cnt, k = C[c[0] + n[0] * (c[1] + n[1] * c[2]), :3].astype(int)
+        best = [min((p - clo).min(), (clo + cs - p).min()) + k * cs + FLOW_MARGIN, 0.0]
+        for A, B in E[off:off + cnt]:
+            pa, ba = p - A[:3], B[:3] - A[:3]
+            h = min(max(pa @ ba / max(ba @ ba, 1e-12), 0.0), 1.0)
+            d = np.linalg.norm(pa - ba * h) - r
+            if d < best[0]:
+                best = [d, A[3] + (B[3] - A[3]) * h]
+        out[j] = best
+    return out
 
 
 # ---------------------------------------------------------------- polyrigid field
