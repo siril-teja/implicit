@@ -317,6 +317,7 @@ const Graph = (() => {
     if (name === "align") return align(id, x, params);
     if (name === "spine_curve") return { body: spineCurve(id, x) };
     if (name === "tps_warp") return { body: tpsWarp(id, x, params) };
+    if (name === "field_view") return { body: fieldView(id, x, params) };
     // Template variant: choice inputs, then optional parts present (1) or absent (0).
     const key = [...blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`),
       ...Object.entries(blk.optional || {}).flatMap(([inp, parts]) => parts.map((pt) => `${inp}.${pt}=${x[inp] && x[inp][pt] ? 1 : 0}`))]
@@ -355,9 +356,9 @@ const Graph = (() => {
       const c = ["upper", "apex", "lower"].map((part) => x[`${k}_${part}`]);
       if (c.every((lv) => b.spine.levels.includes(lv))) curves[k] = c;
     }
-    const solver = { id, kind: "spinopelvic", data: { ...b.spine, curves }, inputs };
+    const solver = { id, kind: "spinopelvic", data: { ...b.spine, curves, field: x.field }, inputs };
     Solvers.run(solver, (n) => knobs[n].value);  // reports a bad curve (end/apex order) here
-    return { solver, knobs, motions: {}, samples: null, table: null };
+    return { solver, knobs, motions: {}, samples: null, tables: {} };
   }
 
   const sampled = (a) => a.samples
@@ -445,35 +446,72 @@ const Graph = (() => {
     return { node: id, inputs: { radius: x.radius }, bf, tmpl: { ops, out: `$${ops.length - 1}` } };
   }
 
-  // As TpsWarp in sdf.py: the body at the inverse warp of the solver's table (a texture).
-  const TPS_LIP = 0.8;
-  function tpsWarp(id, x, params) {
-    const a = x.alignment, s = a.solver;
-    if (!a.table) {
-      a.table = { name: `${s.id}_tps`, uniform: `u_${s.id}_tps`, value: 0, default: 0, min: 0, max: 0, step: 0,
-        label: `${s.id}_tps`, unit: "", node: s.id, port: "tps", texture: { solver: s.id, key: "tps", width: 3 }, solver: s };
-      params.push(a.table);
+  // Computed tables of an alignment ("tps", "chain", "grid") as texture params.
+  function tableParam(a, key, params) {
+    const s = a.solver;
+    if (!a.tables[key]) {
+      const width = { tps: 3, chain: 7, flow_segs: 512 }[key] || { grid: s.data.grid.n[0], flow_cells: s.data.flow.n[0] }[key];
+      a.tables[key] = { name: `${s.id}_${key}`, uniform: `u_${s.id}_${key}`, value: 0, default: 0, min: 0, max: 0, step: 0,
+        label: `${s.id}_${key}`, unit: "", node: s.id, port: key, texture: { solver: s.id, key, width }, solver: s };
+      params.push(a.tables[key]);
     }
-    const u = a.table.uniform, n = s.data.tps_points.length;
-    const disp = (results) => {
-      let mx = 0;
-      for (const r of results) for (const q of s.data.tps_points) {
-        const y = rigNp(r[q.segment], q.point);
-        mx = Math.max(mx, Math.hypot(y[0] - q.point[0], y[1] - q.point[1], y[2] - q.point[2]));
-      }
-      return mx;
-    };
-    const bf = (iv) => {
-      const bb = child(x.body, iv);
-      if (!bb) return null;
-      const res = iv.now ? [Solvers.run(s, (nm) => { const p = a.knobs[nm]; return iv({ param: p })[0]; })] : sampled(a);
-      return grow(bb, disp(res) + 2.0);
-    };
-    const ops = [0, 1, 2].map((c) => ["var", "vec4", `texelFetch(${u}, ivec2(${c}, 0), 0)`]);
-    ops.push(["var", "vec3", "vec3(dot($0.xyz, $p) + $0.w, dot($1.xyz, $p) + $1.w, dot($2.xyz, $p) + $2.w)"],
-      ["raw", `    for (int i = 1; i <= ${n}; i++) $3 += texelFetch(${u}, ivec2(1, i), 0).xyz * length($p - texelFetch(${u}, ivec2(0, i), 0).xyz);`],
-      ["sub", "body", "$3"], ["var", "float", `${glslFloat(TPS_LIP)} * $5`]);
-    return { node: id, inputs: { body: x.body }, bf, tmpl: { ops, out: "$6" } };
+    return a.tables[key];
+  }
+  // The soft-tissue field: the GLSL of its inverse map at a point (as Warp in sdf.py).
+  function fieldInverse(a, params) {
+    const d = a.solver.data, tps = d.field !== "polyrigid";
+    const u = tableParam(a, tps ? "tps" : "chain", params).uniform;
+    const n = tps ? d.tps_points.length : 1 + d.levels.length;
+    return (p) => `${tps ? "tpsInv" : "polyInv"}(${p}, ${u}, ${n})`;
+  }
+  // Largest control point displacement, now or over the slider ranges.
+  function fieldDisp(a, iv) {
+    const s = a.solver;
+    const res = iv.now ? [Solvers.run(s, (nm) => iv({ param: a.knobs[nm] })[0])] : sampled(a);
+    let mx = 0;
+    for (const r of res) for (const q of s.data.tps_points) {
+      const y = rigNp(r[q.segment], q.point);
+      mx = Math.max(mx, Math.hypot(y[0] - q.point[0], y[1] - q.point[1], y[2] - q.point[2]));
+    }
+    return mx;
+  }
+  const WARP_LIP = 0.8;
+  function tpsWarp(id, x, params) {
+    const a = x.alignment, inv = fieldInverse(a, params);
+    const bf = (iv) => { const bb = child(x.body, iv); return bb ? grow(bb, fieldDisp(a, iv) + 2.0) : null; };
+    const ops = [["var", "vec3", inv("$p")], ["sub", "body", "$0"], ["var", "float", `${glslFloat(WARP_LIP)} * $1`]];
+    return { node: id, inputs: { body: x.body }, bf, tmpl: { ops, out: "$2" } };
+  }
+
+  // Field view (as graph.py): lattice carried by the field, arrows of the display grid, or
+  // a slice coloured by the displacement (``colormap``: per-point colour).
+  function fieldView(id, x, params) {
+    const a = x.alignment, g = a.solver.data.grid, inv = fieldInverse(a, params);
+    const lo = g.lo, hi = g.lo.map((v, i) => v + g.step * (g.n[i] - 1));
+    const v3 = (q) => `vec3(${q.map(glslFloat).join(", ")})`, box = [lo, hi];
+    const sg = (s) => (/^[A-Za-z_]\w*$/.test(s.g) ? s.g : `(${s.g})`);
+    if (x.mode === "flow") {
+      const f = a.solver.data.flow, C = tableParam(a, "flow_cells", params).uniform, S = tableParam(a, "flow_segs", params).uniform;
+      const call = (p, r) => `flowLines(${p}, ${C}, ${S}, ${v3(f.lo)}, ${glslFloat(f.cell)}, ivec3(${f.n.join(", ")}), ${r})`;
+      const fb = [f.lo, f.lo.map((v, i) => v + f.cell * f.n[i])];
+      return { node: id, inputs: x, bf: () => fb, tmpl: { ops: [["var", "float", `${call("$p", "${radius}")}.x`]], out: "$0" },
+        colormap: { glsl: (p) => `${call(p, sg(x.radius))}.y`, max: x.max } };
+    }
+    if (x.mode === "lattice") {
+      const ops = [["var", "vec3", inv("$p")],
+        ["var", "float", `${glslFloat(WARP_LIP)} * sdLattice($0, ${v3(lo)}, ${v3(hi)}, \${spacing}, \${radius})`]];
+      return { node: id, inputs: x, bf: (iv) => grow(box, fieldDisp(a, iv) + 2.0), tmpl: { ops, out: "$1" } };
+    }
+    if (x.mode === "arrows") {
+      const u = tableParam(a, "grid", params).uniform;
+      const call = (p, r) => `arrows(${p}, ${u}, ${v3(lo)}, ${glslFloat(g.step)}, ivec3(${g.n.join(", ")}), ${r})`;
+      return { node: id, inputs: x, bf: () => grow(box, g.step), tmpl: { ops: [["var", "float", `${call("$p", "${radius}")}.x`]], out: "$0" },
+        colormap: { glsl: (p) => `${call(p, sg(x.radius))}.y`, max: x.max } };
+    }
+    const wide = grow(box, 20.0), c = "xyz"["xyz".indexOf(x.axis)];  // the slice spans the display grid
+    const ops = [["var", "float", `max(abs($p.${c} - \${offset}) - 0.75, sdAABB($p, ${v3(wide[0])}, ${v3(wide[1])}))`]];
+    return { node: id, inputs: x, bf: () => wide, tmpl: { ops, out: "$0" },
+      colormap: { glsl: (p) => `length(${inv(p)} - ${p})`, max: x.max } };
   }
 
   // A value output (vector, plane, frame, vertebra) from its component expressions; a part
@@ -575,6 +613,17 @@ const Graph = (() => {
       units.push(`vec2 unit${k}(vec3 p) {  // ${b.name}\n${ctx.lines.join("\n")}\n    return vec2(${d}, ${k}.0);\n}`);
       for (const m of (ctx.lines.join("\n") + d).matchAll(/\bu_[A-Za-z0-9_]+/g)) used.add(m[0]);
     });
+    // Field-coloured bodies (as scene.py): their colour code, before the uniforms it uses.
+    const colorLines = ["vec3 bodyColor(int i, vec3 p) {"];
+    bodies.forEach((b, k) => {
+      const cm = b.body.colormap;
+      if (!cm) return;
+      const mx = /^[A-Za-z_]\w*$/.test(cm.max.g) ? cm.max.g : `(${cm.max.g})`;
+      const line = `    if (i == ${k}) return fieldColor((${cm.glsl("p")}) / max(${mx}, 1e-6));`;
+      colorLines.push(line);
+      for (const m of line.matchAll(/\bu_[A-Za-z0-9_]+/g)) used.add(m[0]);
+    });
+    colorLines.push("    return BODY_COLORS[i];\n}");
     // Computed uniforms need their solver's inputs (sliders, not in the shader).
     const solvers = {};
     for (const p of ev.params) {
@@ -586,8 +635,7 @@ const Graph = (() => {
     lines.push(...params.map((p) => `uniform ${p.texture ? "highp sampler2D" : "float"} ${p.uniform};`));
     lines.push(...groups.map((_, i) => `uniform float u_grp${i};`));
     lines.push(manifest.glsl_lib);
-    lines.push(`const vec3 BODY_COLORS[${n}] = vec3[${n}](${cols.join(", ")});`);
-    lines.push("vec3 bodyColor(int i) { return BODY_COLORS[i]; }");
+    lines.push(`const vec3 BODY_COLORS[${n}] = vec3[${n}](${cols.join(", ")});`, ...colorLines);
     lines.push(...units);
     lines.push("vec2 sceneMap(vec3 p) {\n    vec2 r = vec2(1e10, -1.0);\n    vec2 d;");
     bodies.forEach((b, k) => {
@@ -606,7 +654,8 @@ const Graph = (() => {
         ({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number: !!number,
           ...(computed ? { computed } : {}), ...(texture ? { texture } : {}) })),
       solvers,
-      groups: groupInfo, bodies: bodies.map((b) => ({ name: b.name, group: b.group, node: b.node })),
+      groups: groupInfo, bodies: bodies.map((b) => ({ name: b.name, group: b.group, node: b.node,
+        ...(b.body.colormap ? { colormap: { max: b.body.colormap.max.param ? b.body.colormap.max.param.name : b.body.colormap.max.iv[0] } } : {}) })),
       attribution: library ? library.attribution : "",
       frame_offset: library ? library.frame_offset : null,
       atlas: library ? library.atlas : null,

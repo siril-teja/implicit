@@ -31,6 +31,23 @@ is updated from it.
      notes and the built viewer attached;
    - deploys the viewer to GitHub Pages: https://siril.me/implicit/
 
+## Third-party dependencies
+
+Every third-party dependency is pinned to one exact version, never a range
+(`==`, not `>=`), including what those dependencies themselves need, so a build
+always uses the same versions:
+
+- Python packages: `requirements.txt` (and pip itself in the workflows);
+- Node packages of the GPU check: `ci/package.json` with its lockfile
+  `ci/package-lock.json` (installed with `npm ci`, which takes exactly the locked
+  versions and checks their hashes);
+- Python, Node, the GitHub Actions and the runner images (e.g. `ubuntu-26.04`,
+  never `-latest`) in `.github/workflows/`.
+
+The viewer itself loads no third-party code. Update a pin deliberately, in its own
+change with a CHANGELOG entry, and only to a version whose licence allows
+commercial use (`docs/LICENSING.md`).
+
 ## One-time repository settings
 
 These are set in the GitHub web UI (repository **Settings**):

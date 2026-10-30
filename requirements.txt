@@ -1,4 +1,7 @@
-numpy>=1.24
+# Exact versions: every build uses these (update deliberately, with a changelog entry),
+# including what they depend on.
+numpy==2.5.3
 # preprocessing of CT segmentations (optional for scenes that use processed models)
-scipy>=1.10
-nibabel>=5.0
+scipy==1.18.1
+nibabel==5.4.2
+packaging==26.3  # (nibabel)

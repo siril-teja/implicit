@@ -9,14 +9,21 @@ import json
 
 import numpy as np
 
-from .expr import Param
+from .expr import Param, wrap
 from .sdf import GLSL_LIB, SDF, Ctx, Grid, glsl_float
 from .template import Binder, Template
 
 
+def _colormap_json(cm):
+    """Colour scale of a field-coloured body for the viewer's legend: max (a value or a param)."""
+    mx = wrap(cm[1])
+    return {"max": mx.name if isinstance(mx, Param) else float(mx.value())}
+
+
 class Body:
-    def __init__(self, name, sdf: SDF, color, group, bounds, visible=True, share=None):
+    def __init__(self, name, sdf: SDF, color, group, bounds, visible=True, share=None, colormap=None):
         self.name, self.sdf, self.group, self.visible = name, sdf, group, visible
+        self.colormap = colormap  # (value with glsl_fn/np_fn, max Expr): coloured by a field
         self.share = share
         self.template = None
         self.color = tuple(float(c) for c in color)
@@ -97,7 +104,7 @@ class Scene:
         self.extra = {}  # extra keys for the viewer JSON
 
     def add(self, name, sdf, color=(0.8, 0.8, 0.8), group=None, bounds=None, visible=True,
-            share=None):
+            share=None, colormap=None):
         """Add a body. ``group`` sets the viewer visibility toggle (default: own name).
 
         ``bounds`` (lo, hi) must contain the body; it lets the shader skip the body
@@ -105,10 +112,12 @@ class Scene:
         ``visible`` is the group's initial state in the viewer.
         Bodies with the same ``share`` key are evaluated in one shader function so
         common subgraphs (e.g. a disc split into annulus and nucleus) run once.
+        ``colormap`` (value, max) colours the body by a scalar field (fieldColor of
+        value / max) instead of ``color``.
         """
         if any(b.name == name for b in self.bodies):
             raise ValueError(f"duplicate body name {name!r}")
-        self.bodies.append(Body(name, sdf, color, group or name, bounds, visible, share))
+        self.bodies.append(Body(name, sdf, color, group or name, bounds, visible, share, colormap))
         return sdf
 
     def add_template(self, name, build, instances, parts, bounds):
@@ -138,7 +147,8 @@ class Scene:
     def params(self) -> list[Param]:
         seen: dict[str, Param] = {}
         for b in self.bodies:
-            for p in b.sdf.params():
+            extra = [] if b.colormap is None else b.colormap[0].params() + wrap(b.colormap[1]).params()
+            for p in b.sdf.params() + extra:
                 q = seen.setdefault(p.name, p)
                 if q is not p:
                     raise ValueError(f"two different params named {p.name!r}")
@@ -180,7 +190,12 @@ class Scene:
         cols = ", ".join(f"vec3({', '.join(glsl_float(c) for c in b.color)})" for b in self.bodies)
         n = len(self.bodies)
         out.append(f"const vec3 BODY_COLORS[{n}] = vec3[{n}]({cols});")
-        out.append("vec3 bodyColor(int i) { return BODY_COLORS[i]; }")
+        out.append("vec3 bodyColor(int i, vec3 p) {")
+        for i, b in enumerate(self.bodies):
+            if b.colormap is not None:
+                v, mx = b.colormap
+                out.append(f"    if (i == {i}) return fieldColor(({v.glsl_fn('p')}) / max({wrap(mx).glsl()}, 1e-6));")
+        out.append("    return BODY_COLORS[i];\n}")
         units = self._units()
         for k, unit in enumerate(units):
             ctx = Ctx()
@@ -303,7 +318,8 @@ class Scene:
                  "visible": next(b.visible for b in self.bodies if b.group == g)}
                 for g in groups
             ],
-            "bodies": [{"name": b.name, "group": groups.index(b.group)} for b in self.bodies],
+            "bodies": [{"name": b.name, "group": groups.index(b.group),
+                        **({"colormap": _colormap_json(b.colormap)} if b.colormap else {})} for b in self.bodies],
             "attribution": self.attribution,
             "frame_offset": None if self.frame_offset is None else [float(x) for x in self.frame_offset],
         }

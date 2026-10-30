@@ -53,10 +53,22 @@ vertebrae and apex of each curve are settings of the **Spine alignment** block.
 Every bone moves rigidly: the pelvis about the hip axis (PT) and with the femurs
 about the antero-posterior axis (PO), the sacrum about the sacroiliac joints (PI),
 and each disc acts as a hinge (LL, TK, MT, TL; balance on the lumbosacral discs
-below the curves). Soft structures follow a 3-D thin-plate spline through control
-points on every bone (**TPS warp** block); the spine curve through the vertebral
-body centres is the first. Blocks: Spine alignment, Align (one per bone), Spine
-curve, TPS warp. Model and definitions: `implicit/anatomy/alignment.py`.
+below the curves). Soft structures follow a soft-tissue field (**Field warp** block;
+the spine curve through the vertebral body centres is the first), chosen on the
+Spine alignment block:
+
+- **TPS**: a 3-D thin-plate spline through control points on every bone;
+- **polyrigid**: rigid inside each vertebral body, and in each disc space the screw
+  motion between its two vertebrae (log-Euclidean blend by position between the
+  endplate planes); exactly rigid at the bones, but more costly to evaluate.
+
+The **Field view** block shows the field: flow lines (the paths tissue near the
+spine travels while the sliders go from the subject's values to the current ones,
+coloured by the distance travelled), a lattice it carries, arrows of the
+displacement on a 15 mm grid, or a slice coloured by it, with a colour scale. The
+average spine scene has all four as hidden groups in the Scene tab. Blocks: Spine
+alignment, Align (one per bone), Spine curve, Field warp, Field view. Model and
+definitions: `implicit/anatomy/alignment.py`.
 
 ```bash
 python -m implicit.anatomy.alignment assets/bones/vivaplus-50F     # print the measured parameters
@@ -128,7 +140,7 @@ browser-built shader with NumPy too.
 ## Quick start
 
 ```bash
-pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion)
+pip install -r requirements.txt          # numpy (+ scipy, nibabel for the conversion); exact versions
 python -m implicit.serve examples/average_spine.json examples/spine_segment.py
 # open http://127.0.0.1:8000
 ```

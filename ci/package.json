@@ -1,0 +1,8 @@
+{
+  "name": "implicit-ci",
+  "private": true,
+  "description": "Tools of the GPU check (ci/gpu_check.mjs); exact versions, locked in package-lock.json.",
+  "devDependencies": {
+    "playwright": "1.50.1"
+  }
+}

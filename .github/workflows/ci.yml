@@ -11,15 +11,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
+          python-version: "3.13.17"
+      - run: python -m pip install pip==24.0 && python -m pip install -r requirements.txt
       - name: Tests
         run: python -m unittest discover -s tests -v
       - name: Build viewer
@@ -42,30 +42,30 @@ jobs:
             backend: swiftshader
             renderer: SwiftShader
           - name: windows-d3d11
-            os: windows-latest
+            os: windows-2025
             backend: d3d11
             renderer: Direct3D11
           - name: macos-metal
-            os: macos-latest
+            os: macos-15
             backend: metal
             renderer: Metal
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
+          python-version: "3.13.17"
+      - uses: actions/setup-node@v4.4.0
         with:
-          node-version: "22"
-      - run: pip install -r requirements.txt
+          node-version: "22.22.0"
+      - run: python -m pip install pip==24.0 && python -m pip install -r requirements.txt
       - name: Build viewer (plus a test graph that uses every block)
         shell: bash
-        run: python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json tests/graphs/landmarks.json --out site
+        run: python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json tests/graphs/landmarks.json tests/graphs/polyrigid.json --out site
       - name: Install Playwright Chromium
         shell: bash
         run: |
-          npm install --no-save playwright@1.50.1
+          cd ci && npm ci --ignore-scripts  # exact versions from ci/package-lock.json
           if [ "$RUNNER_OS" = "Linux" ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
       - name: GPU check (${{ matrix.backend }})
         env:
