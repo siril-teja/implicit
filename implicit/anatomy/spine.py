@@ -154,9 +154,10 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     output. Other bones: bone -> smooth -> align -> output (hip bones move with the
     pelvis, femurs as the legs, the sacrum as itself; the spinal cord stays). One
     Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
-    CB) set to the subject's own values, feeds the Align blocks and the TPS warp of
-    the spine curve; it is left out when the subject has no pelvic landmarks. One
-    shared Number keeps bone volume when smoothing.
+    CB) set to the subject's own values, feeds the Align blocks, the Field warp of
+    the spine curve and three hidden Field views (lattice, arrows, slice); it is left
+    out when the subject has no pelvic landmarks. One shared Number keeps bone volume
+    when smoothing.
     File paths are written relative to ``relative_to`` (the graph file's folder).
     """
     from .alignment import KNOBS, chain
@@ -200,6 +201,13 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         nodes["spine_curve_out"] = {"block": "output", "title": "Spine curve", "pos": [1920, -340],
                                     "in": {"body": "@spine_curve_tps", "name": "Spine curve",
                                            "color": hexc(COLORS["curve"]), "group": "Spine curve", "visible": True}}
+        for i, (mode, title) in enumerate((("lattice", "Field: lattice"), ("arrows", "Field: arrows"),
+                                           ("slice", "Field: slice"))):
+            nodes[f"field_{mode}"] = {"block": "field_view", "title": title, "pos": [1440, -225 + 115 * i],
+                                      "in": {"alignment": "@spp", "mode": mode}}
+            nodes[f"field_{mode}_out"] = {"block": "output", "title": title, "pos": [1680, -225 + 115 * i],
+                                          "in": {"body": f"@field_{mode}", "name": title, "color": "#8fb3ff",
+                                                 "group": title, "visible": False}}
     ys = {"vertebra": 0, "other": 0}
     for bname, (_, meta) in loaded.items():
         kind = meta["kind"]

@@ -62,7 +62,7 @@ const Solvers = (() => {
     return plans;
   }
 
-  function spinopelvic(d, v) {
+  function spinopelvic(d, v, light = false) {
     const base = d.base, meas = d.measured;
     const rel = (k, x) => (k in base ? x + meas[k] - base[k] : x);
     const PI = rel("PI", v.PI), PT = rel("PT", v.PT), CB = rel("CB", v.CB ?? 0);
@@ -107,8 +107,92 @@ const Solvers = (() => {
     for (const [k, [R, t]] of Object.entries(out)) {
       res[k] = [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], ...t];
     }
-    res.tps = tpsTable(d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]));
+    if (light) return res;
+    const pairs = d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]);
+    res.tps = tpsTable(pairs);
+    res.chain = chainTable(d, out);
+    const G = gridPoints(d.grid), grid = new Array(G.length * 4);
+    const fwd = d.field === "polyrigid" ? (x) => polyForward(res.chain, x)
+      : ((T) => (x) => tpsEval(T, x))(tpsTable(pairs.map(([a, b]) => [b, a])));  // forward: fitted from the rest points
+    G.forEach((g, i) => {
+      const y = fwd(g), dd = [y[0] - g[0], y[1] - g[1], y[2] - g[2]];
+      grid[4 * i] = dd[0]; grid[4 * i + 1] = dd[1]; grid[4 * i + 2] = dd[2]; grid[4 * i + 3] = Math.hypot(...dd);
+    });
+    res.grid = grid;
     return res;
+  }
+
+  // ------------------------------------------------------------ polyrigid field (alignment.py)
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  function logRigid([R, t]) {
+    const c = Math.max(-1, Math.min(1, (R[0][0] + R[1][1] + R[2][2] - 1) / 2)), th = Math.acos(c);
+    if (th < 1e-9) return [[0, 0, 0], [...t]];
+    const s = Math.sin(th), f = th / (2 * s);
+    const w = [f * (R[2][1] - R[1][2]), f * (R[0][2] - R[2][0]), f * (R[1][0] - R[0][1])];
+    const k = (1 - th * s / (2 * (1 - c))) / (th * th), wt = cross(w, t), wwt = cross(w, wt);
+    return [w, [0, 1, 2].map((i) => t[i] - 0.5 * wt[i] + k * wwt[i])];
+  }
+  function screw(x, w, u) {
+    const phi = Math.hypot(...w);
+    if (phi < 1e-9) return [x[0] + u[0], x[1] + u[1], x[2] + u[2]];
+    const k = w.map((v) => v / phi), c = Math.cos(phi), s = Math.sin(phi);
+    const kx = cross(k, x), kd = dot3(k, x), wu = cross(w, u), wwu = cross(w, wu);
+    const a = (1 - c) / (phi * phi), b = (phi - s) / (phi * phi * phi);
+    return [0, 1, 2].map((i) => x[i] * c + kx[i] * s + k[i] * kd * (1 - c) + u[i] + a * wu[i] + b * wwu[i]);
+  }
+  function chainTable(d, out) {
+    const segs = ["sacrum", ...d.levels], rows = [];
+    segs.forEach((s, i) => {
+      const [R, t] = out[s];
+      let w = [0, 0, 0], u = [0, 0, 0];
+      if (i + 1 < segs.length) {
+        const Rt = [0, 1, 2].map((a) => [0, 1, 2].map((b) => R[b][a]));
+        [w, u] = logRigid(compose([Rt, mv(Rt, t).map((v) => -v)], out[segs[i + 1]]));
+      }
+      rows.push([R[0][0], R[1][0], R[2][0], t[0]], [R[0][1], R[1][1], R[2][1], t[1]], [R[0][2], R[1][2], R[2][2], t[2]],
+        [...w, 0], [...u, 0]);
+      for (const side of ["inf", "sup"]) {
+        const pl = d.planes[s][side];
+        rows.push(pl ? [...pl[1], -dot3(pl[0], pl[1])] : [0, 0, 0, -1]);
+      }
+    });
+    return rows.flat();
+  }
+  const chainRow = (T, r, k) => T.slice((r * 7 + k) * 4, (r * 7 + k) * 4 + 4);
+  function polyRegion(T, x) {
+    const n = T.length / 28;
+    const side = (r, k) => { const pl = chainRow(T, r, k); return pl[0] * x[0] + pl[1] * x[1] + pl[2] * x[2] + pl[3]; };
+    let cnt = 0;
+    for (let r = 0; r < n; r++) { if (r > 0 && side(r, 5) >= 0) cnt++; if (side(r, 6) >= 0) cnt++; }
+    const j = cnt - 1, r = j < 0 ? 0 : (j % 2 === 1 ? (j + 1) / 2 : j / 2);
+    let lam = 0;
+    if (j >= 0 && j % 2 === 0 && r < n - 1) {
+      const a = side(r, 6), b = side(r + 1, 5);
+      lam = Math.max(0, Math.min(1, a / (Math.abs(a - b) > 1e-12 ? a - b : 1)));
+    }
+    return [r, lam];
+  }
+  function polyForward(T, x) {
+    const [r, lam] = polyRegion(T, x);
+    const c = [0, 1, 2].map((k) => chainRow(T, r, k)), w = chainRow(T, r, 3), u = chainRow(T, r, 4);
+    const y = screw(x, w.slice(0, 3).map((v) => lam * v), u.slice(0, 3).map((v) => lam * v));
+    return [0, 1, 2].map((i) => c[0][i] * y[0] + c[1][i] * y[1] + c[2][i] * y[2] + c[i][3]);
+  }
+  function gridPoints(g) {
+    const [nx, ny, nz] = g.n, out = [];
+    for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      out.push([g.lo[0] + g.step * i, g.lo[1] + g.step * j, g.lo[2] + g.step * k]);
+    }
+    return out;
+  }
+  function tpsEval(T, p) {
+    const q = [0, 1, 2].map((c) => T[4 * c] * p[0] + T[4 * c + 1] * p[1] + T[4 * c + 2] * p[2] + T[4 * c + 3]);
+    for (let i = 1; i < T.length / 12; i++) {
+      const o = 12 * i, r = Math.hypot(p[0] - T[o], p[1] - T[o + 1], p[2] - T[o + 2]);
+      q[0] += T[o + 4] * r; q[1] += T[o + 5] * r; q[2] += T[o + 6] * r;
+    }
+    return q;
   }
 
   // Inverse TPS (alignment.py tps_table): kernel |r| plus affine, from moved to original.
@@ -159,7 +243,7 @@ const Solvers = (() => {
     for (const [k, name] of Object.entries(solver.inputs)) [lo[k], cur[k], hi[k]] = range(name);
     const combos = [cur, lo, hi];
     for (const k of Object.keys(solver.inputs)) combos.push({ ...cur, [k]: lo[k] }, { ...cur, [k]: hi[k] });
-    return combos.map((vals) => KINDS[solver.kind](solver.data, vals));
+    return combos.map((vals) => KINDS[solver.kind](solver.data, vals, true));  // light: motions only
   }
 
   // Fill in the computed params of a scene (scene.params entries with ``computed``)

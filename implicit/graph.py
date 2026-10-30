@@ -44,7 +44,7 @@ import numpy as np
 
 from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, TpsWarp, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, Warp, Lattice, Arrows, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -145,6 +145,7 @@ class Field:
     """
     sdf: object
     bfun: object = None
+    colormap: object = None  # (ColorValue, max): per-point colour (field displays)
 
     @property
     def bounds(self):
@@ -689,11 +690,21 @@ class AlignmentV:
             self.motions[seg] = [Computed(f"{self.solver.id}_{seg}_{i}", self.solver, seg, i) for i in range(12)]
         return self.motions[seg]
 
-    def tps(self):
-        """The inverse warp table (see alignment.tps_table) as a computed texture."""
+    def texture(self, key):
+        """A computed table of the solver (alignment: "tps", "chain", "grid") as a texture."""
         if self.table is None:
-            self.table = ComputedTexture(f"{self.solver.id}_tps", self.solver, "tps", 3)
-        return self.table
+            self.table = {}
+        if key not in self.table:
+            width = {"tps": 3, "chain": 7}.get(key) or self.solver.data["grid"]["n"][0]
+            self.table[key] = ComputedTexture(f"{self.solver.id}_{key}", self.solver, key, width)
+        return self.table[key]
+
+    @property
+    def field(self):
+        """The soft-tissue field: (kind, its inverse table, its size)."""
+        kind = self.solver.data["field"]
+        n = len(self.solver.data["tps_points"]) if kind == "tps" else 1 + len(self.solver.data["levels"])
+        return kind, self.texture("tps" if kind == "tps" else "chain"), n
 
     def displacement(self, now):
         """Largest control point displacement (mm), now or over the slider ranges."""
@@ -739,7 +750,8 @@ def _curve_defaults():
         S("PO", 0, -20, 20, 0.5, "deg", "Pelvic obliquity (+ right side up)"),
         S("CB", 0, -80, 80, 1, "mm", "Coronal balance (T1 right of S1)")]
        + [Port(f"{k}_{part}", "choice", d, label=f"{k} {part}{' end' if part != 'apex' else ''}", choices=_LEVELS)
-          for (k, part), d in zip(_CURVE_PORTS, _curve_defaults().values())],
+          for (k, part), d in zip(_CURVE_PORTS, _curve_defaults().values())]
+       + [Port("field", "choice", "tps", label="Soft-tissue field", choices=("tps", "polyrigid"))],
        [Port("alignment", "alignment", label="Alignment")])
 def _spinopelvic(x, node):
     """Sagittal and coronal alignment of the spine and pelvis. At the subject's own
@@ -747,8 +759,9 @@ def _spinopelvic(x, node):
     sacrum about the sacroiliac joints (PI), the discs L1-S1 (LL) and T4-T12 (TK).
     Coronal: two Cobb curves between chosen end vertebrae and apex (MT, TL) with the
     apex vertebrae turned toward the convexity (AR), pelvic obliquity (PO) and coronal
-    balance (CB). Feed it to an Align block per bone and to TPS warp blocks for soft
-    structures (see implicit/anatomy/alignment.py)."""
+    balance (CB). Feed it to an Align block per bone and to Field warp blocks for soft
+    structures, carried by a thin-plate spline or a polyrigid field (see
+    implicit/anatomy/alignment.py)."""
     from .anatomy.alignment import _curve_plan
     data = node.ctx.spine(x["bone"].sdf_file)
     if data is None:
@@ -758,7 +771,7 @@ def _spinopelvic(x, node):
     curves = {k: c for k, c in curves.items() if all(lv in data["levels"] for lv in c)}  # e.g. a lumbar-only subject
     try:
         _curve_plan(data["levels"], curves)
-        solver = Solver(node.id, "spinopelvic", {**data, "curves": curves},
+        solver = Solver(node.id, "spinopelvic", {**data, "curves": curves, "field": x["field"]},
                         {k: x[k] for k in ("PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB")})
     except ValueError as e:
         raise GraphError(str(e)) from e
@@ -811,18 +824,52 @@ def _spine_curve(x, node):
     return {"body": Field(Tube([_const_vec(q) for q in P], r), bounds)}
 
 
-@block("tps_warp", "TPS warp", "Anatomy",
+@block("tps_warp", "Field warp", "Anatomy",
        [BODY(label="Body"), Port("alignment", "alignment", label="Alignment")],
        [Port("body", "body", label="Body")])
 def _tps_warp(x, node):
-    """Carry a soft structure (spine curve, discs, ligaments) with the alignment: a
-    thin-plate spline through control points on every bone, which move rigidly."""
+    """Carry a soft structure (spine curve, discs, ligaments) with the alignment, by the
+    soft-tissue field chosen on the Spine alignment block (thin-plate spline or
+    polyrigid); both move exactly with the bones."""
     a, b = x["alignment"], x["body"]
+    kind, table, n = a.field
 
     def bounds(now):
         bb = _child(b, now)
         return None if bb is None else _grow(bb, a.displacement(now) + 2.0)
-    return {"body": Field(TpsWarp(b.sdf, a.tps(), len(a.solver.data["tps_points"])), bounds)}
+    return {"body": Field(Warp(b.sdf, kind, table, n), bounds)}
+
+
+@block("field_view", "Field view", "Anatomy",
+       [Port("alignment", "alignment", label="Alignment"),
+        Port("mode", "choice", "lattice", label="Display", choices=("lattice", "arrows", "slice")),
+        S("spacing", 15, 4, 40, 1, "mm", "Lattice spacing"), S("radius", 0.5, 0.1, 3, 0.1, "mm", "Line / arrow radius"),
+        Port("axis", "choice", "x", label="Slice across", choices=("x", "y", "z")),
+        Port("offset", "scalar", 0.0, step=1, unit="mm", span=150.0, label="Slice position"),
+        S("max", 50, 1, 200, 1, "mm", "Colour scale: displacement at the top colour")],
+       [Port("body", "body", label="Body")])
+def _field_view(x, node):
+    """Show the soft-tissue field around the spine: a lattice carried by it, arrows of
+    the displacement on a grid (coloured by its length), or a slice coloured by it."""
+    a = x["alignment"]
+    kind, table, n = a.field
+    g = a.solver.data["grid"]
+    lo = np.asarray(g["lo"], float)
+    hi = lo + g["step"] * (np.asarray(g["n"]) - 1)
+    if x["mode"] == "lattice":
+        def bounds(now):
+            return _grow((lo, hi), a.displacement(now) + 2.0)
+        return {"body": Field(Warp(Lattice(lo, hi, x["spacing"], x["radius"]), kind, table, n), bounds)}
+    if x["mode"] == "arrows":
+        grid = a.texture("grid")
+        sdf = Arrows(grid, lo, g["step"], g["n"], x["radius"])
+        value = ColorValue(lambda p: f"{sdf.call(p)}.y", lambda p: sdf._np(p)[1], [grid, x["radius"]])
+        return {"body": Field(sdf, lambda now: _grow((lo, hi), g["step"]), colormap=(value, x["max"]))}
+    box = _grow((lo, hi), 20.0)  # the slice spans the display grid (not every reachable position)
+    sdf = Slab("xyz".index(x["axis"]), x["offset"], 0.75, *box)
+    value = ColorValue(lambda p: f"length({inverse_glsl(kind, p, table.glsl(), n)} - {p})",
+                       lambda p: np.linalg.norm(inverse_np(kind, table.value(), p) - p, axis=1), [table])
+    return {"body": Field(sdf, lambda now: box, colormap=(value, x["max"]))}
 
 
 @block("output", "Output body", "Output",
@@ -1116,7 +1163,7 @@ def build_graph(g: dict, base=".", library=None) -> Scene:
     for node, x in outputs:
         f = x["body"]
         scene.add(x["name"] or node.id, f.sdf, x["color"], group=x["group"] or None,
-                  bounds=f.bounds, visible=x["visible"])
+                  bounds=f.bounds, visible=x["visible"], colormap=f.colormap)
         scene.bodies[-1].bounds_now = f.now
     now = [b for _, x in outputs if (b := x["body"].now()) is not None]
     if now:  # where the bodies are at the current values: the viewer frames this
@@ -1247,7 +1294,7 @@ def _vec_hole(name):
 
 # Handled in viewer/graph.js: value plumbing and per-bone data from the library.
 BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts",
-                 "vertebra_parts", "spinopelvic", "align", "spine_curve", "tps_warp"}
+                 "vertebra_parts", "spinopelvic", "align", "spine_curve", "tps_warp", "field_view"}
 
 
 def browser_manifest():

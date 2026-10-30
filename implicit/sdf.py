@@ -817,33 +817,166 @@ class RigidMove(SDF):
         return self.child.eval((p - t) @ R)
 
 
-class TpsWarp(SDF):
-    """A body carried by a thin-plate spline warp: child(f(p)) * LIP, f the inverse warp
-    of a table (see implicit.anatomy.alignment.tps_table) in the texture ``table``.
+class Warp(SDF):
+    """A body carried by a soft-tissue field: child(f(p)) * LIP, f the inverse map of a
+    computed table (implicit.anatomy.alignment): kind "tps" (tps_table, ``n`` control
+    points) or "polyrigid" (chain_table, ``n`` segments).
 
-    Not an exact distance: the warp stretches space, so the value is scaled by LIP
-    (a lower bound while the warp stretches distances by at most 1/LIP).
+    Not an exact distance: the field stretches space, so the value is scaled by LIP
+    (a lower bound while the field stretches distances by at most 1/LIP).
     """
     LIP = 0.8
 
-    def __init__(self, child, table, n):
-        self.child, self.table, self.n = child, table, int(n)
+    def __init__(self, child, kind, table, n):
+        self.child, self.kind, self.table, self.n = child, kind, table, int(n)
 
     def children(self): return [self.child]
     def exprs(self): return [self.table]
 
     def emit(self, ctx, p):
-        u = self.table.glsl()
-        a = [ctx.var("vec4", f"texelFetch({u}, ivec2({c}, 0), 0)") for c in range(3)]
-        q = ctx.var("vec3", f"vec3(dot({a[0]}.xyz, {p}) + {a[0]}.w, dot({a[1]}.xyz, {p}) + {a[1]}.w, "
-                            f"dot({a[2]}.xyz, {p}) + {a[2]}.w)")
-        ctx.lines.append(f"    for (int i = 1; i <= {self.n}; i++) {q} += texelFetch({u}, ivec2(1, i), 0).xyz"
-                         f" * length({p} - texelFetch({u}, ivec2(0, i), 0).xyz);")
+        q = ctx.var("vec3", inverse_glsl(self.kind, p, self.table.glsl(), self.n))
         return ctx.var("float", f"{glsl_float(self.LIP)} * {ctx.sub(self.child, q)}")
 
     def eval(self, p):
-        from .anatomy.alignment import tps_eval
-        return self.LIP * self.child.eval(tps_eval(self.table.value(), p))
+        return self.LIP * self.child.eval(inverse_np(self.kind, self.table.value(), p))
+
+
+def inverse_glsl(kind, p, table, n):
+    return f"{'tpsInv' if kind == 'tps' else 'polyInv'}({p}, {table}, {n})"
+
+
+def inverse_np(kind, table, p):
+    from .anatomy.alignment import poly_inverse, tps_eval
+    return tps_eval(table, p) if kind == "tps" else poly_inverse(table, p)
+
+
+class Lattice(SDF):
+    """Exact. Lines along x, y and z through the points lo + k * step, radius r, inside
+    the box lo-hi (constants)."""
+
+    def __init__(self, lo, hi, step, r):
+        self.lo, self.hi, self.step, self.r = np.asarray(lo, float), np.asarray(hi, float), wrap(step), wrap(r)
+
+    def exprs(self): return [self.step, self.r]
+
+    def emit(self, ctx, p):
+        v = lambda a: "vec3(" + ", ".join(glsl_float(x) for x in a) + ")"
+        return ctx.var("float", f"sdLattice({p}, {v(self.lo)}, {v(self.hi)}, {self.step.glsl()}, {self.r.glsl()})")
+
+    def eval(self, p):
+        a, s = p - self.lo, _v(self.step)
+        m = np.abs(a - s * np.floor(a / s + 0.5))
+        d = np.minimum(np.minimum(np.hypot(m[:, 0], m[:, 1]), np.hypot(m[:, 1], m[:, 2])),
+                       np.hypot(m[:, 0], m[:, 2])) - _v(self.r)
+        return np.maximum(d, _sd_aabb(p, self.lo, self.hi))
+
+
+def _sd_aabb(p, lo, hi):
+    q = np.abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo)
+    return _len(np.maximum(q, 0.0)) + np.minimum(q.max(axis=1), 0.0)
+
+
+class Arrows(SDF):
+    """Arrows on a grid (lo, step, n points per axis): from each grid point along its
+    displacement in the computed table ``table`` (dx, dy, dz, |d| per point; x fastest),
+    drawn at most 0.8 step long (colour shows the length), shaft radius r; none below
+    0.5 mm. Exact near the arrows: a point only meets arrows of the 27 grid points
+    around it; farther away a lower bound."""
+
+    def __init__(self, table, lo, step, n, r):
+        self.table, self.lo, self.step, self.n, self.r = table, np.asarray(lo, float), float(step), list(n), wrap(r)
+
+    def exprs(self): return [self.table, self.r]
+
+    def call(self, p):
+        lo = "vec3(" + ", ".join(glsl_float(x) for x in self.lo) + ")"
+        n = "ivec3(" + ", ".join(str(int(k)) for k in self.n) + ")"
+        return f"arrows({p}, {self.table.glsl()}, {lo}, {glsl_float(self.step)}, {n}, {self.r.glsl()})"
+
+    def emit(self, ctx, p):
+        return ctx.var("float", f"{self.call(p)}.x")
+
+    def _np(self, p):
+        D = np.asarray(self.table.value(), float).reshape(-1, 4)
+        nx, ny, nz = self.n
+        r, s = _v(self.r), self.step
+        c = np.floor((p - self.lo) / s + 0.5).astype(int)
+        best, mag = np.full(len(p), 1e10), np.zeros(len(p))
+        for off in np.array(np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1], indexing="ij")).reshape(3, -1).T:
+            g = c + off
+            ok = np.all((g >= 0) & (g < [nx, ny, nz]), axis=1)
+            gi = np.where(ok, g[:, 0] + nx * (g[:, 1] + ny * g[:, 2]), 0)
+            d4 = D[gi]
+            ok &= d4[:, 3] >= 0.5
+            a = self.lo + s * g
+            L = np.minimum(d4[:, 3], 0.8 * s)
+            u = d4[:, :3] / np.maximum(d4[:, 3:4], 1e-9)
+            b = a + u * L[:, None]
+            hl = np.minimum(4.0 * r, 0.4 * L)
+            m = b - u * hl[:, None]
+            dd = np.minimum(_cap_np(p, a, m, r), _round_cone_np(p, m, b, 2.2 * r, 0.2 * r))
+            dd = np.where(ok, dd, 1e10)
+            take = dd < best
+            best, mag = np.where(take, dd, best), np.where(take, d4[:, 3], mag)
+        hi = self.lo + s * (np.asarray(self.n) - 1)  # bounds of the arrows not tested (see arrows())
+        far = np.maximum(0.7 * s - 2.2 * r, _sd_aabb(p, self.lo, hi) - 0.8 * s - 2.2 * r)
+        return np.minimum(best, far), mag
+
+    def eval(self, p):
+        return self._np(p)[0]
+
+
+def _cap_np(p, a, b, r):
+    pa, ba = p - a, b - a
+    h = np.clip(np.sum(pa * ba, 1) / np.maximum(np.sum(ba * ba, 1), 1e-12), 0, 1)
+    return _len(pa - ba * h[:, None]) - r
+
+
+def _round_cone_np(p, a, b, r1, r2):
+    ba = b - a
+    l2 = np.maximum(np.sum(ba * ba, 1), 1e-12)
+    rr = r1 - r2
+    a2 = l2 - rr * rr
+    pa = p - a
+    y = np.sum(pa * ba, 1)
+    z = y - l2
+    xv = pa * l2[:, None] - ba * y[:, None]
+    x2 = np.sum(xv * xv, 1)
+    y2, z2 = y * y * l2, z * z * l2
+    k = np.sign(rr) * rr * rr * x2
+    return np.where(np.sign(z) * a2 * z2 > k, np.sqrt(x2 + z2) / l2 - r2,
+                    np.where(np.sign(y) * a2 * y2 < k, np.sqrt(x2 + y2) / l2 - r1,
+                             (np.sqrt(np.maximum(x2 * a2 / l2, 0)) + y * rr) / l2 - r1))
+
+
+class Slab(SDF):
+    """Exact. A slab of half-thickness h across the box lo-hi, perpendicular to an axis
+    (0, 1, 2) at ``offset``."""
+
+    def __init__(self, axis, offset, h, lo, hi):
+        self.axis, self.offset, self.h = int(axis), wrap(offset), float(h)
+        self.lo, self.hi = np.asarray(lo, float), np.asarray(hi, float)
+
+    def exprs(self): return [self.offset]
+
+    def emit(self, ctx, p):
+        v = lambda a: "vec3(" + ", ".join(glsl_float(x) for x in a) + ")"
+        c = "xyz"[self.axis]
+        return ctx.var("float", f"max(abs({p}.{c} - {self.offset.glsl()}) - {glsl_float(self.h)}, "
+                                f"sdAABB({p}, {v(self.lo)}, {v(self.hi)}))")
+
+    def eval(self, p):
+        return np.maximum(np.abs(p[:, self.axis] - _v(self.offset)) - self.h, _sd_aabb(p, self.lo, self.hi))
+
+
+class ColorValue:
+    """A scalar field (GLSL expression at a point) that colours a body (Scene.add colormap)."""
+
+    def __init__(self, glsl_fn, np_fn, exprs):
+        self.glsl_fn, self.np_fn, self._exprs = glsl_fn, np_fn, exprs
+
+    def params(self):
+        return [q for e in self._exprs for q in e.params()]
 
 
 class ScaleAbout(SDF):
@@ -864,6 +997,8 @@ class ScaleAbout(SDF):
         c, k = _vv(self.center), _v(self.k)
         return self.child.eval(c + (p - c) / k) * k
 
+
+POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
 
 GLSL_LIB = f"""
 vec3 rotX(vec3 p, float a) {{ float c = cos(a), s = sin(a); return vec3(p.x, c*p.y - s*p.z, s*p.y + c*p.z); }}
@@ -920,6 +1055,90 @@ vec3 rigInv(vec3 p, vec3 c0, vec3 c1, vec3 c2, vec3 t) {{
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}}
+// Soft-tissue fields (implicit.anatomy.alignment): inverse maps from computed tables.
+vec3 tpsInv(vec3 p, highp sampler2D T, int n) {{
+    vec4 a0 = texelFetch(T, ivec2(0, 0), 0), a1 = texelFetch(T, ivec2(1, 0), 0), a2 = texelFetch(T, ivec2(2, 0), 0);
+    vec3 q = vec3(dot(a0.xyz, p) + a0.w, dot(a1.xyz, p) + a1.w, dot(a2.xyz, p) + a2.w);
+    for (int i = 1; i <= n; i++) q += texelFetch(T, ivec2(1, i), 0).xyz * length(p - texelFetch(T, ivec2(0, i), 0).xyz);
+    return q;
+}}
+vec3 screwApply(vec3 x, vec3 w, vec3 u) {{
+    float phi = length(w);
+    if (phi < 1e-9) return x + u;
+    vec3 k = w / phi, wu = cross(w, u);
+    float c = cos(phi), s = sin(phi);
+    return x * c + cross(k, x) * s + k * dot(k, x) * (1.0 - c) + u + (1.0 - c) / (phi * phi) * wu
+        + (phi - s) / (phi * phi * phi) * cross(w, wu);
+}}
+vec3 polyInv(vec3 p, highp sampler2D T, int n) {{
+    vec3 x = p;
+    for (int it = 0; it < {POLY_ITERS}; it++) {{
+        int cnt = 0;
+        for (int r = 0; r < n; r++) {{
+            vec4 pi = texelFetch(T, ivec2(5, r), 0), ps = texelFetch(T, ivec2(6, r), 0);
+            if (r > 0 && dot(pi.xyz, x) + pi.w >= 0.0) cnt++;
+            if (dot(ps.xyz, x) + ps.w >= 0.0) cnt++;
+        }}
+        int j = cnt - 1;
+        int r = j < 0 ? 0 : ((j & 1) == 1 ? (j + 1) / 2 : j / 2);
+        float lam = 0.0;
+        if (j >= 0 && (j & 1) == 0 && r < n - 1) {{
+            vec4 ps = texelFetch(T, ivec2(6, r), 0), pi = texelFetch(T, ivec2(5, r + 1), 0);
+            float a = dot(ps.xyz, x) + ps.w, b = dot(pi.xyz, x) + pi.w;
+            lam = clamp(a / (abs(a - b) > 1e-12 ? a - b : 1.0), 0.0, 1.0);
+        }}
+        vec4 c0 = texelFetch(T, ivec2(0, r), 0), c1 = texelFetch(T, ivec2(1, r), 0), c2 = texelFetch(T, ivec2(2, r), 0);
+        vec3 q = p - vec3(c0.w, c1.w, c2.w);
+        q = vec3(dot(q, c0.xyz), dot(q, c1.xyz), dot(q, c2.xyz));
+        vec3 g = screwApply(q, -lam * texelFetch(T, ivec2(3, r), 0).xyz, -lam * texelFetch(T, ivec2(4, r), 0).xyz);
+        x = it < {POLY_RELAX} ? g : x + 0.5 * (g - x);
+    }}
+    return x;
+}}
+float sdLattice(vec3 q, vec3 lo, vec3 hi, float s, float r) {{
+    vec3 a = q - lo, m = abs(a - s * floor(a / s + 0.5));
+    return max(min(min(length(m.xy), length(m.yz)), length(m.xz)) - r, sdAABB(q, lo, hi));
+}}
+float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2) {{
+    vec3 ba = b - a;
+    float l2 = max(dot(ba, ba), 1e-12), rr = r1 - r2, a2 = l2 - rr * rr;
+    vec3 pa = p - a;
+    float y = dot(pa, ba), z = y - l2;
+    vec3 xv = pa * l2 - ba * y;
+    float x2 = dot(xv, xv), y2 = y * y * l2, z2 = z * z * l2, k = sign(rr) * rr * rr * x2;
+    if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) / l2 - r2;
+    if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) / l2 - r1;
+    return (sqrt(max(x2 * a2 / l2, 0.0)) + y * rr) / l2 - r1;
+}}
+// Arrows of a displacement grid (see Arrows): (distance, length of the nearest arrow's displacement).
+vec2 arrows(vec3 p, highp sampler2D T, vec3 lo, float s, ivec3 n, float r) {{
+    ivec3 c = ivec3(floor((p - lo) / s + 0.5));
+    vec2 best = vec2(1e10, 0.0);
+    for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {{
+        ivec3 g = c + ivec3(i, j, k);
+        if (any(lessThan(g, ivec3(0))) || any(greaterThanEqual(g, n))) continue;
+        vec4 D = texelFetch(T, ivec2(g.x, g.y + n.y * g.z), 0);
+        if (D.w < 0.5) continue;
+        vec3 a = lo + s * vec3(g), u = D.xyz / D.w;
+        float L = min(D.w, 0.8 * s), hl = min(4.0 * r, 0.4 * L);
+        vec3 b = a + u * L, m = b - u * hl;
+        float d = min(sdCap(p, a, m, r), sdRoundCone(p, m, b, 2.2 * r, 0.2 * r));
+        if (d < best.x) best = vec2(d, D.w);
+    }}
+    // Lower bounds of the arrows not tested: beyond the 27 cells (>= 0.7 s - 2.2 r away)
+    // and outside the grid box grown by an arrow's reach.
+    vec3 hi = lo + s * vec3(n - 1);
+    best.x = min(best.x, max(0.7 * s - 2.2 * r, sdAABB(p, lo, hi) - 0.8 * s - 2.2 * r));
+    return best;
+}}
+// Colour map for field magnitudes (0..1; a viridis-like polynomial fit).
+vec3 fieldColor(float t) {{
+    t = clamp(t, 0.0, 1.0);
+    vec3 c0 = vec3(0.2777, 0.0054, 0.3341), c1 = vec3(0.1050, 1.4046, 1.3846), c2 = vec3(-0.3309, 0.2148, 0.0951),
+         c3 = vec3(-4.6342, -5.7991, -19.3324), c4 = vec3(6.2283, 14.1799, 56.6906), c5 = vec3(4.7764, -13.7451, -65.3530),
+         c6 = vec3(-5.4355, 4.6459, 26.3124);
+    return c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6)))));
 }}
 """
 

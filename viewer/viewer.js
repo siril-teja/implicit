@@ -525,10 +525,19 @@ function rayBox(s) {
   return rayMemo.box;
 }
 
+// Colour scale of a visible field-coloured body (Field view arrows / slice).
+function updateLegend(s) {
+  const b = s.bodies.find((q) => q.colormap && state.vis[q.group]);
+  const text = b ? `${fmt(typeof b.colormap.max === "string" ? state.values[b.colormap.max] : b.colormap.max, 1)} mm` : "";
+  if ($("#legendMax").textContent !== text) $("#legendMax").textContent = text;
+  $("#legend").hidden = !b;
+}
+
 function setUniforms(w, h) {
   gl.useProgram(state.prog);
   const U = state.uniforms, s = state.scene;
   Solvers.apply(s, state.values);  // computed values (e.g. the spinopelvic chain) follow the sliders
+  updateLegend(s);
   const c = camBasis();
   gl.uniform2f(U.u_res, w, h);
   gl.uniform3fv(U.u_eye, c.eye);

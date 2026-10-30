@@ -23,6 +23,11 @@
   #hud #fps { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
     background: #0008; border-radius: 5px; padding: 3px 8px; }
   #hud #fps:empty { display: none; }
+  #hud #legend { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text);
+    background: #0008; border-radius: 5px; padding: 3px 8px; pointer-events: none; }
+  #hud #legend[hidden] { display: none; }
+  #hud #legend .bar { width: 120px; height: 10px; border-radius: 2px;
+    background: linear-gradient(90deg, #440154, #3b528b, #21918c, #5ec962, #fde725); }
   #hud #fps.mid { color: #ffd27a; } #hud #fps.slow { color: var(--err); }
   #hud .spacer { flex: 1; pointer-events: none; }
   #dock { flex: none; height: var(--dock-h, 42vh); display: flex; flex-direction: column;
@@ -120,6 +125,8 @@
       <select id="scenePick" hidden></select>
       <span class="spacer"></span>
       <span id="fps" title="Frames per second while the view moves; then the time to draw the sharp image"></span>
+      <div id="legend" hidden title="Colour of a field display: displacement of the tissue by the alignment">
+        <span>0</span><span class="bar"></span><span id="legendMax"></span></div>
       <button id="dockToggle" title="Show or hide the panel (Tab)">Hide panel</button>
     </div>
   </div>

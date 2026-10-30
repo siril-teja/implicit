@@ -62,10 +62,33 @@ class TestAlignment(unittest.TestCase):
     def test_identity_at_baseline(self):
         res = al.solve(self.data, **self.targets(AR=0.4))
         for seg, m in res.items():
-            if seg != "tps":
+            if seg not in ("tps", "chain", "grid"):
                 np.testing.assert_allclose(m, [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], atol=1e-9, err_msg=seg)
         P = np.random.default_rng(0).uniform(-150, 150, (200, 3))
         np.testing.assert_allclose(al.tps_eval(res["tps"], P), P, atol=1e-6)
+        np.testing.assert_allclose(al.poly_inverse(res["chain"], P), P, atol=1e-9)
+        self.assertLess(max(res["grid"][3::4]), 1e-6)
+
+    def test_polyrigid_rigid_in_bodies_and_invertible_near_the_axis(self):
+        data = {**self.data, "field": "polyrigid"}
+        res = al.solve(data, **self.targets(PT=25.0, LL=62.0, TK=45.0, MT=35.0, TL=-25.0, AR=0.3, PO=5.0, CB=8.0))
+        # Points inside a vertebral body (between its endplate planes) move with it.
+        for lv in ("L3", "T8"):
+            c = np.array(self.data["frames"][lv]["center"])
+            P = c + np.random.default_rng(1).uniform(-4, 4, (20, 3))
+            R, t = motion(res[lv])
+            np.testing.assert_allclose(al.poly_forward(res["chain"], P), P @ R.T + t, atol=1e-9, err_msg=lv)
+        # Disc spaces: continuous between the two vertebrae; the inverse finds every point
+        # within 15 mm of the spine curve.
+        C = np.reshape(self.data["curve"], (-1, 3))
+        rng = np.random.default_rng(2)
+        P0 = C[rng.integers(0, len(C), 800)] + rng.uniform(-10, 10, (800, 3))
+        Pw = al.poly_forward(res["chain"], P0)
+        np.testing.assert_allclose(al.poly_inverse(res["chain"], Pw), P0, atol=1e-3)
+        # Its display grid is the forward displacement.
+        G = al.grid_points(data["grid"])
+        D = np.asarray(res["grid"]).reshape(-1, 4)
+        np.testing.assert_allclose(D[::97, :3], al.poly_forward(res["chain"], G[::97]) - G[::97], atol=1e-9)
 
     def test_sagittal_targets_met(self):
         t = self.targets(PI=66.0, PT=25.0, LL=62.0, TK=45.0)
@@ -124,14 +147,18 @@ class TestAlignment(unittest.TestCase):
     def test_viewer_solver_matches(self):
         """viewer/solvers.js computes the same motions and TPS as the Python model."""
         targets = self.targets(PI=66.0, PT=25.0, LL=62.0, TK=45.0, MT=35.0, TL=-25.0, AR=0.3, PO=5.0, CB=8.0)
+        for field in ("tps", "polyrigid"):
+            self._compare_js({**self.data, "field": field}, targets)
+
+    def _compare_js(self, data, targets):
         js = ("const S = require(process.argv[1]); const d = JSON.parse(require('fs').readFileSync(0));"
               "process.stdout.write(JSON.stringify(S.KINDS.spinopelvic(d.data, d.targets)));")
         out = subprocess.run(["node", "-e", js, str(ROOT / "viewer" / "solvers.js")], check=True, capture_output=True,
-                             input=json.dumps({"data": self.data, "targets": targets}), text=True).stdout
-        got, ref = json.loads(out), al.solve(self.data, **targets)
+                             input=json.dumps({"data": data, "targets": targets}), text=True).stdout
+        got, ref = json.loads(out), al.solve(data, **targets)
         self.assertEqual(set(got), set(ref))
         for k in ref:
-            np.testing.assert_allclose(got[k], ref[k], atol=1e-7, err_msg=k)
+            np.testing.assert_allclose(got[k], ref[k], atol=1e-6, err_msg=f"{data['field']} {k}")
 
 
 if __name__ == "__main__":

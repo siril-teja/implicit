@@ -91,7 +91,7 @@ void main() {
   }
   vec3 col = bg;
   if (id >= 0.0) {
-    vec3 base = bodyColor(int(id));
+    vec3 base = bodyColor(int(id), p);
     bool cut = u_clipOn > 0.5 && abs(dot(p, u_clip.xyz) - u_clip.w) < 0.05;
     if (cut) base *= 0.75 + 0.25 * step(0.5, fract((p.x + p.y + p.z) * 0.35));
     vec3 l1 = normalize(-u_fwd + u_up * 0.6 + u_right * 0.4);

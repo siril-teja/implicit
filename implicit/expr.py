@@ -136,6 +136,15 @@ class Solver:
             self._cache[key] = SOLVERS[self.kind](self.data, **dict(zip(self.inputs, vals)))
         return self._cache[key]
 
+    def _run_light(self, vals):
+        """As _run without the solver's tables (motions only, for bounds), when it can."""
+        key = ("light",) + tuple(vals)
+        if key not in self._cache:
+            fn = SOLVERS[self.kind]
+            kw = {"light": True} if getattr(fn, "light", False) else {}
+            self._cache[key] = fn(self.data, **dict(zip(self.inputs, vals)), **kw)
+        return self._cache[key]
+
     def result(self):
         return self._run(float(e.value()) for e in self.inputs.values())
 
@@ -147,7 +156,7 @@ class Solver:
         combos = [cur, lo, hi]
         for i in range(len(es)):
             combos += [cur[:i] + [lo[i]] + cur[i + 1:], cur[:i] + [hi[i]] + cur[i + 1:]]
-        return [self._run(c) for c in combos]
+        return [self._run_light(c) for c in combos]
 
     def to_json(self):
         return {"kind": self.kind, "data": self.data, "inputs": {k: e.name for k, e in self.inputs.items()}}
