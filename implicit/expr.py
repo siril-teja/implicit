@@ -111,6 +111,75 @@ class Param(Expr):
         }
 
 
+SOLVERS = {}  # kind -> function(data, **inputs) -> {key: [values]} (registered by their modules)
+
+
+class Solver:
+    """A computation on the CPU from parameters (e.g. the spinopelvic chain model).
+
+    Its results reach the shader as Computed uniforms; the viewer runs the same
+    computation (viewer/solvers.js) whenever an input moves.
+    """
+
+    def __init__(self, sid, kind, data, inputs: dict):
+        for k, e in inputs.items():
+            if not isinstance(e, Param) or isinstance(e, Computed):
+                raise ValueError(f"{k}: needs a value or a Number block")
+        self.id, self.kind, self.data, self.inputs = sid, kind, data, inputs
+        self._cache = {}
+
+    def _run(self, vals):
+        key = vals = tuple(vals)
+        if key not in self._cache:
+            if len(self._cache) > 256:
+                self._cache.clear()
+            self._cache[key] = SOLVERS[self.kind](self.data, **dict(zip(self.inputs, vals)))
+        return self._cache[key]
+
+    def result(self):
+        return self._run(float(e.value()) for e in self.inputs.values())
+
+    def samples(self):
+        """Results over the input ranges (low, current, high of each; for bounds)."""
+        grids = [(e.lo, e.value(), e.hi) for e in self.inputs.values()]
+        out = [[]]
+        for g in grids:
+            out = [o + [v] for o in out for v in g]
+        return [self._run(o) for o in out]
+
+    def to_json(self):
+        return {"kind": self.kind, "data": self.data, "inputs": {k: e.name for k, e in self.inputs.items()}}
+
+
+class Computed(Param):
+    """A uniform whose value a Solver computes (``solver.result()[key][index]``); not a slider."""
+
+    def __init__(self, name, solver: Solver, key, index):
+        if not name.isidentifier():
+            raise ValueError(f"param name must be an identifier: {name!r}")
+        self.name, self.solver, self.key, self.index = name, solver, key, index
+        vals = [r[key][index] for r in solver.samples()]
+        self.lo, self.hi = min(vals), max(vals)
+        self.step, self.label, self.unit = 0.0, name, ""
+
+    @property
+    def v(self):
+        return float(self.solver.result()[self.key][self.index])
+
+    @property
+    def default(self):
+        return self.v
+
+    def set(self, v):
+        pass  # follows its solver's inputs
+
+    def params(self):
+        return [self] + [q for e in self.solver.inputs.values() for q in e.params()]
+
+    def to_json(self):
+        return {**super().to_json(), "computed": {"solver": self.solver.id, "key": self.key, "index": self.index}}
+
+
 _PY_FUNCS = {
     "sin": math.sin, "cos": math.cos, "tan": math.tan,
     "radians": math.radians, "abs": abs, "sqrt": math.sqrt,

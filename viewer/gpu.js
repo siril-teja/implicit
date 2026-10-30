@@ -146,7 +146,8 @@ void main() {
   // literals and uniform names (vertebrae, their markers, left/right bones) become
   // one function ``grpK(p, row)`` called from one loop in sceneMap. Per-instance
   // numbers come from a float texture (u_inst; row: box min + visibility uniform,
-  // box max, then the instance's literals and uniform indices), uniforms through the
+  // box max, for a moved body the uniform indices of its motion, then the
+  // instance's literals and uniform indices), uniforms through the
   // array u_SP. Only texture fetches and uniform-array reads: D3D compiles such
   // loops as loops (local arrays made it unroll them). ``unitN`` remain as one-line
   // wrappers (used by the diagnostics).
@@ -164,13 +165,16 @@ void main() {
       const end = glsl.indexOf("\n}", m.index) + 2;
       units.set(+m[1], { start: m.index, end, body: glsl.slice(m.index + m[0].length, end - 2) });
     }
-    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\(p, vec3\(([^)]*)\), vec3\(([^)]*)\)\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
+    // Box test in world space, or in the body's own frame for a moved body (sagInv).
+    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\((?:p|sagInv\(p, vec4\(([^)]*)\)\)), vec3\(([^)]*)\), vec3\(([^)]*)\)\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
     const mapLines = glsl.slice(mapAt).split("\n");
     for (const [i, line] of mapLines.entries()) {
       const m = line.match(lineRe);
-      if (!m || !units.has(+m[4])) continue;
+      if (!m || !units.has(+m[5])) continue;
       const box = (s, inf) => (s ? s.split(",").map(Number) : [inf, inf, inf]);
-      Object.assign(units.get(+m[4]), { line: i, vis: m[1], lo: box(m[2], -1e30), hi: box(m[3], 1e30) });
+      const move = m[2] ? m[2].split(",").map((s) => s.trim()) : null;
+      if (move && !move.every((u) => floatUniforms.has(u))) continue;
+      Object.assign(units.get(+m[5]), { line: i, vis: m[1], move, lo: box(m[3], -1e30), hi: box(m[4], 1e30) });
     }
     // Group by code skeleton (literals and float uniforms taken out).
     const groups = new Map();
@@ -182,16 +186,19 @@ void main() {
         u.slots.push(s);
         return s.startsWith("u_") ? "\u0001U" : "\u0001F";
       });
-      if (!groups.has(skel)) groups.set(skel, []);
-      groups.get(skel).push(k);
+      const key = (u.move ? "moved|" : "|") + skel;  // a group culls all its bodies alike
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(k);
     }
     const sp = new Map();  // uniform -> index in u_SP
     const spIndex = (name) => { if (!sp.has(name)) sp.set(name, sp.size); return sp.get(name); };
     const funcs = [], loops = [], drop = new Set(), wrappers = new Map(), rows = [], where = {};
     let g = 0;
-    for (const [skel, ks] of groups) {
+    for (const [key, ks] of groups) {
       if (ks.length < 2) continue;
-      const inst = ks.map((k) => units.get(k)), row0 = rows.length;
+      const skel = key.slice(key.indexOf("|") + 1);
+      const inst = ks.map((k) => units.get(k)), row0 = rows.length, moved = !!inst[0].move;
+      const base = moved ? 3 : 2;  // first column of the literals (2: the motion's uniforms)
       // Columns of per-instance values; slots equal in all instances stay inline,
       // identical columns are stored once.
       const cols = new Map(), expr = [];
@@ -204,12 +211,12 @@ void main() {
         expr.push(cols.get(key));
       }
       for (const [i, u] of inst.entries()) {
-        const r = [...u.lo, spIndex(u.vis), ...u.hi, 0];
+        const r = [...u.lo, spIndex(u.vis), ...u.hi, 0, ...(moved ? u.move.map(spIndex) : [])];
         for (const c of cols.values()) r.push(c.isU ? spIndex(c.vals[i]) : +c.vals[i]);
         rows.push(r);
       }
-      const texel = (k) => `t${(k >> 2) + 2}.${"xyzw"[k & 3]}`;
-      const used = new Set([...cols.values()].map((c) => (c.k >> 2) + 2));
+      const texel = (k) => `t${(k >> 2) + base}.${"xyzw"[k & 3]}`;
+      const used = new Set([...cols.values()].map((c) => (c.k >> 2) + base));
       let s = 0;
       const body = skel.replace(/\u0001[FU]/g, () => {
         const e = expr[s++];
@@ -219,9 +226,14 @@ void main() {
       const fetches = [...used].sort((x, y) => x - y)
         .map((c) => `    vec4 t${c} = texelFetch(u_inst, ivec2(${c}, row), 0);`);
       funcs.push(`vec2 grp${g}(vec3 p, int row) {  // ${inst.length} bodies\n${fetches.join("\n")}\n${body}\n}`);
-      loops.push(`    for (int row = ${row0}; row < ${row0 + inst.length}; row++) {
-        vec4 lo = texelFetch(u_inst, ivec2(0, row), 0), hi = texelFetch(u_inst, ivec2(1, row), 0);
-        if (spGet(int(lo.w)) > 0.5 && sdAABB(p, lo.xyz, hi.xyz) < r.x) { d = grp${g}(p, row); if (d.x < r.x) r = d; }
+      const at = moved ? "sagInv(p, vec4(spGet(int(mi.x)), spGet(int(mi.y)), spGet(int(mi.z)), spGet(int(mi.w))))" : "p";
+      // One visibility switch for the whole group (usual) is tested once, outside the loop.
+      const oneVis = inst.every((u) => u.vis === inst[0].vis);
+      const visTest = oneVis ? "" : "spGet(int(lo.w)) > 0.5 && ";
+      loops.push(`    ${oneVis ? `if (${inst[0].vis} > 0.5) ` : ""}for (int row = ${row0}; row < ${row0 + inst.length}; row++) {
+        vec4 lo = texelFetch(u_inst, ivec2(0, row), 0), hi = texelFetch(u_inst, ivec2(1, row), 0);${moved ? `
+        vec4 mi = texelFetch(u_inst, ivec2(2, row), 0);` : ""}
+        if (${visTest}sdAABB(${at}, lo.xyz, hi.xyz) < r.x) { d = grp${g}(p, row); if (d.x < r.x) r = d; }
     }`);
       ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${row0 + i}); }`); where[k] = [g, row0 + i]; });
       g++;

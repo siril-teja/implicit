@@ -301,7 +301,7 @@ function buildPanel() {
   const params = $("#params");
   params.replaceChildren();
   // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
-  const shown = s.graph ? s.params.filter((p) => p.number) : s.params;
+  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed);
   $("#paramsHead").hidden = !shown.length;
   for (const p of shown) {
     const out = el("output", { value: fmt(state.values[p.name], p.step) });
@@ -514,9 +514,21 @@ function selectBody(i) {
   updateHighlight();
 }
 
+// The box rays march in (see Graph.rayBounds), recomputed when values or visibility change.
+const rayMemo = { key: null, box: null };
+function rayBox(s) {
+  const key = JSON.stringify([s.hash, state.values, state.vis]);
+  if (rayMemo.key !== key) {
+    rayMemo.key = key;
+    rayMemo.box = (s._bodies && Graph.rayBounds(s, state.values, state.vis)) || s.bounds;
+  }
+  return rayMemo.box;
+}
+
 function setUniforms(w, h) {
   gl.useProgram(state.prog);
   const U = state.uniforms, s = state.scene;
+  Solvers.apply(s, state.values);  // computed values (e.g. the spinopelvic chain) follow the sliders
   const c = camBasis();
   gl.uniform2f(U.u_res, w, h);
   gl.uniform3fv(U.u_eye, c.eye);
@@ -524,8 +536,9 @@ function setUniforms(w, h) {
   gl.uniform3fv(U.u_right, c.right);
   gl.uniform3fv(U.u_up, c.up);
   gl.uniform1f(U.u_fov, 0.45);
-  gl.uniform3fv(U.u_bmin, s.bounds[0]);
-  gl.uniform3fv(U.u_bmax, s.bounds[1]);
+  const rb = rayBox(s);
+  gl.uniform3fv(U.u_bmin, rb[0]);
+  gl.uniform3fv(U.u_bmax, rb[1]);
   const n = [0, 0, 0];
   const sign = $("#clipFlip").checked ? -1 : 1;
   n[state.clip.axis] = sign;

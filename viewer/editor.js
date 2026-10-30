@@ -9,7 +9,7 @@ const Editor = (() => {
   const NS = "http://www.w3.org/2000/svg";
   const W = 184, HEAD = 26, ROW = 20;
   const TYPE_COLORS = { body: "#e2b36d", bone: "#e8d6a0", scalar: "#7fd18b", vec3: "#6aa9ff",
-    plane: "#ff8a65", frame: "#f06bd0", vertebra: "#b388ff" };
+    plane: "#ff8a65", frame: "#f06bd0", vertebra: "#b388ff", alignment: "#4dd0e1" };
 
   function svgEl(tag, attrs = {}, parent = null) {
     const e = document.createElementNS(NS, tag);

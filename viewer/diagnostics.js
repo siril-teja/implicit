@@ -87,8 +87,9 @@ function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.useProgram(prog);
-  setUniforms(gl, uniforms, scene, atlas, values);
-  GPU.bindInstances(gl, built, (u) => uniformValue(scene, values, u));
+  const all = Solvers.apply(scene, { ...values });  // computed values from the moved sliders, as in the viewer
+  setUniforms(gl, uniforms, scene, atlas, all);
+  GPU.bindInstances(gl, built, (u) => uniformValue(scene, all, u));
   gl.uniform1i(uniforms.u_probe, 4);
   gl.uniform1f(uniforms.u_mode, mode);
   if (uniforms.u_eye0) gl.uniform3fv(uniforms.u_eye0, eye);
