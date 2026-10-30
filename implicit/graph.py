@@ -42,9 +42,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .expr import BinOp, Computed, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
+from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, SagittalMove, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, TpsWarp, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -530,11 +530,10 @@ def _show_frame(x, node):
 # ---------------------------------------------------------------- pose
 
 def _pose_np(fn, args):
-    """NumPy value of poseDir/posePoint/sagDir/sagPoint (see GLSL_LIB) for float vectors."""
-    if fn in ("sagDir", "sagPoint"):
-        (x, y, z), (c, s, ty, tz) = args
-        t = (ty, tz) if fn == "sagPoint" else (0.0, 0.0)
-        return np.array([x, c * y - s * z + t[0], s * y + c * z + t[1]])
+    """NumPy value of poseDir/posePoint/rigDir/rigPoint (see GLSL_LIB) for float vectors."""
+    if fn in ("rigDir", "rigPoint"):
+        v, c0, c1, c2, t = args
+        return c0 * v[0] + c1 * v[1] + c2 * v[2] + (t if fn == "rigPoint" else 0.0)
     if fn == "poseDir":
         v, ex, ey, ez, ang = args
         E = np.stack([ex, ey, ez])
@@ -675,70 +674,92 @@ def _vertebra_parts(x, node):
     return {"frame": v.frame, "superior": v.sup, "inferior": v.inf}
 
 
-# ---------------------------------------------------------------- spinopelvic alignment
+# ---------------------------------------------------------------- spine alignment
 
 @dataclass
 class AlignmentV:
-    """The spinopelvic chain model of one subject: a Solver and its motion uniforms."""
+    """The chain model of one subject: a Solver, its motion uniforms and its TPS table."""
     solver: Solver
     motions: dict = field(default_factory=dict)
+    table: object = None
 
     def motion(self, seg):
-        """(cos a, sin a, t_y, t_z) of a segment as Computed uniforms (see SagittalMove)."""
+        """The rigid motion of a segment as 12 Computed uniforms (see RigidMove)."""
         if seg not in self.motions:
-            self.motions[seg] = [Computed(f"{self.solver.id}_{seg}_{k}", self.solver, seg, i)
-                                 for i, k in enumerate(("c", "s", "ty", "tz"))]
+            self.motions[seg] = [Computed(f"{self.solver.id}_{seg}_{i}", self.solver, seg, i) for i in range(12)]
         return self.motions[seg]
 
+    def tps(self):
+        """The inverse warp table (see alignment.tps_table) as a computed texture."""
+        if self.table is None:
+            self.table = ComputedTexture(f"{self.solver.id}_tps", self.solver, "tps", 3)
+        return self.table
 
-class _Vec4:
-    """vec4 of four scalar expressions (argument of sagPoint/sagDir)."""
-
-    def __init__(self, c):
-        self.c = c
-
-    def glsl(self):
-        return f"vec4({', '.join(e.glsl() for e in self.c)})"
-
-    def value(self):
-        return [e.value() for e in self.c]
-
-    def params(self):
-        return [q for e in self.c for q in e.params()]
-
-    def is_const(self):
-        return all(e.is_const() for e in self.c)
+    def displacement(self, now):
+        """Largest control point displacement (mm), now or over the slider ranges."""
+        from .anatomy.alignment import _apply
+        pts = self.solver.data["tps_points"]
+        out = 0.0
+        for res in [self.solver.result()] if now else self.solver.samples():
+            for q in pts:
+                m = res[q["segment"]]
+                R, t = [[m[0], m[3], m[6]], [m[1], m[4], m[7]], [m[2], m[5], m[8]]], m[9:]
+                out = max(out, float(np.linalg.norm(np.subtract(_apply((R, t), q["point"]), q["point"]))))
+        return out
 
 
-def _sag_point(m, v: Vec3, move=True):
-    """A point (or direction) moved by the sagittal motion m, as one sagPoint/sagDir call."""
-    whole = _PoseCall("sagPoint" if move else "sagDir", [v, _Vec4(m)])
+def _rig_point(m, v: Vec3, move=True):
+    """A point (or direction) moved by the rigid motion m, as one rigPoint/rigDir call."""
+    whole = _PoseCall("rigPoint" if move else "rigDir", [v, *(Vec3(*m[i:i + 3]) for i in range(0, 12, 3))])
     return Vec3(*(_PoseComp(whole, k) for k in range(3)))
 
 
-def _sag_np(m, P):
-    c, s, ty, tz = m
-    P = np.asarray(P, float)
-    return np.column_stack([P[:, 0], c * P[:, 1] - s * P[:, 2] + ty, s * P[:, 1] + c * P[:, 2] + tz])
+def _rig_np(m, P):
+    m = np.asarray(m, float)
+    return np.asarray(P, float) @ m[:9].reshape(3, 3) + m[9:]
 
 
-@block("spinopelvic", "Spinopelvic alignment", "Anatomy",
+_LEVELS = tuple([f"T{i}" for i in range(1, 13)] + [f"L{i}" for i in range(1, 6)])
+_CURVE_PORTS = [(k, part) for k in ("MT", "TL") for part in ("upper", "apex", "lower")]
+
+
+def _curve_defaults():
+    from .anatomy.alignment import CURVES
+    return {f"{k}_{part}": CURVES[k][i] for k in ("MT", "TL") for i, part in enumerate(("upper", "apex", "lower"))}
+
+
+@block("spinopelvic", "Spine alignment", "Anatomy",
        [Port("bone", "bone", label="Sacrum (finds the subject's landmarks)"),
         S("PI", 58.7, 30, 90, 0.5, "deg", "Pelvic incidence"), S("PT", 17.2, -10, 45, 0.5, "deg", "Pelvic tilt"),
         S("LL", 51.9, 0, 90, 0.5, "deg", "Lumbar lordosis (L1-S1)"),
-        S("TK", 30.3, 0, 80, 0.5, "deg", "Thoracic kyphosis (T4-T12)")],
+        S("TK", 30.3, 0, 80, 0.5, "deg", "Thoracic kyphosis (T4-T12)"),
+        S("MT", 0, -90, 90, 0.5, "deg", "Main thoracic Cobb (+ convex right)"),
+        S("TL", 0, -90, 90, 0.5, "deg", "Thoracolumbar/lumbar Cobb (+ convex right)"),
+        S("AR", 0.3, 0, 1, 0.05, "", "Apical rotation per degree of Cobb"),
+        S("PO", 0, -20, 20, 0.5, "deg", "Pelvic obliquity (+ right side up)"),
+        S("CB", 0, -80, 80, 1, "mm", "Coronal balance (T1 right of S1)")]
+       + [Port(f"{k}_{part}", "choice", d, label=f"{k} {part}{' end' if part != 'apex' else ''}", choices=_LEVELS)
+          for (k, part), d in zip(_CURVE_PORTS, _curve_defaults().values())],
        [Port("alignment", "alignment", label="Alignment")])
 def _spinopelvic(x, node):
-    """Sagittal alignment from four parameters. At the subject's own values nothing
-    moves; other values turn the pelvis about the hip axis (PT), the sacrum about the
-    sacroiliac joints (PI) and the discs L1-S1 (LL) and T4-T12 (TK). Feed it to an
-    Align block per segment (see implicit/anatomy/alignment.py)."""
+    """Sagittal and coronal alignment of the spine and pelvis. At the subject's own
+    values nothing moves. Sagittal: the pelvis turns about the hip axis (PT), the
+    sacrum about the sacroiliac joints (PI), the discs L1-S1 (LL) and T4-T12 (TK).
+    Coronal: two Cobb curves between chosen end vertebrae and apex (MT, TL) with the
+    apex vertebrae turned toward the convexity (AR), pelvic obliquity (PO) and coronal
+    balance (CB). Feed it to an Align block per bone and to TPS warp blocks for soft
+    structures (see implicit/anatomy/alignment.py)."""
+    from .anatomy.alignment import _curve_plan
     data = node.ctx.spine(x["bone"].sdf_file)
     if data is None:
         raise GraphError("no spine and pelvis landmarks for this subject (needs vertebrae, sacrum, hip bones "
                          "and femurs; run python -m implicit.anatomy.landmarks on its folder)")
+    curves = {k: [x[f"{k}_{part}"] for part in ("upper", "apex", "lower")] for k in ("MT", "TL")}
+    curves = {k: c for k, c in curves.items() if all(lv in data["levels"] for lv in c)}  # e.g. a lumbar-only subject
     try:
-        solver = Solver(node.id, "spinopelvic", data, {k: x[k] for k in ("PI", "PT", "LL", "TK")})
+        _curve_plan(data["levels"], curves)
+        solver = Solver(node.id, "spinopelvic", {**data, "curves": curves},
+                        {k: x[k] for k in ("PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB")})
     except ValueError as e:
         raise GraphError(str(e)) from e
     return {"alignment": AlignmentV(solver)}
@@ -747,13 +768,14 @@ def _spinopelvic(x, node):
 @block("align", "Align", "Anatomy",
        [BODY(label="Body"), Port("vertebra", "vertebra", label="Vertebra (optional)", optional=True),
         Port("alignment", "alignment", label="Alignment"),
-        Port("segment", "text", "L5", label="Segment (pelvis, sacrum, L5 ... T1)")],
+        Port("segment", "text", "L5", label="Segment (legs, pelvis, sacrum, L5 ... T1)")],
        [Port("body", "body", label="Body"), Port("vertebra", "vertebra", label="Vertebra")])
 def _align(x, node):
-    """Move a body (and its vertebra frame) as one segment of a spinopelvic alignment."""
+    """Move a bone (and its vertebra frame) rigidly as one segment of a spine alignment."""
     a, seg, b, v = x["alignment"], x["segment"], x["body"], x["vertebra"]
-    if seg not in a.solver.result():
-        raise GraphError(f"segment {seg!r} is not in this alignment ({', '.join(a.solver.result())})")
+    if seg not in a.solver.result() or seg == "tps":
+        raise GraphError(f"segment {seg!r} is not in this alignment "
+                         f"({', '.join(k for k in a.solver.result() if k != 'tps')})")
     m = a.motion(seg)
 
     def bounds(now):
@@ -762,13 +784,13 @@ def _align(x, node):
             return None
         corners = [[bb[i][0], bb[j][1], bb[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)]
         ms = [[e.value() for e in m]] if now else [r[seg] for r in a.solver.samples()]
-        pts = np.concatenate([_sag_np(q, corners) for q in ms])
+        pts = np.concatenate([_rig_np(q, corners) for q in ms])
         return pts.min(0), pts.max(0)
-    out = {"body": Field(SagittalMove(b.sdf, m, _child(b, False)), bounds), "vertebra": None}  # local box: culling
+    out = {"body": Field(RigidMove(b.sdf, m, _child(b, False)), bounds), "vertebra": None}  # local box: culling
     if v is not None:
         f = v.frame
-        plane = lambda pl: None if pl is None else PlaneV(_sag_point(m, pl.point), _sag_point(m, pl.normal, False))
-        out["vertebra"] = VertebraV(FrameV(_sag_point(m, f.origin), *(_sag_point(m, d, False) for d in (f.x, f.y, f.z))),
+        plane = lambda pl: None if pl is None else PlaneV(_rig_point(m, pl.point), _rig_point(m, pl.normal, False))
+        out["vertebra"] = VertebraV(FrameV(_rig_point(m, f.origin), *(_rig_point(m, d, False) for d in (f.x, f.y, f.z))),
                                     plane(v.sup), plane(v.inf))
     return out
 
@@ -777,21 +799,30 @@ def _align(x, node):
        [Port("alignment", "alignment", label="Alignment"), S("radius", 1.5, 0.2, 6, 0.1, "mm", "Tube radius")],
        [Port("body", "body", label="Body")])
 def _spine_curve(x, node):
-    """A tube along the spine curve: a smooth curve through the S1 endplate centre and
-    the vertebral body centres, following the alignment."""
-    solver, r = x["alignment"].solver, x["radius"]
-    n = len(solver.result()["curve"]) // 3
-    pts = [Vec3(*(Computed(f"{solver.id}_curve_{3 * i + k}", solver, "curve", 3 * i + k) for k in range(3)))
-           for i in range(n)]
+    """A tube along the subject's spine curve: a smooth curve through the S1 endplate
+    centre and the vertebral body centres, as it is before any alignment change (wire
+    it through a TPS warp to follow the alignment)."""
+    P = np.reshape(x["alignment"].solver.data["curve"], (-1, 3))
+    r = x["radius"]
 
     def bounds(now):
         ru = _upper(r, now)
-        if ru is None:
-            return None
-        cs = [solver.result()["curve"]] if now else [res["curve"] for res in solver.samples()]
-        P = np.concatenate([np.reshape(c, (-1, 3)) for c in cs])
-        return P.min(0) - ru, P.max(0) + ru
-    return {"body": Field(Tube(pts, r), bounds)}
+        return None if ru is None else (P.min(0) - ru, P.max(0) + ru)
+    return {"body": Field(Tube([_const_vec(q) for q in P], r), bounds)}
+
+
+@block("tps_warp", "TPS warp", "Anatomy",
+       [BODY(label="Body"), Port("alignment", "alignment", label="Alignment")],
+       [Port("body", "body", label="Body")])
+def _tps_warp(x, node):
+    """Carry a soft structure (spine curve, discs, ligaments) with the alignment: a
+    thin-plate spline through control points on every bone, which move rigidly."""
+    a, b = x["alignment"], x["body"]
+
+    def bounds(now):
+        bb = _child(b, now)
+        return None if bb is None else _grow(bb, a.displacement(now) + 2.0)
+    return {"body": Field(TpsWarp(b.sdf, a.tps(), len(a.solver.data["tps_points"])), bounds)}
 
 
 @block("output", "Output body", "Output",
@@ -1216,7 +1247,7 @@ def _vec_hole(name):
 
 # Handled in viewer/graph.js: value plumbing and per-bone data from the library.
 BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts",
-                 "vertebra_parts", "spinopelvic", "align", "spine_curve"}
+                 "vertebra_parts", "spinopelvic", "align", "spine_curve", "tps_warp"}
 
 
 def browser_manifest():

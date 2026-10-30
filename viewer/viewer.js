@@ -301,7 +301,7 @@ function buildPanel() {
   const params = $("#params");
   params.replaceChildren();
   // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
-  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed);
+  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture);
   $("#paramsHead").hidden = !shown.length;
   for (const p of shown) {
     const out = el("output", { value: fmt(state.values[p.name], p.step) });
@@ -555,7 +555,8 @@ function setUniforms(w, h) {
     gl.bindTexture(gl.TEXTURE_3D, state.atlas);
     gl.uniform1i(U.u_atlas, 0);
   }
-  for (const p of s.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], state.values[p.name]);
+  for (const p of s.params) if (U[p.uniform] && !p.texture) gl.uniform1f(U[p.uniform], state.values[p.name]);
+  GPU.bindTables(gl, U, Solvers.tables(s, state.values));
   if (U.u_pick) gl.uniform1f(U.u_pick, 0);
   if (U.u_fast) gl.uniform1f(U.u_fast, 0);
   if (U.u_hl) gl.uniform4uiv(U.u_hl, state.hl);

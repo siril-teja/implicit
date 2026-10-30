@@ -173,7 +173,8 @@ class Scene:
         if atlas and self.packed_atlas is None:
             pack_grids(grids)
         groups = self.groups()
-        out = [f"uniform float {p.uniform};" for p in self.params()]
+        out = [f"uniform {'highp sampler2D' if hasattr(p, 'width') else 'float'} {p.uniform};"
+               for p in self.params()]
         out += [f"uniform float u_grp{i};" for i in range(len(groups))]
         out.append(GLSL_LIB)
         cols = ", ".join(f"vec3({', '.join(glsl_float(c) for c in b.color)})" for b in self.bodies)
@@ -226,6 +227,8 @@ class Scene:
             return f"sdAABB(p, vec3({lo}), vec3({hi})) < r.x"
 
         def unit_bounds(unit):
+            if len(unit) == 1 and getattr(self.bodies[unit[0]].sdf, "local_box", None) is not None:
+                return None  # moved body: culled by its own moved box, kept out of clusters
             bs = [self.bodies[i].bounds for i in unit]
             if any(b is None for b in bs):
                 return None
@@ -239,7 +242,7 @@ class Scene:
             if len(unit) == 1 and getattr(sdf, "local_box", None) is not None:
                 # A moved body: its own box, moved along (tight at any motion).
                 lo, hi = (", ".join(glsl_float(x) for x in v) for v in sdf.local_box)
-                cond += f" && sdAABB(sagInv(p, {sdf.m_glsl()}), vec3({lo}), vec3({hi})) < r.x"
+                cond += f" && sdAABB(rigInv(p, {sdf.m_glsl()}), vec3({lo}), vec3({hi})) < r.x"
                 return f"{indent}if ({cond}) {{ d = unit{k}(p); if (d.x < r.x) r = d; }}"
             b = unit_bounds(unit)
             if b is not None:

@@ -787,9 +787,8 @@ class Tube(SDF):
         return out - _v(self.r)
 
 
-class SagittalMove(SDF):
-    """Rigid motion in the sagittal (y-z) plane: p -> R(a) p + t, R turning about the
-    x axis; ``m`` = (cos a, sin a, t_y, t_z). Exact (a rigid motion keeps distances).
+class RigidMove(SDF):
+    """Rigid motion p -> R p + t; ``m`` = 12 scalars: R's columns, then t. Exact.
 
     ``local_box`` (lo, hi), when set, contains the child in its own (unmoved) frame:
     the scene then culls the body with that box moved along (Scene.glsl), which stays
@@ -804,19 +803,47 @@ class SagittalMove(SDF):
     def children(self): return [self.child]
     def exprs(self): return self.m
 
-    def emit(self, ctx, p):
-        return ctx.sub(self.child, ctx.var("vec3", f"sagInv({p}, {self.m_glsl()})"))
-
     def m_glsl(self):
-        return f"vec4({', '.join(e.glsl() for e in self.m)})"
+        """The motion as rigInv/rigPoint arguments: four vec3 (columns of R, then t)."""
+        g = [e.glsl() for e in self.m]
+        return ", ".join(f"vec3({', '.join(g[i:i + 3])})" for i in range(0, 12, 3))
+
+    def emit(self, ctx, p):
+        return ctx.sub(self.child, ctx.var("vec3", f"rigInv({p}, {self.m_glsl()})"))
 
     def eval(self, p):
-        c, s, ty, tz = (_v(e) for e in self.m)
-        q = p - np.array([0.0, ty, tz])
-        out = q.copy()
-        out[:, 1] = c * q[:, 1] + s * q[:, 2]
-        out[:, 2] = c * q[:, 2] - s * q[:, 1]
-        return self.child.eval(out)
+        m = np.array([_v(e) for e in self.m])
+        R, t = m[:9].reshape(3, 3).T, m[9:]
+        return self.child.eval((p - t) @ R)
+
+
+class TpsWarp(SDF):
+    """A body carried by a thin-plate spline warp: child(f(p)) * LIP, f the inverse warp
+    of a table (see implicit.anatomy.alignment.tps_table) in the texture ``table``.
+
+    Not an exact distance: the warp stretches space, so the value is scaled by LIP
+    (a lower bound while the warp stretches distances by at most 1/LIP).
+    """
+    LIP = 0.8
+
+    def __init__(self, child, table, n):
+        self.child, self.table, self.n = child, table, int(n)
+
+    def children(self): return [self.child]
+    def exprs(self): return [self.table]
+
+    def emit(self, ctx, p):
+        u = self.table.glsl()
+        a = [ctx.var("vec4", f"texelFetch({u}, ivec2({c}, 0), 0)") for c in range(3)]
+        q = ctx.var("vec3", f"vec3(dot({a[0]}.xyz, {p}) + {a[0]}.w, dot({a[1]}.xyz, {p}) + {a[1]}.w, "
+                            f"dot({a[2]}.xyz, {p}) + {a[2]}.w)")
+        ctx.lines.append(f"    for (int i = 1; i <= {self.n}; i++) {q} += texelFetch({u}, ivec2(1, i), 0).xyz"
+                         f" * length({p} - texelFetch({u}, ivec2(0, i), 0).xyz);")
+        return ctx.var("float", f"{glsl_float(self.LIP)} * {ctx.sub(self.child, q)}")
+
+    def eval(self, p):
+        from .anatomy.alignment import tps_eval
+        return self.LIP * self.child.eval(tps_eval(self.table.value(), p))
 
 
 class ScaleAbout(SDF):
@@ -879,16 +906,16 @@ float sdCap(vec3 p, vec3 a, vec3 b, float r) {{
     vec3 pa = p - a, ba = b - a;
     return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0)) - r;
 }}
-// Sagittal motion m = (cos a, sin a, t_y, t_z) of a point / a direction, and its inverse.
-vec3 sagDir(vec3 v, vec4 m) {{
-    return vec3(v.x, m.x * v.y - m.y * v.z, m.y * v.y + m.x * v.z);
+// Rigid motion p -> R p + t (R's columns c0, c1, c2) of a point / a direction, and its inverse.
+vec3 rigDir(vec3 v, vec3 c0, vec3 c1, vec3 c2, vec3 t) {{
+    return c0 * v.x + c1 * v.y + c2 * v.z;
 }}
-vec3 sagPoint(vec3 v, vec4 m) {{
-    return sagDir(v, m) + vec3(0.0, m.z, m.w);
+vec3 rigPoint(vec3 v, vec3 c0, vec3 c1, vec3 c2, vec3 t) {{
+    return c0 * v.x + c1 * v.y + c2 * v.z + t;
 }}
-vec3 sagInv(vec3 p, vec4 m) {{
-    vec3 q = p - vec3(0.0, m.z, m.w);
-    return vec3(q.x, m.x * q.y + m.y * q.z, m.x * q.z - m.y * q.y);
+vec3 rigInv(vec3 p, vec3 c0, vec3 c1, vec3 c2, vec3 t) {{
+    vec3 q = p - t;
+    return vec3(dot(q, c0), dot(q, c1), dot(q, c2));
 }}
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);

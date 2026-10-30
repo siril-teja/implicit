@@ -5,6 +5,26 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.10.0] - 2026-10-31
+
+### Added
+- **Coronal alignment** of the average spine: main thoracic and thoracolumbar/
+  lumbar Cobb sliders (curves with chosen end vertebrae and apex, + convex right),
+  apical axial rotation toward the convexity (gain per degree of Cobb), pelvic
+  obliquity (pelvis and femurs about the antero-posterior axis through the hips)
+  and coronal balance (solved on the lumbosacral discs below the curves).
+- **TPS warp** block: soft structures follow a 3-D thin-plate spline (kernel |r|)
+  fitted to control points on every bone, which move rigidly; the spine curve is
+  now the subject's curve carried by it. The warp's table is a computed texture
+  (refilled on the CPU when a slider moves).
+
+### Changed
+- Bones move by full rigid motions (rotation and translation, 12 computed
+  uniforms per segment) instead of sagittal ones; the femurs are a segment
+  ("legs"). The Spinopelvic alignment block is now Spine alignment.
+- Bounds of moved bodies sample each slider alone at its ends (instead of every
+  combination); moved bodies are kept out of cluster boxes.
+
 ## [0.9.0] - 2026-10-30
 
 ### Added

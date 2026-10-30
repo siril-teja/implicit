@@ -140,12 +140,14 @@ class Solver:
         return self._run(float(e.value()) for e in self.inputs.values())
 
     def samples(self):
-        """Results over the input ranges (low, current, high of each; for bounds)."""
-        grids = [(e.lo, e.value(), e.hi) for e in self.inputs.values()]
-        out = [[]]
-        for g in grids:
-            out = [o + [v] for o in out for v in g]
-        return [self._run(o) for o in out]
+        """Results at the current values, each input alone at its low and high end, and
+        all low / all high (for bounds; solvers.js does the same)."""
+        es = list(self.inputs.values())
+        cur, lo, hi = [e.value() for e in es], [e.lo for e in es], [e.hi for e in es]
+        combos = [cur, lo, hi]
+        for i in range(len(es)):
+            combos += [cur[:i] + [lo[i]] + cur[i + 1:], cur[:i] + [hi[i]] + cur[i + 1:]]
+        return [self._run(c) for c in combos]
 
     def to_json(self):
         return {"kind": self.kind, "data": self.data, "inputs": {k: e.name for k, e in self.inputs.items()}}
@@ -178,6 +180,31 @@ class Computed(Param):
 
     def to_json(self):
         return {**super().to_json(), "computed": {"solver": self.solver.id, "key": self.key, "index": self.index}}
+
+
+class ComputedTexture(Param):
+    """A float table a Solver computes (``solver.result()[key]``, rows of ``width`` RGBA
+    texels), read in the shader as a sampler2D uniform; the viewer refills it whenever
+    the solver's inputs move. ``value()`` is the flat table."""
+
+    def __init__(self, name, solver: Solver, key, width):
+        if not name.isidentifier():
+            raise ValueError(f"param name must be an identifier: {name!r}")
+        self.name, self.solver, self.key, self.width = name, solver, key, width
+        self.lo = self.hi = self.step = 0.0
+        self.label, self.unit, self.v, self.default = name, "", 0.0, 0.0
+
+    def value(self):
+        return self.solver.result()[self.key]
+
+    def set(self, v):
+        pass
+
+    def params(self):
+        return [self] + [q for e in self.solver.inputs.values() for q in e.params()]
+
+    def to_json(self):
+        return {**super().to_json(), "texture": {"solver": self.solver.id, "key": self.key, "width": self.width}}
 
 
 _PY_FUNCS = {

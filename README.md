@@ -35,19 +35,28 @@ python -m implicit.anatomy.landmarks assets/bones/vivaplus-50F
 The fitted lumbar endplate planes agree with VIVA+'s own endplate shells to
 0.7–2.4° and 0.3 mm (normal offset).
 
-## Spinopelvic alignment
+## Spine alignment
 
-Four sliders in the viewer's Scene tab set the sagittal alignment of a subject:
-pelvic incidence (PI), pelvic tilt (PT), lumbar lordosis L1-S1 (LL) and thoracic
-kyphosis T4-T12 (TK); sacral slope follows as SS = PI - PT. They start at the
-subject's own values (VIVA+ 50F: PI 58.7, PT 17.2, SS 41.5, LL 51.9, TK 30.3
-deg), where nothing moves. Changing them turns the pelvis about the hip axis (PT),
-the sacrum about the sacroiliac joints (PI) and the discs L1-S1 (LL) and T4-T12
-(TK), each in proportion to its own angle; the targets are met exactly. A tube
-along the spine curve (through the vertebral body centres) follows. Blocks:
-**Spinopelvic alignment** (sliders in, one alignment wire out), **Align** (one per
-segment: pelvis, sacrum, L5 ... T1) and **Spine curve**. Model and definitions:
-`implicit/anatomy/alignment.py`.
+Sliders in the viewer's Scene tab reshape the average spine (VIVA+ 50F):
+
+| Plane | Slider | Meaning |
+|---|---|---|
+| sagittal | PI, PT | pelvic incidence, pelvic tilt (SS = PI - PT) |
+| sagittal | LL, TK | lumbar lordosis L1-S1, thoracic kyphosis T4-T12 |
+| coronal | MT, TL | Cobb angles of the main thoracic (T5-T8-T12) and thoracolumbar/lumbar (T12-L1-L4) curves, + convex right |
+| coronal | AR | apical axial rotation per degree of Cobb (toward the convexity) |
+| coronal | PO, CB | pelvic obliquity (+ right side up), coronal balance (T1 right of S1, mm) |
+
+They start at the subject's own values (VIVA+ 50F: PI 58.7, PT 17.2, SS 41.5,
+LL 51.9, TK 30.3, MT 0, TL -0.3 deg, CB 0 mm), where nothing moves. The end
+vertebrae and apex of each curve are settings of the **Spine alignment** block.
+Every bone moves rigidly: the pelvis about the hip axis (PT) and with the femurs
+about the antero-posterior axis (PO), the sacrum about the sacroiliac joints (PI),
+and each disc acts as a hinge (LL, TK, MT, TL; balance on the lumbosacral discs
+below the curves). Soft structures follow a 3-D thin-plate spline through control
+points on every bone (**TPS warp** block); the spine curve through the vertebral
+body centres is the first. Blocks: Spine alignment, Align (one per bone), Spine
+curve, TPS warp. Model and definitions: `implicit/anatomy/alignment.py`.
 
 ```bash
 python -m implicit.anatomy.alignment assets/bones/vivaplus-50F     # print the measured parameters
@@ -55,6 +64,7 @@ python -m implicit.anatomy.alignment assets/bones/vivaplus-50F     # print the m
 
 The femoral head centres (sphere fits) and sacroiliac joint centres it needs are
 found by `python -m implicit.anatomy.landmarks` and stored in `landmarks.json`.
+The patient scene (lumbar only) has the sagittal sliders and pelvic obliquity.
 
 ## Patient anatomy: implicit bones
 

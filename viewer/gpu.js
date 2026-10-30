@@ -165,14 +165,15 @@ void main() {
       const end = glsl.indexOf("\n}", m.index) + 2;
       units.set(+m[1], { start: m.index, end, body: glsl.slice(m.index + m[0].length, end - 2) });
     }
-    // Box test in world space, or in the body's own frame for a moved body (sagInv).
-    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\((?:p|sagInv\(p, vec4\(([^)]*)\)\)), vec3\(([^)]*)\), vec3\(([^)]*)\)\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
+    // Box test in world space, or in the body's own frame for a moved body (rigInv:
+    // the columns of its rotation and its translation, 12 uniforms).
+    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\((?:p|rigInv\(p, ((?:vec3\([^)]*\)(?:, )?){4})\)), vec3\(([^)]*)\), vec3\(([^)]*)\)\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
     const mapLines = glsl.slice(mapAt).split("\n");
     for (const [i, line] of mapLines.entries()) {
       const m = line.match(lineRe);
       if (!m || !units.has(+m[5])) continue;
       const box = (s, inf) => (s ? s.split(",").map(Number) : [inf, inf, inf]);
-      const move = m[2] ? m[2].split(",").map((s) => s.trim()) : null;
+      const move = m[2] ? m[2].replace(/vec3\(|\)/g, "").split(",").map((s) => s.trim()) : null;
       if (move && !move.every((u) => floatUniforms.has(u))) continue;
       Object.assign(units.get(+m[5]), { line: i, vis: m[1], move, lo: box(m[3], -1e30), hi: box(m[4], 1e30) });
     }
@@ -198,7 +199,7 @@ void main() {
       if (ks.length < 2) continue;
       const skel = key.slice(key.indexOf("|") + 1);
       const inst = ks.map((k) => units.get(k)), row0 = rows.length, moved = !!inst[0].move;
-      const base = moved ? 3 : 2;  // first column of the literals (2: the motion's uniforms)
+      const base = moved ? 5 : 2;  // first column of the literals (2-4: the motion's 12 uniforms)
       // Columns of per-instance values; slots equal in all instances stay inline,
       // identical columns are stored once.
       const cols = new Map(), expr = [];
@@ -226,13 +227,15 @@ void main() {
       const fetches = [...used].sort((x, y) => x - y)
         .map((c) => `    vec4 t${c} = texelFetch(u_inst, ivec2(${c}, row), 0);`);
       funcs.push(`vec2 grp${g}(vec3 p, int row) {  // ${inst.length} bodies\n${fetches.join("\n")}\n${body}\n}`);
-      const at = moved ? "sagInv(p, vec4(spGet(int(mi.x)), spGet(int(mi.y)), spGet(int(mi.z)), spGet(int(mi.w))))" : "p";
+      const sp = (t) => `spGet(int(${t}))`, v3 = (a, b, c) => `vec3(${sp(a)}, ${sp(b)}, ${sp(c)})`;
+      const at = moved ? `rigInv(p, ${v3("m0.x", "m0.y", "m0.z")}, ${v3("m0.w", "m1.x", "m1.y")}, `
+        + `${v3("m1.z", "m1.w", "m2.x")}, ${v3("m2.y", "m2.z", "m2.w")})` : "p";
       // One visibility switch for the whole group (usual) is tested once, outside the loop.
       const oneVis = inst.every((u) => u.vis === inst[0].vis);
       const visTest = oneVis ? "" : "spGet(int(lo.w)) > 0.5 && ";
       loops.push(`    ${oneVis ? `if (${inst[0].vis} > 0.5) ` : ""}for (int row = ${row0}; row < ${row0 + inst.length}; row++) {
         vec4 lo = texelFetch(u_inst, ivec2(0, row), 0), hi = texelFetch(u_inst, ivec2(1, row), 0);${moved ? `
-        vec4 mi = texelFetch(u_inst, ivec2(2, row), 0);` : ""}
+        vec4 m0 = texelFetch(u_inst, ivec2(2, row), 0), m1 = texelFetch(u_inst, ivec2(3, row), 0), m2 = texelFetch(u_inst, ivec2(4, row), 0);` : ""}
         if (${visTest}sdAABB(${at}, lo.xyz, hi.xyz) < r.x) { d = grp${g}(p, row); if (d.x < r.x) r = d; }
     }`);
       ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${row0 + i}); }`); where[k] = [g, row0 + i]; });
@@ -290,6 +293,27 @@ float spGet(int k) {
     const v = new Float32Array(Math.ceil(built.sp.length / 4) * 4);
     built.sp.forEach((name, i) => { v[i] = value(name); });
     gl.uniform4fv(built.uniforms.u_SP, v);
+  }
+
+  // Computed tables (Solvers.tables) as RGBA32F textures from unit 6 on; a texture is
+  // refilled only when its table changes (the solver caches its result).
+  const tableTex = new Map();
+  function bindTables(gl, U, tabs) {
+    let unit = 6;
+    for (const [u, { data, width }] of Object.entries(tabs)) {
+      if (!U[u]) continue;
+      let e = tableTex.get(u);
+      if (!e || e.gl !== gl) tableTex.set(u, (e = { gl, tex: gl.createTexture(), data: null }));
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, e.tex);
+      if (e.data !== data) {
+        const rows = data.length / (4 * width);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, rows, 0, gl.RGBA, gl.FLOAT, new Float32Array(data));
+        for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+        e.data = data;
+      }
+      gl.uniform1i(U[u], unit++);
+    }
   }
 
   // The ray-marching program for a scene's GLSL (implicit.scene.Scene.glsl).
@@ -354,5 +378,5 @@ float spGet(int k) {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   }
 
-  return { VERT, FRAG_HEAD, FRAG_TAIL, program, sceneProgram, instanced, instancedProgram, bindInstances, dataTexture, atlasTexture, info, fullscreenTriangle };
+  return { VERT, FRAG_HEAD, FRAG_TAIL, program, sceneProgram, instanced, instancedProgram, bindInstances, bindTables, dataTexture, atlasTexture, info, fullscreenTriangle };
 })();
