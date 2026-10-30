@@ -46,6 +46,20 @@ python -m implicit.export examples/anatomy.py --body L3 --set smooth_L3=1.0 --vo
 `python -m implicit.anatomy.landmarks assets/bones/s0751` fits vertebral frames
 and endplate planes from the implicit bones (`landmarks.json`; L5 is not yet reliable).
 
+## Block graphs
+
+A model can also be a JSON graph of blocks (bone, smooth, booleans, transforms,
+offsets, outputs) joined by typed wires; it is the format of the upcoming block
+canvas. Literal values in a graph are live sliders named `<node>_<input>`.
+
+```bash
+python -m implicit.graph check examples/lumbar.json
+python -m implicit.serve examples/lumbar.json
+python -m implicit.export examples/lumbar.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
+```
+
+Format and block list: `implicit/graph.py` (`python -m implicit.graph blocks`).
+
 ## Quick start
 
 ```bash
