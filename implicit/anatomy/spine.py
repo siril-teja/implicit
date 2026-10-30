@@ -137,7 +137,13 @@ def build_scene(bone_dir, name=None, include=("spine", "pelvis", "reference", "m
 
 
 KNOB_LABELS = {"PI": "Pelvic incidence (PI)", "PT": "Pelvic tilt (PT)",
-               "LL": "Lumbar lordosis L1-S1 (LL)", "TK": "Thoracic kyphosis T4-T12 (TK)"}
+               "LL": "Lumbar lordosis L1-S1 (LL)", "TK": "Thoracic kyphosis T4-T12 (TK)",
+               "MT": "Main thoracic Cobb T5-T12 (MT, + convex right)",
+               "TL": "Thoracolumbar/lumbar Cobb T12-L4 (TL, + convex right)",
+               "AR": "Apical rotation per degree of Cobb (AR)", "PO": "Pelvic obliquity (PO, + right up)",
+               "CB": "Coronal balance: T1 right of S1 (CB)"}
+KNOB_UNITS = {"AR": "", "CB": "mm"}
+KNOB_STEPS = {"AR": 0.05, "CB": 1.0}
 
 
 def anatomy_graph(bone_dir, relative_to=None, name=None):
@@ -146,10 +152,11 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     Per vertebra: bone -> smooth -> pose -> align -> output, with the vertebra's
     landmarks feeding the pose (so it moves in its own frame) and a hidden marker
     output. Other bones: bone -> smooth -> align -> output (hip bones move with the
-    pelvis, the sacrum as itself; femurs and the spinal cord stay). One Spinopelvic
-    alignment block, driven by four Number sliders (PI, PT, LL, TK) set to the
-    subject's own values, feeds the Align blocks; it is left out when the subject has
-    no pelvic landmarks. One shared Number keeps bone volume when smoothing.
+    pelvis, femurs as the legs, the sacrum as itself; the spinal cord stays). One
+    Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
+    CB) set to the subject's own values, feeds the Align blocks and the TPS warp of
+    the spine curve; it is left out when the subject has no pelvic landmarks. One
+    shared Number keeps bone volume when smoothing.
     File paths are written relative to ``relative_to`` (the graph file's folder).
     """
     from .alignment import KNOBS, chain
@@ -171,22 +178,27 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     segments = {}
     if spine:
         segments = {lv: lv for lv in spine["levels"]}
-        segments.update(sacrum="sacrum", hip_left="pelvis", hip_right="pelvis")
+        segments.update(sacrum="sacrum", hip_left="pelvis", hip_right="pelvis", femur_left="legs",
+                        femur_right="legs")
         knobs = {}
+        start = {"PO": 0.0, **({"AR": 0.3} if spine["curves"] else {})}
         for i, (k, (lo, hi)) in enumerate(KNOBS.items()):
-            if k not in spine["base"]:
-                knobs[k] = 0.0  # no such region in this subject: has no effect
+            if (k not in spine["base"] and k not in start) or (k == "CB" and not spine["curves"]):
+                knobs[k] = spine["base"].get(k, 0.0)  # no such region in this subject: has no effect
                 continue
-            nodes[f"spp_{k}"] = {"block": "number", "title": k, "pos": [240 * (i + 1), -110],
-                                 "in": {"value": round(spine["base"][k], 1), "min": lo, "max": hi, "step": 0.5,
-                                        "unit": "deg", "label": KNOB_LABELS[k]}}
+            nodes[f"spp_{k}"] = {"block": "number", "title": k, "pos": [240 * (i % 5), -340 + 115 * (i // 5)],
+                                 "in": {"value": round(spine["base"].get(k, start.get(k, 0.0)), 1), "min": lo,
+                                        "max": hi, "step": KNOB_STEPS.get(k, 0.5), "unit": KNOB_UNITS.get(k, "deg"),
+                                        "label": KNOB_LABELS[k]}}
             knobs[k] = f"@spp_{k}"
-        nodes["spp"] = {"block": "spinopelvic", "title": "Spinopelvic alignment", "pos": [1200, -110],
+        nodes["spp"] = {"block": "spinopelvic", "title": "Spine alignment", "pos": [1200, -340],
                         "in": {"bone": "@sacrum", **knobs}}
-        nodes["spine_curve"] = {"block": "spine_curve", "title": "Spine curve", "pos": [1440, -110],
+        nodes["spine_curve"] = {"block": "spine_curve", "title": "Spine curve", "pos": [1440, -340],
                                 "in": {"alignment": "@spp", "radius": 1.5}}
-        nodes["spine_curve_out"] = {"block": "output", "title": "Spine curve", "pos": [1680, -110],
-                                    "in": {"body": "@spine_curve", "name": "Spine curve",
+        nodes["spine_curve_tps"] = {"block": "tps_warp", "title": "Spine curve warp", "pos": [1680, -340],
+                                    "in": {"body": "@spine_curve", "alignment": "@spp"}}
+        nodes["spine_curve_out"] = {"block": "output", "title": "Spine curve", "pos": [1920, -340],
+                                    "in": {"body": "@spine_curve_tps", "name": "Spine curve",
                                            "color": hexc(COLORS["curve"]), "group": "Spine curve", "visible": True}}
     ys = {"vertebra": 0, "other": 0}
     for bname, (_, meta) in loaded.items():

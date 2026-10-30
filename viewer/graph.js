@@ -315,7 +315,8 @@ const Graph = (() => {
     }
     if (name === "spinopelvic") return { alignment: spinopelvic(id, x, library) };
     if (name === "align") return align(id, x, params);
-    if (name === "spine_curve") return { body: spineCurve(id, x, params) };
+    if (name === "spine_curve") return { body: spineCurve(id, x) };
+    if (name === "tps_warp") return { body: tpsWarp(id, x, params) };
     // Template variant: choice inputs, then optional parts present (1) or absent (0).
     const key = [...blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`),
       ...Object.entries(blk.optional || {}).flatMap(([inp, parts]) => parts.map((pt) => `${inp}.${pt}=${x[inp] && x[inp][pt] ? 1 : 0}`))]
@@ -338,87 +339,88 @@ const Graph = (() => {
   // ------------------------------------------------------------ spinopelvic alignment
   // As implicit/graph.py: the chain model runs on the CPU (solvers.js) and each Align
   // block reads its segment's motion (cos a, sin a, t_y, t_z) as computed uniforms.
+  const KNOB_NAMES = ["PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB"];
   function spinopelvic(id, x, library) {
     const b = library && library.bones[x.bone.lib];
     if (!b || !b.spine) throw new Error("no spine and pelvis landmarks for this subject");
     const inputs = {}, knobs = {};
-    for (const k of ["PI", "PT", "LL", "TK"]) {
+    for (const k of KNOB_NAMES) {
       const s = x[k];
       if (!s || !s.param || s.param.computed) throw new Error(`${k}: needs a value or a Number block`);
       inputs[k] = s.param.name;
       knobs[s.param.name] = s.param;
     }
-    return { solver: { id, kind: "spinopelvic", data: b.spine, inputs }, knobs, motions: {}, samples: null };
+    const curves = {};
+    for (const k of ["MT", "TL"]) {  // curves whose vertebrae the subject lacks are left out
+      const c = ["upper", "apex", "lower"].map((part) => x[`${k}_${part}`]);
+      if (c.every((lv) => b.spine.levels.includes(lv))) curves[k] = c;
+    }
+    const solver = { id, kind: "spinopelvic", data: { ...b.spine, curves }, inputs };
+    Solvers.run(solver, (n) => knobs[n].value);  // reports a bad curve (end/apex order) here
+    return { solver, knobs, motions: {}, samples: null, table: null };
   }
+
+  const sampled = (a) => a.samples
+    || (a.samples = Solvers.samples(a.solver, (n) => { const p = a.knobs[n]; return [p.min, p.value, p.max]; }));
+  const computedParam = (s, name, key, index, value, vals, params) => {
+    const p = { name, uniform: `u_${name}`, value, default: value, min: Math.min(...vals), max: Math.max(...vals),
+      step: 0, label: name, unit: "", node: s.id, port: key, computed: { solver: s.id, key, index }, solver: s };
+    params.push(p);
+    return p;
+  };
+  const rigNp = (m, q) => [0, 1, 2].map((i) => m[i] * q[0] + m[3 + i] * q[1] + m[6 + i] * q[2] + m[9 + i]);
 
   function align(id, x, params) {
     const a = x.alignment, seg = x.segment, s = a.solver;
     const res = Solvers.run(s, (n) => a.knobs[n].value);
-    if (!(seg in res)) throw new Error(`segment "${seg}" is not in this alignment (${Object.keys(res).join(", ")})`);
-    if (!a.samples) a.samples = Solvers.samples(s, (n) => { const p = a.knobs[n]; return [p.min, p.value, p.max]; });
+    if (!(seg in res) || seg === "tps") throw new Error(`segment "${seg}" is not in this alignment`);
     if (!a.motions[seg]) {
-      a.motions[seg] = ["c", "s", "ty", "tz"].map((k, i) => {
-        const name = `${s.id}_${seg}_${k}`, vals = a.samples.map((r) => r[seg][i]);
-        const p = { name, uniform: `u_${name}`, value: res[seg][i], default: res[seg][i], min: Math.min(...vals),
-          max: Math.max(...vals), step: 0, label: name, unit: "", node: s.id, port: seg,
-          computed: { solver: s.id, key: seg, index: i }, solver: s };
-        params.push(p);
+      a.motions[seg] = res[seg].map((v, i) => {
+        const p = computedParam(s, `${s.id}_${seg}_${i}`, seg, i, v, sampled(a).map((r) => r[seg][i]), params);
         return { g: p.uniform, iv: [p.min, p.max], param: p };
       });
     }
-    const m = a.motions[seg], [c, sn, ty, tz] = m.map((q) => q.g);
+    const m = a.motions[seg], g = m.map((q) => q.g);
     const bf = (iv) => {
       const bb = child(x.body, iv);
       if (!bb) return null;
-      const ms = iv.now ? [m.map((q) => iv(q)[0])] : a.samples.map((r) => r[seg]);
+      const ms = iv.now ? [m.map((q) => iv(q)[0])] : sampled(a).map((r) => r[seg]);
       const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-      for (const [mc, ms_, my, mz] of ms) for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) {
-        const q = [bb[i][0], bb[j][1], bb[k][2]];
-        const w = [q[0], mc * q[1] - ms_ * q[2] + my, ms_ * q[1] + mc * q[2] + mz];
-        w.forEach((v, n) => { lo[n] = Math.min(lo[n], v); hi[n] = Math.max(hi[n], v); });
+      for (const mm of ms) for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) {
+        rigNp(mm, [bb[i][0], bb[j][1], bb[k][2]]).forEach((v, n) => { lo[n] = Math.min(lo[n], v); hi[n] = Math.max(hi[n], v); });
       }
       return [lo, hi];
     };
-    const mv = `vec4(${c}, ${sn}, ${ty}, ${tz})`, box = child(x.body, rangeIv);
+    const mv = [0, 3, 6, 9].map((i) => `vec3(${g[i]}, ${g[i + 1]}, ${g[i + 2]})`).join(", ");
+    const box = child(x.body, rangeIv);
     const out = {
       body: { node: id, inputs: { body: x.body }, bf, local: box ? { m: mv, box } : null,  // local box: culling (scene.py)
-        tmpl: { ops: [["var", "vec3", `sagInv($p, ${mv})`], ["sub", "body", "$0"]], out: "$1" } },
+        tmpl: { ops: [["var", "vec3", `rigInv($p, ${mv})`], ["sub", "body", "$0"]], out: "$1" } },
       vertebra: null,
     };
     const v = x.vertebra;
     if (v) {
-      // One sagPoint/sagDir call per vector (components .x/.y/.z, collapsed downstream).
+      // One rigPoint/rigDir call per vector (components .x/.y/.z, collapsed downstream).
       const vecG = (vec) => {
-        const g = vec.c.map((q) => q.g.replace(/^\((.*)\)$/, "$1")), m0 = g[0].match(/^(.*)\.x$/);
-        return m0 && g[1] === `${m0[1]}.y` && g[2] === `${m0[1]}.z` ? m0[1] : `vec3(${g.join(", ")})`;
+        const gg = vec.c.map((q) => q.g.replace(/^\((.*)\)$/, "$1")), m0 = gg[0].match(/^(.*)\.x$/);
+        return m0 && gg[1] === `${m0[1]}.y` && gg[2] === `${m0[1]}.z` ? m0[1] : `vec3(${gg.join(", ")})`;
       };
-      const sag = (vec, move) => {
-        const call = `${move ? "sagPoint" : "sagDir"}(${vecG(vec)}, ${mv})`;
-        return { c: ["x", "y", "z"].map((a) => ({ g: `${call}.${a}`, iv: null, ev: null })) };
+      const rig = (vec, move) => {
+        const call = `${move ? "rigPoint" : "rigDir"}(${vecG(vec)}, ${mv})`;
+        return { c: ["x", "y", "z"].map((c) => ({ g: `${call}.${c}`, iv: null, ev: null })) };
       };
-      const plane = (pl) => (pl ? { point: sag(pl.point, true), normal: sag(pl.normal, false) } : null);
+      const plane = (pl) => (pl ? { point: rig(pl.point, true), normal: rig(pl.normal, false) } : null);
       const f = v.frame;
-      out.vertebra = { frame: { origin: sag(f.origin, true), x: sag(f.x, false), y: sag(f.y, false), z: sag(f.z, false) },
+      out.vertebra = { frame: { origin: rig(f.origin, true), x: rig(f.x, false), y: rig(f.y, false), z: rig(f.z, false) },
         sup: plane(v.sup), inf: plane(v.inf) };
     }
     return out;
   }
 
-  function spineCurve(id, x, params) {
-    const a = x.alignment, s = a.solver;
-    const res = Solvers.run(s, (n) => a.knobs[n].value);
-    if (!a.samples) a.samples = Solvers.samples(s, (n) => { const p = a.knobs[n]; return [p.min, p.value, p.max]; });
-    if (!a.curve) {
-      a.curve = res.curve.map((v, i) => {
-        const name = `${s.id}_curve_${i}`, vals = a.samples.map((r) => r.curve[i]);
-        const p = { name, uniform: `u_${name}`, value: v, default: v, min: Math.min(...vals), max: Math.max(...vals),
-          step: 0, label: name, unit: "", node: s.id, port: "curve", computed: { solver: s.id, key: "curve", index: i }, solver: s };
-        params.push(p);
-        return p.uniform;
-      });
-    }
-    const u = a.curve, pts = [];
-    for (let i = 0; i < u.length; i += 3) pts.push(`vec3(${u[i]}, ${u[i + 1]}, ${u[i + 2]})`);
+  // The subject's spine curve, unmoved (a TPS warp carries it with the alignment).
+  function spineCurve(id, x) {
+    const P = x.alignment.solver.data.curve, pts = [];
+    for (let i = 0; i < P.length; i += 3) pts.push(`vec3(${[P[i], P[i + 1], P[i + 2]].map(glslFloat).join(", ")})`);
     // As Tube in sdf.py: chunks of segments skipped when their box is farther than the
     // nearest segment so far (exact).
     const ops = [], CHUNK = 8;
@@ -436,12 +438,42 @@ const Graph = (() => {
     const bf = (iv) => {
       const r = upper(x.radius, iv);
       if (r === null) return null;
-      const cs = iv.now ? [u.map((n) => iv({ param: params.find((p) => p.uniform === n) })[0])] : a.samples.map((q) => q.curve);
       const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-      for (const c of cs) c.forEach((v, i) => { lo[i % 3] = Math.min(lo[i % 3], v - r); hi[i % 3] = Math.max(hi[i % 3], v + r); });
+      P.forEach((v, i) => { lo[i % 3] = Math.min(lo[i % 3], v - r); hi[i % 3] = Math.max(hi[i % 3], v + r); });
       return [lo, hi];
     };
     return { node: id, inputs: { radius: x.radius }, bf, tmpl: { ops, out: `$${ops.length - 1}` } };
+  }
+
+  // As TpsWarp in sdf.py: the body at the inverse warp of the solver's table (a texture).
+  const TPS_LIP = 0.8;
+  function tpsWarp(id, x, params) {
+    const a = x.alignment, s = a.solver;
+    if (!a.table) {
+      a.table = { name: `${s.id}_tps`, uniform: `u_${s.id}_tps`, value: 0, default: 0, min: 0, max: 0, step: 0,
+        label: `${s.id}_tps`, unit: "", node: s.id, port: "tps", texture: { solver: s.id, key: "tps", width: 3 }, solver: s };
+      params.push(a.table);
+    }
+    const u = a.table.uniform, n = s.data.tps_points.length;
+    const disp = (results) => {
+      let mx = 0;
+      for (const r of results) for (const q of s.data.tps_points) {
+        const y = rigNp(r[q.segment], q.point);
+        mx = Math.max(mx, Math.hypot(y[0] - q.point[0], y[1] - q.point[1], y[2] - q.point[2]));
+      }
+      return mx;
+    };
+    const bf = (iv) => {
+      const bb = child(x.body, iv);
+      if (!bb) return null;
+      const res = iv.now ? [Solvers.run(s, (nm) => { const p = a.knobs[nm]; return iv({ param: p })[0]; })] : sampled(a);
+      return grow(bb, disp(res) + 2.0);
+    };
+    const ops = [0, 1, 2].map((c) => ["var", "vec4", `texelFetch(${u}, ivec2(${c}, 0), 0)`]);
+    ops.push(["var", "vec3", "vec3(dot($0.xyz, $p) + $0.w, dot($1.xyz, $p) + $1.w, dot($2.xyz, $p) + $2.w)"],
+      ["raw", `    for (int i = 1; i <= ${n}; i++) $3 += texelFetch(${u}, ivec2(1, i), 0).xyz * length($p - texelFetch(${u}, ivec2(0, i), 0).xyz);`],
+      ["sub", "body", "$3"], ["var", "float", `${glslFloat(TPS_LIP)} * $5`]);
+    return { node: id, inputs: { body: x.body }, bf, tmpl: { ops, out: "$6" } };
   }
 
   // A value output (vector, plane, frame, vertebra) from its component expressions; a part
@@ -506,7 +538,7 @@ const Graph = (() => {
     const subst = (s) => collapseVec(s, body.inputs).replace(/\$\{([^}]+)\}|\$(p|\d+)/g, (_, inp, tok) =>
       inp ? scalarGlsl(body.inputs, inp) : tok === "p" ? p : res[+tok]);
     for (const op of body.tmpl.ops) {
-      if (op[0] === "var") res.push(ctx.var(op[1], subst(op[2])));
+      if (op[0] === "raw") { ctx.lines.push(subst(op[1])); res.push(null); } else if (op[0] === "var") res.push(ctx.var(op[1], subst(op[2])));
       else res.push(ctx.sub(body.inputs[op[1]], subst(op[2])));
     }
     return subst(body.tmpl.out);
@@ -546,12 +578,12 @@ const Graph = (() => {
     // Computed uniforms need their solver's inputs (sliders, not in the shader).
     const solvers = {};
     for (const p of ev.params) {
-      if (!p.computed || !used.has(p.uniform)) continue;
+      if (!(p.computed || p.texture) || !used.has(p.uniform)) continue;
       solvers[p.solver.id] = { kind: p.solver.kind, data: p.solver.data, inputs: p.solver.inputs };
       for (const n of Object.values(p.solver.inputs)) used.add(`u_${n}`);
     }
     const params = ev.params.filter((p) => used.has(p.uniform));
-    lines.push(...params.map((p) => `uniform float ${p.uniform};`));
+    lines.push(...params.map((p) => `uniform ${p.texture ? "highp sampler2D" : "float"} ${p.uniform};`));
     lines.push(...groups.map((_, i) => `uniform float u_grp${i};`));
     lines.push(manifest.glsl_lib);
     lines.push(`const vec3 BODY_COLORS[${n}] = vec3[${n}](${cols.join(", ")});`);
@@ -562,7 +594,7 @@ const Graph = (() => {
       let cond = `(u_grp${b.group} > 0.5)`;
       const bb = b.bounds, loc = b.body.local;
       const v3 = (a) => `vec3(${a.map(glslFloat).join(", ")})`;
-      if (loc) cond += ` && sdAABB(sagInv(p, ${loc.m}), ${v3(loc.box[0])}, ${v3(loc.box[1])}) < r.x`;  // moved body: own box
+      if (loc) cond += ` && sdAABB(rigInv(p, ${loc.m}), ${v3(loc.box[0])}, ${v3(loc.box[1])}) < r.x`;  // moved body: own box
       else if (bb) cond += ` && sdAABB(p, ${v3(bb[0])}, ${v3(bb[1])}) < r.x`;
       lines.push(`    if (${cond}) { d = unit${k}(p); if (d.x < r.x) r = d; }`);
     });
@@ -570,9 +602,9 @@ const Graph = (() => {
     const glsl = lines.join("\n");
     return {
       name: graph.name || "graph", glsl, bounds,
-      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed }) =>
+      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed, texture }) =>
         ({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number: !!number,
-          ...(computed ? { computed } : {}) })),
+          ...(computed ? { computed } : {}), ...(texture ? { texture } : {}) })),
       solvers,
       groups: groupInfo, bodies: bodies.map((b) => ({ name: b.name, group: b.group, node: b.node })),
       attribution: library ? library.attribution : "",

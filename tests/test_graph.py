@@ -274,29 +274,38 @@ class TestAnatomyGraph(unittest.TestCase):
         for v in lv:
             self.assertEqual(g["nodes"][f"{v}_pose"]["in"]["vertebra"], f"@{v}_lm.vertebra")
 
-    def test_spinopelvic_knobs_move_bones_rigidly(self):
-        """The PI/PT/LL/TK sliders start at the subject's values (no motion); moved, each
-        aligned bone is its unmoved self carried by the solved sagittal motion."""
+    def test_alignment_knobs_move_bones_rigidly(self):
+        """The alignment sliders start at the subject's values (no motion); moved, each
+        aligned bone is its unmoved self carried by the solved rigid motion, and the
+        TPS-warped spine curve passes through the moved vertebral body centres."""
         import json as _json
         from implicit.anatomy import alignment as al
         g = read_graph(ROOT / "examples" / "average_spine.json")
         doc = _json.loads((ROOT / "assets" / "bones" / "vivaplus-50F" / "landmarks.json").read_text())
         base = al.chain(doc["landmarks"], doc["pelvis"])["base"]
-        for k in ("PI", "PT", "LL", "TK"):
+        for k in ("PI", "PT", "LL", "TK", "MT", "TL", "CB"):
             self.assertEqual(g["nodes"][f"spp_{k}"]["in"]["value"], base[k])
         sc = load_graph(ROOT / "examples" / "average_spine.json")
         rng = np.random.default_rng(3)
-        bodies = {n: sc.body(n) for n in ("L3", "T8", "sacrum", "hip_left")}
+        bodies = {n: sc.body(n) for n in ("L3", "T8", "sacrum", "hip_left", "femur_right")}
         pts = {n: rng.uniform(*b.bounds, (300, 3)) for n, b in bodies.items()}
         before = {n: b.sdf.eval(pts[n]) for n, b in bodies.items()}
-        sc.set_params({"spp_PI": 66, "spp_PT": 25, "spp_LL": 62, "spp_TK": 45})
-        seg = {"L3": "L3", "T8": "T8", "sacrum": "sacrum", "hip_left": "pelvis"}
+        curve = sc.body("Spine curve").sdf
+        sc.set_params({"spp_PI": 66, "spp_PT": 25, "spp_LL": 62, "spp_TK": 45, "spp_MT": 35, "spp_TL": -25,
+                       "spp_PO": 5, "spp_CB": 10})
+        seg = {"L3": "L3", "T8": "T8", "sacrum": "sacrum", "hip_left": "pelvis", "femur_right": "legs"}
+        motion = lambda s: np.array([q.value() for i in range(12) for q in sc.params() if q.name == f"spp_{s}_{i}"])
         for n, b in bodies.items():
-            c, s, ty, tz = (p.value() for p in sc.params() if p.name.startswith(f"spp_{seg[n]}_"))
-            q = pts[n]
-            moved = np.column_stack([q[:, 0], c * q[:, 1] - s * q[:, 2] + ty, s * q[:, 1] + c * q[:, 2] + tz])
-            self.assertGreater(abs(s), 1e-3, n)
-            np.testing.assert_allclose(b.sdf.eval(moved), before[n], atol=1e-6, err_msg=n)
+            m = motion(seg[n])
+            R, tr = m[:9].reshape(3, 3).T, m[9:]
+            self.assertGreater(np.abs(R - np.eye(3)).max(), 1e-3, n)
+            np.testing.assert_allclose(b.sdf.eval(pts[n] @ R.T + tr), before[n], atol=1e-6, err_msg=n)
+        off = sc.frame_offset
+        for lv in ("L3", "T8", "T2"):
+            m = motion(lv)
+            c = np.array(doc["landmarks"][lv]["body_center"]) - off
+            moved = m[:9].reshape(3, 3).T @ c + m[9:]
+            self.assertLess(curve.eval(moved[None])[0], -1.0, lv)  # inside the 1.5 mm tube (x 0.8)
 
     def test_bone_smoothing_equals_direct_construction(self):
         from implicit.anatomy.convert import load_bone

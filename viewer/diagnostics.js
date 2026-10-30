@@ -23,7 +23,8 @@ function setUniforms(gl, U, scene, atlas, values = {}) {
   if (U.u_atlas) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D, atlas); gl.uniform1i(U.u_atlas, 0); }
   if (U.u_data) gl.uniform1i(U.u_data, 2);
   if (U.u_atlasSize && scene.atlas) gl.uniform3fv(U.u_atlasSize, scene.atlas.size);
-  for (const p of scene.params) if (U[p.uniform]) gl.uniform1f(U[p.uniform], p.name in values ? values[p.name] : p.value);
+  for (const p of scene.params) if (U[p.uniform] && !p.texture) gl.uniform1f(U[p.uniform], p.name in values ? values[p.name] : p.value);
+  GPU.bindTables(gl, U, Solvers.tables(scene, values));
   scene.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], 1); });
   if (U.u_bmin) { gl.uniform3fv(U.u_bmin, scene.bounds[0]); gl.uniform3fv(U.u_bmax, scene.bounds[1]); }
 }
