@@ -116,11 +116,13 @@ analytic shapes.
 1. **Body isolation** (for the local frame only): remove points behind the
    posterior wall (marching anteriorly from the spinal-cord centroid), then
    morphologically open (radius 4.5–5.5 mm) and keep the largest component.
-2. **Frame.** The axial axis w is the body's smallest principal axis (or the
-   spine tangent if they differ by > 30°). a is anterior and l = a × w.
+2. **Frame.** The axial axis w starts as the spine tangent through the
+   neighbouring vertebrae (one-sided at the ends). a is anterior and l = a × w.
 3. **Endplates.** From the body centre, march ±w along central columns to the
    SDF zero crossing (sub-voxel), then fit w = αu + βv + γ by iteratively
-   trimmed least squares. S1 is found from L5 and C2 from C3.
+   trimmed least squares. w is then replaced by the bisector of the two
+   endplate normals and steps 2–3 repeat until w settles (< 0.5°); the origin
+   is midway between the endplate centres. S1 is found from L5 and C2 from C3.
 
 ## 3. Architecture
 
@@ -150,5 +152,5 @@ Every node implements the same math twice, in GLSL (display) and in NumPy
 | 3 | Speed: narrow-band / octree sampling and GPU sampling for export, plus GLSL↔NumPy parity tests | Export is ~20 s per body at 0.5 mm today |
 | 4 | Field-driven FE: CT HU → density → modulus as a field, DOE batch runs driving Marc headless | Parameter studies without manual rebuilds |
 | **5, done** | Block graphs: JSON graph format and block registry, browser block canvas with live rebuild, selection between canvas and 3D view | `implicit/graph.py`, `viewer/editor.js` |
-| 6 | Anatomy blocks: vertebral frames and endplates, pose, osteotomies, cages, discs (annulus, nucleus, fibres), ligaments | Each a block that wires into the others |
+| **6, in progress** | Anatomy blocks: vertebral frames and endplates (done), pose, discs (annulus, nucleus, fibres), cages, osteotomies, ligaments | Each a block that wires into the others |
 | 7 | Lightweight FE solver in the browser (open source) | After the model is complete |

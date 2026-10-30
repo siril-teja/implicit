@@ -164,5 +164,20 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [x0 + 480, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
+    # Landmarks (frame and endplates) of every vertebra and the sacrum; markers hidden at first.
+    lm_file = bone_dir / "landmarks.json"
+    levels = set(json.loads(lm_file.read_text())["landmarks"]) if lm_file.exists() else set()
+    row = 0
+    for bname, (_, meta) in loaded.items():
+        if ("S1" if bname == "sacrum" else bname) not in levels:
+            continue
+        y = row * 130
+        nodes[f"{bname}_lm"] = {"block": "landmarks", "title": f"{bname} landmarks", "pos": [1520, y],
+                                "in": {"bone": f"@{bname}"}}
+        nodes[f"{bname}_lm_out"] = {"block": "output", "title": f"{bname} landmarks", "pos": [1760, y],
+                                    "in": {"body": f"@{bname}_lm.markers", "name": f"{bname} landmarks",
+                                           "color": hexc(COLORS["marker"]), "group": "Landmarks",
+                                           "visible": False}}
+        row += 1
     return {"format": "implicit.graph", "version": 1,
             "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}

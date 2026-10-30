@@ -25,7 +25,7 @@ class TestBlocks(unittest.TestCase):
         m = json.loads(json.dumps(manifest()))
         names = [b["name"] for b in m["blocks"]]
         self.assertEqual(len(names), len(set(names)))
-        types = {"body", "bone", "scalar", "vec3", "number", "text", "color", "bool", "choice", "path"}
+        types = {"body", "bone", "scalar", "vec3", "plane", "frame", "number", "text", "color", "bool", "choice", "path"}
         for b in m["blocks"]:
             self.assertTrue(b["doc"], b["name"])
             for p in b["inputs"] + b["outputs"]:
@@ -169,6 +169,51 @@ class TestBrowserBuild(unittest.TestCase):
             self.assertIs(sc.packed_atlas, lib.atlas)
             self.assertEqual({k: lib.ctx.grid(k).atlas_offset for k in j["bones"]}, offsets)  # not repacked
             self.assertEqual(sc.to_json("x.atlas.gz")["atlas"]["size"], j["atlas"]["size"])
+
+
+class TestLandmarkBlocks(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.sc = load_graph(ROOT / "tests" / "graphs" / "landmarks.json")
+
+    def test_planes_and_frames_follow_landmarks_json(self):
+        lm = json.loads((BONES / "landmarks.json").read_text())["landmarks"]
+        off = np.array(self.sc.frame_offset)
+        s1 = lm["S1"]["sup"]
+        # The S1 plane marker is a disc centred on the S1 endplate point.
+        disc = self.sc.body("S1 plane")
+        c = np.array(s1["point"]) - off
+        n = np.array(s1["normal"])
+        self.assertLess(disc.sdf.eval(c[None])[0], 0)
+        self.assertGreater(disc.sdf.eval((c + 2 * n)[None])[0], 0)
+        lo, hi = disc.bounds_now()
+        np.testing.assert_allclose((np.array(lo) + np.array(hi)) / 2, c, atol=1e-6)
+
+    def test_rotation_about_the_vertebral_frame(self):
+        """Rotating L5 about its own frame origin keeps that origin fixed."""
+        lm = json.loads((BONES / "landmarks.json").read_text())["landmarks"]["L5"]
+        o = np.array(lm["body_center"]) - np.array(self.sc.frame_offset)
+        body = self.sc.body("L5 rotated")
+        off_axis = o + np.array([0.0, 0.0, 8.0])
+        d0 = body.sdf.eval(np.array([o, off_axis]))
+        self.sc.set_params({"rot_angle": 10})
+        d1 = body.sdf.eval(np.array([o, off_axis]))
+        self.sc.set_params({"rot_angle": -6})
+        self.assertAlmostEqual(d1[0], d0[0], places=9)  # the origin does not move
+        self.assertNotAlmostEqual(d1[1], d0[1], places=3)  # points off the axis do
+
+    def test_sacrum_has_no_inferior_endplate(self):
+        g = read_graph(ROOT / "tests" / "graphs" / "landmarks.json")
+        g["nodes"]["bad"] = {"block": "show_plane", "in": {"plane": "@lms.inferior"}}
+        g["nodes"]["o9"] = {"block": "output", "in": {"body": "@bad", "name": "bad"}}
+        with self.assertRaisesRegex(GraphError, "no Inferior endplate"):
+            build_graph(g, ROOT / "tests" / "graphs")
+
+    def test_no_landmarks_for_a_hip(self):
+        g = graph({"h": {"block": "bone", "in": {"file": "../../assets/bones/s0751/hip_left.npz"}},
+                   "l": {"block": "landmarks", "in": {"bone": "@h"}}, "o": out("@l.markers")})
+        with self.assertRaisesRegex(GraphError, "no landmarks"):
+            build_graph(g, ROOT / "tests" / "graphs")
 
 
 class TestAnatomyGraph(unittest.TestCase):

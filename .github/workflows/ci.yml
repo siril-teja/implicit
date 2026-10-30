@@ -61,7 +61,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Build viewer (plus a test graph that uses every block)
         shell: bash
-        run: python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json --out site
+        run: python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json tests/graphs/landmarks.json --out site
       - name: Install Playwright Chromium
         shell: bash
         run: |

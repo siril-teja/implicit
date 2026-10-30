@@ -6,8 +6,10 @@
 "use strict";
 
 const Graph = (() => {
-  const ACCEPTS = { body: ["body", "bone"], bone: ["bone"], scalar: ["scalar"], vec3: ["vec3"] };
-  const WIRED = new Set(["body", "bone", "scalar", "vec3"]);
+  const ACCEPTS = { body: ["body", "bone"], bone: ["bone"], scalar: ["scalar"], vec3: ["vec3"],
+    plane: ["plane"], frame: ["frame"] };
+  const WIRED = new Set(["body", "bone", "scalar", "vec3", "plane", "frame"]);
+  const WIRE_ONLY = new Set(["body", "bone", "plane", "frame"]);
 
   const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -78,6 +80,19 @@ const Graph = (() => {
     rotate(x, iv) {
       const b = child(x.body, iv), c = vecIv(x.center, iv);
       if (!b || !c) return null;
+      if (iv.now) {  // exact: the box corners rotated by the current angle
+        const [i, j] = { x: [1, 2], y: [2, 0], z: [0, 1] }[x.axis];
+        const a = iv(x.angle)[0] * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+        for (const u of [0, 1]) for (const v of [0, 1]) for (const w of [0, 1]) {
+          const q = [b[u][0], b[v][1], b[w][2]].map((val, k) => val - c[0][k]);
+          const r = q.slice();
+          r[i] = ca * q[i] - sa * q[j];
+          r[j] = sa * q[i] + ca * q[j];
+          r.forEach((val, k) => { lo[k] = Math.min(lo[k], val + c[0][k]); hi[k] = Math.max(hi[k], val + c[0][k]); });
+        }
+        return [lo, hi];
+      }
       let r = 0;
       for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) {
         const corner = [b[i][0], b[j][1], b[k][2]];
@@ -90,13 +105,24 @@ const Graph = (() => {
     shell: (x, iv) => child(x.body, iv),
     plane_cut: (x, iv) => child(x.body, iv),
     smooth: (x, iv) => child(x.bone, iv),
+    show_plane(x, iv) {
+      const p = vecIv(x.plane.point, iv), r = upper(x.radius, iv), t = upper(x.thickness, iv);
+      return p && r !== null && t !== null ? [p[0].map((v) => v - r - t), p[1].map((v) => v + r + t)] : null;
+    },
+    show_frame(x, iv) {
+      const o = vecIv(x.frame.origin, iv), l = upper(x.length, iv), r = upper(x.radius, iv);
+      return o && l !== null && r !== null ? [o[0].map((v) => v - l - r), o[1].map((v) => v + l + r)] : null;
+    },
   };
   const rangeIv = (s) => s.iv || null;
-  const nowIv = (values) => (s) => {
+  const nowIv = (values) => Object.assign((s) => {
     if (!s.param) return s.iv || null;
     const v = s.param.name in values ? values[s.param.name] : s.param.value;
     return [v, v];
-  };
+  }, { now: true });
+  // Constant values (from the library): scalars and vectors that are not parameters.
+  const cs = (v) => ({ g: glslFloat(v), iv: [v, v] });
+  const cvec = (a) => ({ c: a.map(cs) });
 
   // ------------------------------------------------------------ evaluation
   function topoOrder(nodes, errors) {
@@ -169,7 +195,10 @@ const Graph = (() => {
             if (!(ACCEPTS[port.type] || []).includes(sp.type)) throw new Error(`${port.name}: cannot connect ${sp.type} to ${port.type}`);
             if (!values[w.node]) throw new Error(`${port.name}: input from ${w.node} is not available`);
             x[port.name] = values[w.node][sp.name];
-          } else if (port.type === "body" || port.type === "bone") {
+            if (x[port.name] === undefined || x[port.name] === null) {
+              throw new Error(`${port.name}: ${w.node} has no ${sp.label || sp.name} (e.g. the sacrum has no inferior endplate)`);
+            }
+          } else if (WIRE_ONLY.has(port.type)) {
             throw new Error(`connect a ${port.type} to "${port.label || port.name}"`);
           } else if (v === null || v === undefined) {
             throw new Error(`${port.name}: missing value`);
@@ -202,6 +231,20 @@ const Graph = (() => {
       if (!b) throw new Error(`bone file not in this scene's library: ${x.file}`);
       return { bone: { node: id, tmpl: b.bone, inputs: {}, bf: () => b.bounds, lib: x.file } };
     }
+    if (name === "landmarks") {
+      const b = library && library.bones[x.bone.lib];
+      const lm = b && b.landmarks;
+      if (!lm) throw new Error("no landmarks for this bone (vertebrae and sacrum only)");
+      const plane = (e) => (e ? { point: cvec(e.point), normal: cvec(e.normal) } : null);
+      return {
+        frame: { origin: cvec(lm.origin), x: cvec(lm.axes[0]), y: cvec(lm.axes[1]), z: cvec(lm.axes[2]) },
+        superior: plane(lm.sup), inferior: plane(lm.inf),
+        markers: { node: `${id}.markers`, tmpl: lm.markers, inputs: {}, bf: () => lm.markers_bounds },
+      };
+    }
+    if (name === "plane") return { plane: { point: x.point, normal: x.normal } };
+    if (name === "plane_parts") return { point: x.plane.point, normal: x.plane.normal };
+    if (name === "frame_parts") return { origin: x.frame.origin, x: x.frame.x, y: x.frame.y, z: x.frame.z };
     if (name === "smooth") {
       const b = library.bones[x.bone.lib];
       if (!b) throw new Error("smooth needs a bone directly");
@@ -230,12 +273,15 @@ const Graph = (() => {
     return ctx;
   }
 
+  // "${radius}", "${center.x}", "${plane.normal.y}": walk the input value to a scalar.
   function scalarGlsl(inputs, name) {
-    const [port, comp] = name.split(".");
-    const v = inputs[port];
-    if (!v) throw new Error(`template input ${name} missing`);
-    const s = comp ? v.c["xyz".indexOf(comp)] : v;
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.g) ? s.g : `(${s.g})`;
+    let v = inputs;
+    for (const part of name.split(".")) {
+      if (v && v.c && "xyz".includes(part) && part.length === 1) v = v.c["xyz".indexOf(part)];
+      else v = v ? v[part] : undefined;
+    }
+    if (!v || typeof v.g !== "string") throw new Error(`template input ${name} missing`);
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.g) ? v.g : `(${v.g})`;
   }
 
   function expand(ctx, body, p) {
@@ -345,7 +391,7 @@ const Graph = (() => {
     return { scene, errors: ev.errors, params: ev.params, upstream: upstream(graph) };
   }
 
-  return { build, parseWire, ACCEPTS, WIRED, glslFloat, colorOf,
+  return { build, parseWire, ACCEPTS, WIRED, WIRE_ONLY, glslFloat, colorOf,
     viewBounds: (scene, values) => viewBounds(scene._bodies || [], values) };
 })();
 

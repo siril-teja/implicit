@@ -45,14 +45,16 @@ bodies at chosen values (closed, manifold STL):
 python -m implicit.export examples/anatomy.json --body L3 --set L3_smooth_sigma=1.0 --voxel 0.4 --out out/
 ```
 
-`--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Optional:
+`--select` takes `lumbar`, `all` or a list (`L3,L4,sacrum`). Then
 `python -m implicit.anatomy.landmarks assets/bones/s0751` fits vertebral frames
-and endplate planes from the implicit bones (`landmarks.json`; L5 is not yet reliable).
+and endplate planes from the implicit bones (`landmarks.json`), which the
+**Landmarks** block outputs as a frame and two planes per vertebra.
 
 ## Block canvas and block graphs
 
-A block graph is a JSON file of blocks (bone, smooth, booleans, transforms,
-offsets, cuts, outputs) joined by typed wires (body, bone, scalar, vector). In
+A block graph is a JSON file of blocks (bone, landmarks, smooth, booleans,
+transforms, offsets, cuts, outputs) joined by typed wires (body, bone, scalar,
+vector, plane, frame). In
 the viewer, the panel at the bottom holds the **block canvas** and the settings:
 
 - Double-click the canvas (or **+ Block**) to add a block; drag from an output

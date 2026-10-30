@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python -m unittest discover -s tests
 tmp=$(mktemp -d)
-python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json --out "$tmp/site" > /dev/null
+python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json tests/graphs/landmarks.json --out "$tmp/site" > /dev/null
 if node -e "require('playwright')" 2> /dev/null; then
   node ci/gpu_check.mjs "$tmp/site" swiftshader SwiftShader | tail -1   # GPU check (SwiftShader)
 else

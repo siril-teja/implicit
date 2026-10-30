@@ -8,7 +8,8 @@
 const Editor = (() => {
   const NS = "http://www.w3.org/2000/svg";
   const W = 184, HEAD = 26, ROW = 20;
-  const TYPE_COLORS = { body: "#e2b36d", bone: "#e8d6a0", scalar: "#7fd18b", vec3: "#6aa9ff" };
+  const TYPE_COLORS = { body: "#e2b36d", bone: "#e8d6a0", scalar: "#7fd18b", vec3: "#6aa9ff",
+    plane: "#ff8a65", frame: "#f06bd0" };
 
   function svgEl(tag, attrs = {}, parent = null) {
     const e = document.createElementNS(NS, tag);
@@ -84,8 +85,8 @@ const Editor = (() => {
           + (hlNodes.has(id) ? " hl" : ""), transform: `translate(${x},${y})` }, nodesG);
         g.dataset.id = id;
         svgEl("rect", { class: "box", width: W, height: hgt, rx: 6 }, g);
-        svgEl("rect", { class: "head " + (blk ? "cat-" + blk.category.toLowerCase() : ""), width: W, height: HEAD, rx: 6 }, g);
-        svgEl("rect", { class: "head-fill " + (blk ? "cat-" + blk.category.toLowerCase() : ""), y: HEAD - 6, width: W, height: 6 }, g);
+        svgEl("rect", { class: "head " + (blk ? "cat-" + blk.category.toLowerCase().replace(/[^a-z0-9]+/g, "-") : ""), width: W, height: HEAD, rx: 6 }, g);
+        svgEl("rect", { class: "head-fill " + (blk ? "cat-" + blk.category.toLowerCase().replace(/[^a-z0-9]+/g, "-") : ""), y: HEAD - 6, width: W, height: 6 }, g);
         const t = svgEl("text", { class: "title", x: 9, y: 17 }, g);
         t.textContent = (n.title || id).slice(0, 24);
         const bt = svgEl("text", { class: "blk", x: W - 8, y: 17, "text-anchor": "end" }, g);
@@ -481,12 +482,12 @@ const Editor = (() => {
         const src = nodes()[wire.node];
         return h("div", { className: "param" }, label, h("div", { className: "row" },
           h("span", { className: "wired", textContent: "← " + (src ? src.title || wire.node : wire.node) }),
-          Graph.WIRED.has(p.type) && p.type !== "body" && p.type !== "bone"
+          Graph.WIRED.has(p.type) && !Graph.WIRE_ONLY.has(p.type)
             ? h("button", { className: "reset", textContent: "✕", title: "Disconnect", onclick: () => {
               snapshot(); n.in[p.name] = defaultOf(blk, p.name); opts.onChange("structure");
             } }) : null));
       }
-      if (p.type === "body" || p.type === "bone") {
+      if (Graph.WIRE_ONLY.has(p.type)) {
         return h("div", { className: "param" }, label, h("div", { className: "hint", textContent: `Not connected: wire a ${p.type} here.` }));
       }
       const setStatic = (val) => { snapshot(); n.in[p.name] = val; opts.onChange("structure"); };

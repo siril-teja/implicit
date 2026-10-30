@@ -1,0 +1,18 @@
+{"format": "implicit.graph", "version": 1, "name": "Landmark blocks (test)", "nodes": {
+  "L5": {"block": "bone", "pos": [0, 0], "in": {"file": "../../assets/bones/s0751/L5.npz"}},
+  "S": {"block": "bone", "pos": [0, 160], "in": {"file": "../../assets/bones/s0751/sacrum.npz"}},
+  "lm5": {"block": "landmarks", "pos": [240, 0], "in": {"bone": "@L5"}},
+  "lms": {"block": "landmarks", "pos": [240, 160], "in": {"bone": "@S"}},
+  "fp": {"block": "frame_parts", "pos": [480, 0], "in": {"frame": "@lm5.frame"}},
+  "rot": {"block": "rotate", "pos": [720, 0], "in": {"body": "@L5", "axis": "x", "angle": -6, "center": "@fp.origin"}},
+  "pp": {"block": "plane_parts", "pos": [480, 160], "in": {"plane": "@lms.superior"}},
+  "pl": {"block": "plane", "pos": [720, 160], "in": {"point": "@pp.point", "normal": "@pp.normal"}},
+  "cut": {"block": "plane_cut", "pos": [720, 300], "in": {"body": "@S", "point": "@pp.point", "normal": [0, 0, -1]}},
+  "sp": {"block": "show_plane", "pos": [960, 160], "in": {"plane": "@pl", "radius": 18}},
+  "sf": {"block": "show_frame", "pos": [960, 0], "in": {"frame": "@lms.frame", "length": 15}},
+  "o1": {"block": "output", "pos": [1200, 0], "in": {"body": "@rot", "name": "L5 rotated"}},
+  "o2": {"block": "output", "pos": [1200, 100], "in": {"body": "@sp", "name": "S1 plane", "color": "#ff8a65"}},
+  "o3": {"block": "output", "pos": [1200, 200], "in": {"body": "@sf", "name": "S1 frame", "color": "#f06bd0"}},
+  "o4": {"block": "output", "pos": [1200, 300], "in": {"body": "@lm5.markers", "name": "L5 markers", "color": "#33d980"}},
+  "o5": {"block": "output", "pos": [1200, 400], "in": {"body": "@cut", "name": "sacrum cut"}}
+}}
