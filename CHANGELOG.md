@@ -23,6 +23,9 @@ publishes that section as the GitHub release notes. Versions follow
 - Block graphs from `anatomy_graph` list vertebrae cranial to caudal.
 
 ### Fixed
+- Viewer: the render shader evaluates the scene from one place (march, normal
+  and ambient-occlusion samples in one loop), so drivers that inline every call
+  (D3D) compile large scenes in reasonable time. Same image.
 - Landmarks: without a spinal-cord file, the posterior wall is found from the
   vertebral foramen, so pedicles no longer stay in the isolated body. L5 uses a
   larger opening radius (7 mm) to drop its transverse processes; this corrects
