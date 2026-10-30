@@ -23,9 +23,12 @@ publishes that section as the GitHub release notes. Versions follow
 
 ### Changed
 - The TPS warp block is now Field warp and uses the chosen field.
-- Every third-party dependency is pinned to one exact version: numpy 2.5.3,
-  scipy 1.18.1, nibabel 5.4.2, Python 3.13.17 and Node 22.22.0 in CI, and the
-  GitHub Actions by release (rule in CONTRIBUTING.md).
+- Every third-party dependency is pinned to one exact version, transitive ones
+  included: numpy 2.5.3, scipy 1.18.1, nibabel 5.4.2, packaging 26.3, pip 24.0;
+  Playwright 1.50.1 with a lockfile (`ci/package-lock.json`, `npm ci`); Python
+  3.13.17 and Node 22.22.0, the GitHub Actions by release and the runner images
+  (ubuntu-26.04, ubuntu-24.04, windows-2025, macos-15) in CI (rule in
+  CONTRIBUTING.md).
 
 ## [0.10.0] - 2026-10-31
 

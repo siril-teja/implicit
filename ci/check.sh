@@ -7,10 +7,10 @@ cd "$(dirname "$0")/.."
 python -m unittest discover -s tests
 tmp=$(mktemp -d)
 python -m implicit.build examples/*.json examples/*.py tests/graphs/all_blocks.json tests/graphs/landmarks.json tests/graphs/polyrigid.json --out "$tmp/site" > /dev/null
-if node -e "require('playwright')" 2> /dev/null; then
+if (cd ci && node -e "require('playwright')") 2> /dev/null; then
   node ci/gpu_check.mjs "$tmp/site" swiftshader SwiftShader | tail -1   # GPU check (SwiftShader)
 else
-  echo "skipping GPU check: install Playwright (npm install playwright) to run it locally"
+  echo "skipping GPU check: install Playwright (cd ci && npm ci) to run it locally"
 fi
 rm -rf "$tmp"
 if [[ "${1:-}" != "--no-release" ]]; then
