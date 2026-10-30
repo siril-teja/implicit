@@ -105,6 +105,9 @@ const Graph = (() => {
     shell: (x, iv) => child(x.body, iv),
     plane_cut: (x, iv) => child(x.body, iv),
     smooth: (x, iv) => child(x.bone, iv),
+    disc(x, iv) {  // between the two bodies
+      return grow(unionB(child(x.upper.body, iv), child(x.lower.body, iv)), upper(x.bulge, iv));
+    },
     pose(x, iv) {
       const b = child(x.body, iv), o = vecIv(x.vertebra.frame.origin, iv), s = vecIv(x.shift, iv);
       if (!b || !o || !s) return null;
@@ -298,7 +301,9 @@ const Graph = (() => {
       const frame = { origin: cvec(lm.origin), x: cvec(lm.axes[0]), y: cvec(lm.axes[1]), z: cvec(lm.axes[2]) };
       return {
         frame, superior: plane(lm.sup), inferior: plane(lm.inf),
-        vertebra: { frame, sup: plane(lm.sup), inf: plane(lm.inf) },
+        vertebra: { frame, sup: plane(lm.sup), inf: plane(lm.inf), body: x.bone,
+          shapes: Object.fromEntries(Object.entries(lm.shapes || {}).map(([k, sh]) =>
+            [k, Object.fromEntries(Object.entries(sh).map(([n, arr]) => [n, { c: arr.map(cs) }]))])) },
         markers: { node: `${id}.markers`, tmpl: lm.markers, inputs: {}, bf: () => lm.markers_bounds },
       };
     }
@@ -311,26 +316,27 @@ const Graph = (() => {
       if (!b) throw new Error("smooth needs a bone directly");
       return { body: { node: id, tmpl: b.smooth, inputs: x, bf: (iv) => BOUNDS.smooth(x, iv) } };
     }
-    const key = blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`).join(",");
+    // Template variant: choice inputs, then optional parts present (1) or absent (0).
+    const key = [...blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`),
+      ...Object.entries(blk.optional || {}).flatMap(([inp, parts]) => parts.map((pt) => `${inp}.${pt}=${x[inp] && x[inp][pt] ? 1 : 0}`))]
+      .join(",");
     const tmpls = blk.glsl && blk.glsl[key];
     if (!tmpls) throw new Error(`no GLSL for block ${name} (${key})`);
     const out = {};
-    for (const op of blk.outputs) {
-      const tmpl = tmpls[op.name];
-      if (op.type === "body") {
-        out[op.name] = { node: op.name === "body" ? id : `${id}:${op.name}`, tmpl, inputs: x,
-          bf: BOUNDS[name] ? (iv) => BOUNDS[name](x, iv, op.name) : null };
-      } else {
-        out[op.name] = valueFrom(tmpl, x, params);
-      }
+    for (const op of blk.outputs) {  // bodies first: values may contain them ({"$port": ...})
+      if (op.type !== "body") continue;
+      out[op.name] = { node: op.name === "body" ? id : `${id}:${op.name}`, tmpl: tmpls[op.name], inputs: x,
+        bf: BOUNDS[name] ? (iv) => BOUNDS[name](x, iv, op.name) : null };
     }
+    for (const op of blk.outputs) if (op.type !== "body") out[op.name] = valueFrom(tmpls[op.name], x, params, out);
     return out;
   }
 
   // A value output (vector, plane, frame, vertebra) from its component expressions; a part
   // whose inputs are missing (e.g. the sacrum's inferior endplate) becomes null.
-  function valueFrom(t, inputs, params) {
+  function valueFrom(t, inputs, params, own) {
     if (t === null || t === undefined) return null;
+    if (t.$port) return own[t.$port];
     const scalar = (s) => {
       const g = collapseVec(s, inputs).replace(/\$\{([^}]+)\}/g, (_, inp) => scalarGlsl(inputs, inp));
       return { g, iv: null, ev: evaluator(g, params) };
@@ -339,7 +345,7 @@ const Graph = (() => {
     if (Array.isArray(t)) return { c: t.map(scalar) };
     const out = {};
     for (const [k, v] of Object.entries(t)) {
-      try { out[k] = valueFrom(v, inputs, params); } catch (e) {
+      try { out[k] = valueFrom(v, inputs, params, own); } catch (e) {
         if (v && !Array.isArray(v) && typeof v === "object") out[k] = null; else throw e;
       }
     }
@@ -368,6 +374,7 @@ const Graph = (() => {
     let v = inputs;
     for (const part of name.split(".")) {
       if (v && v.c && "xyz".includes(part) && part.length === 1) v = v.c["xyz".indexOf(part)];
+      else if (v && v.c && /^\d+$/.test(part)) v = v.c[+part];
       else v = v ? v[part] : undefined;
     }
     if (!v || typeof v.g !== "string") throw new Error(`template input ${name} missing`);
@@ -390,7 +397,7 @@ const Graph = (() => {
       inp ? scalarGlsl(body.inputs, inp) : tok === "p" ? p : res[+tok]);
     for (const op of body.tmpl.ops) {
       if (op[0] === "var") res.push(ctx.var(op[1], subst(op[2])));
-      else res.push(ctx.sub(body.inputs[op[1]], subst(op[2])));
+      else res.push(ctx.sub(op[1].split(".").reduce((v, k) => (v ? v[k] : v), body.inputs), subst(op[2])));
     }
     return subst(body.tmpl.out);
   }

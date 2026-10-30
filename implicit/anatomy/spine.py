@@ -23,6 +23,7 @@ COLORS = {
     "C": (0.95, 0.86, 0.70), "T": (0.93, 0.83, 0.68), "L": (0.91, 0.80, 0.66),
     "sacrum": (0.88, 0.76, 0.62), "hip": (0.86, 0.78, 0.70), "femur": (0.84, 0.80, 0.74),
     "reference": (0.95, 0.85, 0.35), "marker": (0.2, 0.85, 0.5),
+    "annulus": (0.62, 0.78, 0.92), "nucleus": (0.93, 0.55, 0.52),
 }
 GROUP = {"C": "Cervical", "T": "Thoracic", "L": "Lumbar", "sacrum": "Sacrum", "hip": "Pelvis",
          "femur": "Femurs", "reference": "Spinal cord"}
@@ -173,23 +174,36 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         if has_lm:
             nodes[f"{bname}_lm"] = {"block": "landmarks", "title": f"{bname} landmarks",
                                     "pos": [x0 + 240, y + 115], "in": {"bone": f"@{bname}"}}
-        if has_lm and kind == "vertebra":
+        if has_lm:  # vertebrae and the sacrum: move in their own frame; discs follow
             nodes[f"{bname}_pose"] = {"block": "pose", "title": f"{bname} pose", "pos": [x0 + 480, y],
                                       "in": {"body": src, "vertebra": f"@{bname}_lm.vertebra"}}
             src = f"@{bname}_pose"
-        right = x0 + (720 if kind == "vertebra" else 480)
+        right = x0 + (720 if has_lm else 480)
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
         if has_lm:
-            markers = f"@{bname}_lm.markers"
-            if kind == "vertebra":  # markers that follow the pose
-                nodes[f"{bname}_show"] = {"block": "show_vertebra", "title": f"{bname} markers",
-                                          "pos": [x0 + 480, y + 125], "in": {"vertebra": f"@{bname}_pose.vertebra"}}
-                markers = f"@{bname}_show"
+            # markers that follow the pose
+            nodes[f"{bname}_show"] = {"block": "show_vertebra", "title": f"{bname} markers",
+                                      "pos": [x0 + 480, y + 125], "in": {"vertebra": f"@{bname}_pose.vertebra"}}
+            markers = f"@{bname}_show"
             nodes[f"{bname}_lm_out"] = {"block": "output", "title": f"{bname} landmarks", "pos": [right, y + 125],
                                         "in": {"body": markers, "name": f"{bname} landmarks",
                                                "color": hexc(COLORS["marker"]), "group": "Landmarks",
                                                "visible": False}}
+    # Discs between consecutive levels (L1-L2 ... L5-S1): annulus and nucleus.
+    order = [b for b in loaded if ("S1" if b == "sacrum" else b) in levels and f"{b}_pose" in nodes]
+    order.sort(key=lambda b: 99 if b == "sacrum" else int(b[1:]) + {"C": 0, "T": 10, "L": 30}[b[0]])
+    for i, (a, b) in enumerate(zip(order, order[1:])):
+        lvl = f"{a}-{'S1' if b == 'sacrum' else b}"
+        d = f"disc_{a}_{b}"
+        y = i * 240
+        nodes[d] = {"block": "disc", "title": f"{lvl} disc", "pos": [1900, y],
+                    "in": {"upper": f"@{a}_pose.vertebra", "lower": f"@{b}_pose.vertebra"}}
+        for j, (part, group, color) in enumerate((("annulus", "Annulus", COLORS["annulus"]),
+                                                   ("nucleus", "Nucleus", COLORS["nucleus"]))):
+            nodes[f"{d}_{part}"] = {"block": "output", "title": f"{lvl} {part}", "pos": [2140, y + 105 * j],
+                                    "in": {"body": f"@{d}.{part}", "name": f"{lvl} {part}",
+                                           "color": hexc(color), "group": group}}
     return {"format": "implicit.graph", "version": 1,
             "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}

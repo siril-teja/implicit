@@ -45,7 +45,7 @@ import numpy as np
 from .expr import BinOp, Const, Expr, Func, Param, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
 from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace,
-                  _rot_np,
+                  DiscField, Endplate, _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
@@ -99,14 +99,18 @@ class Block:
     inputs: list
     outputs: list
     build: object = field(repr=False, default=None)
+    optional: dict = field(default_factory=dict)  # {input: (part, ...)}: parts that may be absent
 
     def input(self, name):
         return next(p for p in self.inputs if p.name == name)
 
     def to_json(self):
-        return {"name": self.name, "title": self.title, "category": self.category, "doc": self.doc,
-                "inputs": [p.to_json() for p in self.inputs],
-                "outputs": [p.to_json() for p in self.outputs]}
+        d = {"name": self.name, "title": self.title, "category": self.category, "doc": self.doc,
+             "inputs": [p.to_json() for p in self.inputs],
+             "outputs": [p.to_json() for p in self.outputs]}
+        if self.optional:
+            d["optional"] = {k: list(v) for k, v in self.optional.items()}
+        return d
 
 
 BLOCKS: dict[str, Block] = {}
@@ -167,10 +171,17 @@ class FrameV:
 
 @dataclass
 class VertebraV:
-    """A vertebra's landmarks on one wire: frame and endplate planes (None if absent)."""
+    """A vertebra on one wire: frame, endplate planes and shapes (None if absent), and its body.
+
+    ``shapes`` = {"sup"|"inf": {"center": [2], "rim": [17], "poly": [15]}} in the vertebra
+    frame (see implicit.anatomy.landmarks.endplate_shape); ``body`` is the bone as shown
+    (smoothed, posed), which the disc is conformal to.
+    """
     frame: FrameV
     sup: PlaneV | None
     inf: PlaneV | None
+    body: object = None
+    shapes: dict | None = None
 
 
 def _const_vec(v):
@@ -467,7 +478,9 @@ def _landmarks(x, node):
         out[port] = PlaneV(_const_vec(lm[k][0]), _const_vec(lm[k][1])) if k in lm else None
     sdf, b = landmark_markers(lm)
     out["markers"] = Field(sdf, lambda now: b)
-    out["vertebra"] = VertebraV(out["frame"], out["superior"], out["inferior"])
+    shapes = {k: {n: [Const(float(c)) for c in v] for n, v in lm[f"{k}_shape"].items()}
+              for k in ("sup", "inf") if f"{k}_shape" in lm}
+    out["vertebra"] = VertebraV(out["frame"], out["superior"], out["inferior"], x["bone"], shapes)
     return out
 
 
@@ -630,7 +643,8 @@ def _pose(x, node):
             return None
         r = np.linalg.norm(far, axis=1).max() + np.linalg.norm(np.maximum(np.abs(siv[0]), np.abs(siv[1])))
         return oiv[0] - r, oiv[1] + r
-    return {"body": Field(sdf, bounds), "vertebra": VertebraV(pose.frame(), pose.plane(v.sup), pose.plane(v.inf))}
+    body = Field(sdf, bounds)
+    return {"body": body, "vertebra": VertebraV(pose.frame(), pose.plane(v.sup), pose.plane(v.inf), body, v.shapes)}
 
 
 @block("show_vertebra", "Show vertebra", "Anatomy",
@@ -654,6 +668,9 @@ def _show_vertebra(x, node):
     return {"body": Field(sdf, bounds)}
 
 
+BLOCKS["show_vertebra"].optional = {"vertebra": ("sup", "inf")}
+
+
 @block("vertebra_parts", "Vertebra parts", "Anatomy", [Port("vertebra", "vertebra", label="Vertebra")],
        [Port("frame", "frame", label="Frame"), Port("superior", "plane", label="Superior endplate"),
         Port("inferior", "plane", label="Inferior endplate")])
@@ -661,6 +678,45 @@ def _vertebra_parts(x, node):
     """Frame and endplate planes of a vertebra (e.g. after Pose)."""
     v = x["vertebra"]
     return {"frame": v.frame, "superior": v.sup, "inferior": v.inf}
+
+
+# ---------------------------------------------------------------- discs
+
+def _endplate(v: VertebraV, which):
+    sh = (v.shapes or {}).get(which)
+    if sh is None:
+        raise GraphError(f"this vertebra has no {'superior' if which == 'sup' else 'inferior'} endplate shape "
+                         "(re-run python -m implicit.anatomy.landmarks on its folder)")
+    f = v.frame
+    return Endplate(f.origin, f.x, f.y, f.z, sh["center"], sh["rim"], sh["poly"])
+
+
+@block("disc", "Disc", "Anatomy",
+       [Port("upper", "vertebra", label="Upper vertebra"), Port("lower", "vertebra", label="Lower vertebra"),
+        S("nucleus_area", 0.4, 0.1, 0.8, 0.01, "", "Nucleus (fraction of disc area)"),
+        S("nucleus_shift", 0, -10, 10, 0.5, "mm", "Nucleus shift (+ anterior)"),
+        S("bulge", 0, 0, 4, 0.1, "mm", "Annulus bulge")],
+       [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus"),
+        Port("disc", "body", label="Whole disc")])
+def _disc_block(x, node):
+    """Intervertebral disc filling the space between the upper vertebra's inferior endplate
+    and the lower vertebra's superior endplate, its side lofted from one endplate rim to the
+    other, conformal to both bones. The nucleus is the disc outline shrunk to the given
+    area fraction (and shifted); the annulus is the rest."""
+    up, lo = x["upper"], x["lower"]
+    if up.body is None or lo.body is None:
+        raise GraphError("the vertebrae need their bodies (from Landmarks or Pose)")
+    e_up, e_lo = _endplate(up, "inf"), _endplate(lo, "sup")
+    bulge = x["bulge"]
+    k = Func("sqrt", x["nucleus_area"])
+    disc = DiscField(e_up, e_lo, up.body.sdf, lo.body.sdf, 1.0, 0.0, bulge)
+    nucleus = DiscField(e_up, e_lo, up.body.sdf, lo.body.sdf, k, x["nucleus_shift"], 0.0)
+
+    def bounds(now):  # between the two bodies
+        bu, bl = _child(up.body, now), _child(lo.body, now)
+        return _grow(_union_b(bu, bl), _upper(bulge, now))
+    return {"annulus": Field(Difference(disc, nucleus), bounds), "nucleus": Field(nucleus, bounds),
+            "disc": Field(disc, bounds)}
 
 
 @block("output", "Output body", "Output",
@@ -749,6 +805,9 @@ class _Context:
         for k in ("sup", "inf"):
             if k in e:
                 out[k] = (np.array(e[k]["point"], float) - off, np.array(e[k]["normal"], float))
+            if f"{k}_shape" in e:  # in the frame (body centre, R): unaffected by the offset
+                sh = e[f"{k}_shape"]
+                out[f"{k}_shape"] = {"center": sh["center"], "rim": sh["rim"], "poly": sh["poly"]}
         return out
 
 
@@ -1006,6 +1065,9 @@ def _block_templates(blk: Block):
     combos = [{}]
     for p in choices:
         combos = [{**c, p.name: v} for c in combos for v in p.choices]
+    for inp, parts in blk.optional.items():  # one variant per present/absent part
+        for part in parts:
+            combos = [{**c, f"{inp}.{part}": v} for c in combos for v in (1, 0)]
     out = {}
     for combo in combos:
         holes, x = {}, {}
@@ -1015,43 +1077,67 @@ def _block_templates(blk: Block):
                 holes[id(h)] = p.name
                 x[p.name] = Field(h, None)
             elif p.type in ("plane", "frame", "vertebra", "vec3"):
-                x[p.name] = _value_hole(p.type, p.name)
+                x[p.name] = _value_hole(p.type, p.name, holes)
             elif p.type == "scalar":
                 x[p.name] = _ScalarHole(p.name)
             elif p.type == "choice":
                 x[p.name] = combo[p.name]
             else:
                 x[p.name] = p.default
+        for key, present in combo.items():
+            inp, _, part = key.partition(".")
+            if part and not present:
+                setattr(x[inp], part, None)
         node = Node("trace", blk, {}, blk.title)
         res = blk.build(x, node)
         ports = {}
+        body_ports = {id(res[op.name]): op.name for op in blk.outputs if op.type == "body"}
         for op in blk.outputs:
             v = res[op.name]
-            ports[op.name] = trace(v.sdf, holes) if op.type == "body" else _value_glsl(v)
+            ports[op.name] = trace(v.sdf, holes) if op.type == "body" else _value_glsl(v, body_ports)
         out[",".join(f"{k}={v}" for k, v in combo.items())] = ports
     return out
 
 
-def _value_hole(kind, name):
+SHAPE_SIZES = {"center": 2, "rim": 17, "poly": 15}
+
+
+def _value_hole(kind, name, holes):
     if kind == "vec3":
         return _vec_hole(name)
     if kind == "plane":
         return PlaneV(*(_vec_hole(f"{name}.{k}") for k in ("point", "normal")))
     if kind == "frame":
         return FrameV(*(_vec_hole(f"{name}.{k}") for k in ("origin", "x", "y", "z")))
-    return VertebraV(_value_hole("frame", f"{name}.frame"), _value_hole("plane", f"{name}.sup"),
-                     _value_hole("plane", f"{name}.inf"))
+    body = _Hole(f"{name}.body")
+    holes[id(body)] = f"{name}.body"
+    shapes = {ep: {n: [_ScalarHole(f"{name}.shapes.{ep}.{n}.{i}") for i in range(m)]
+                   for n, m in SHAPE_SIZES.items()} for ep in ("sup", "inf")}
+    return VertebraV(_value_hole("frame", f"{name}.frame", holes), _value_hole("plane", f"{name}.sup", holes),
+                     _value_hole("plane", f"{name}.inf", holes), Field(body, None), shapes)
 
 
-def _value_glsl(v):
-    """GLSL expressions of a value output's scalar components (nested like the value)."""
+def _value_glsl(v, body_ports):
+    """GLSL expressions of a value output's scalar components (nested like the value).
+
+    A body inside a value (a vertebra's body) is {"$port": name}: the block's own body
+    output of that name.
+    """
     if v is None:
         return None
+    if isinstance(v, Field):
+        if id(v) not in body_ports:
+            raise ValueError("a body inside a value output must be one of the block's body outputs")
+        return {"$port": body_ports[id(v)]}
     if isinstance(v, Vec3):
         return [c.glsl() for c in v.c]
     if isinstance(v, Expr):
         return v.glsl()
-    return {k: _value_glsl(getattr(v, k)) for k in v.__dataclass_fields__}
+    if isinstance(v, dict):
+        return {k: _value_glsl(w, body_ports) for k, w in v.items()}
+    if isinstance(v, list):
+        return [_value_glsl(w, body_ports) for w in v]
+    return {k: _value_glsl(getattr(v, k), body_ports) for k in v.__dataclass_fields__}
 
 
 def _vec_hole(name):
@@ -1111,7 +1197,8 @@ class Library:
                 bones[self.keys[path]]["landmarks"] = {
                     "origin": lm["origin"].tolist(), "axes": lm["axes"].tolist(),
                     **{k: {"point": lm[k][0].tolist(), "normal": lm[k][1].tolist()} for k in ("sup", "inf") if k in lm},
-                    "markers": trace(sdf), "markers_bounds": [blo.tolist(), bhi.tolist()]}
+                    "markers": trace(sdf), "markers_bounds": [blo.tolist(), bhi.tolist()],
+                    "shapes": {k: lm[f"{k}_shape"] for k in ("sup", "inf") if f"{k}_shape" in lm}}
         a = self.atlas
         atlas = None if a is None else {"size": [a.shape[2], a.shape[1], a.shape[0]], "url": atlas_url}
         return {"frame_offset": [float(x) for x in self.offset], "attribution": self.ctx.attribution,

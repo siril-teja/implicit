@@ -206,6 +206,7 @@ def vertebra_landmarks(f: Field, level, tangent, canal, iters=6):
     out = _endplates(f, level, body, c, frame_from_axis(w))
     out["R"] = frame_from_axis(w)
     out["body_center"] = 0.5 * (out["sup"]["point"] + out["inf"]["point"])
+    out["body_pts"] = body
     return out
 
 
@@ -238,6 +239,124 @@ def s1_landmarks(f_sacrum: Field, l5):
     a /= np.linalg.norm(a)
     R1 = np.stack([np.cross(a, n), a, n], axis=1)
     return {"level": "S1", "body_center": p - n * 10.0, "R": R1, "height": 0.0, "sup": sup}
+
+
+# ---------------------------------------------------------------- endplate shape (rim + surface)
+
+RIM_SLOPE = 35.0   # deg: steeper than this (after smoothing) is the vertebral wall, not the endplate
+RIM_SMOOTH = 1.0   # mm: height-map smoothing before the slope test (CT voxel steps)
+RIM_HARMONICS = 8  # Fourier harmonics of the rim outline
+POLY_DEG = 4       # endplate surface polynomial degree
+POLY_SCALE = 20.0  # mm: (u, v) are divided by this in the polynomial (conditioning)
+
+
+def _plane_axes(n, R):
+    """Orthonormal (ex, ey) in the plane with normal n, close to the frame's right/anterior axes."""
+    ey = R[:, 1] - (R[:, 1] @ n) * n
+    ey /= np.linalg.norm(ey)
+    return np.cross(ey, n) * (1 if np.cross(ey, n) @ R[:, 0] > 0 else -1), ey
+
+
+def height_map(f: Field, p, n, R, ext=40.0, h=0.5):
+    """Bone surface height along n over a grid in the endplate plane (NaN where no bone)."""
+    ex, ey = _plane_axes(n, R)
+    us = np.arange(-ext, ext + 1e-9, h)
+    U, V = np.meshgrid(us, us, indexing="ij")
+    ws = np.arange(15.0, -25.0, -0.25)
+    pts = p + U[..., None, None] * ex + V[..., None, None] * ey + ws[None, None, :, None] * n
+    vals = f(pts.reshape(-1, 3)).reshape(U.shape + ws.shape)
+    inside = vals < 0
+    hit = inside.any(-1) & (vals[..., 0] >= 0)
+    k = np.clip(np.argmax(inside, -1), 1, len(ws) - 1)
+    v0 = np.take_along_axis(vals, (k - 1)[..., None], -1)[..., 0]
+    v1 = np.take_along_axis(vals, k[..., None], -1)[..., 0]
+    H = ws[k - 1] - 0.25 * v0 / (v0 - v1 + 1e-12)
+    H[~hit] = np.nan
+    return U, V, H, (ex, ey)
+
+
+def _footprint(points, p, ex, ey, U, h, grow):
+    """Grid mask of points projected onto the plane (filled, grown by ``grow`` mm)."""
+    ndi = _ndi()
+    m = np.zeros(U.shape, bool)
+    q = points - p
+    i = np.round((q @ ex - U[0, 0]) / h).astype(int)
+    j = np.round((q @ ey - U[0, 0]) / h).astype(int)
+    ok = (i >= 0) & (j >= 0) & (i < U.shape[0]) & (j < U.shape[1])
+    m[i[ok], j[ok]] = True
+    m = ndi.binary_fill_holes(ndi.binary_closing(m, iterations=3))
+    return ndi.binary_dilation(m, iterations=max(1, int(round(grow / h))))
+
+
+def endplate_shape(f: Field, p, n, R, origin, guide_pts=None, guide_grow=2.0, h=0.5):
+    """Endplate region and rim from the bone surface, in the vertebra frame.
+
+    The endplate is where the (smoothed) surface seen along the endplate normal is
+    flatter than RIM_SLOPE and within 8 mm of the endplate plane, connected to its
+    centre; the rim is its outline, where the surface turns into the vertebral wall.
+    ``guide_pts`` (e.g. the isolated vertebral body) limits it to their footprint so
+    pedicles, transverse processes or the sacral ala at the same level stay out.
+
+    Returns the rim outline (centre and Fourier coefficients of the radius) and a
+    polynomial of the surface height w(u, v), both in the frame (origin, R), plus
+    the rim points (frame coordinates) and quality numbers.
+    """
+    ndi = _ndi()
+    U, V, H, (ex, ey) = height_map(f, p, n, R, h=h)
+    hit = np.isfinite(H)
+    hv = np.where(hit, H, 0.0)
+    wgt = ndi.gaussian_filter(hit.astype(float), RIM_SMOOTH / h)
+    sm = ndi.gaussian_filter(hv, RIM_SMOOTH / h) / np.maximum(wgt, 1e-6)
+    sm[~hit] = -30.0
+    gu, gv = np.gradient(sm, h)
+    ok = hit & (np.degrees(np.arctan(np.hypot(gu, gv))) < RIM_SLOPE) & (np.abs(np.nan_to_num(H, nan=99)) < 8)
+    if guide_pts is not None:
+        ok &= _footprint(guide_pts, p, ex, ey, U, h, guide_grow)
+    ok = ndi.binary_opening(ok, iterations=int(round(2.0 / h)))
+    lab, nl = ndi.label(ok)
+    if nl == 0:
+        raise RuntimeError("endplate region not found")
+    c = lab[U.shape[0] // 2, U.shape[1] // 2]
+    if c == 0:  # the centre fell outside: take the component nearest to it
+        d = np.where(lab > 0, np.hypot(U, V), np.inf)
+        c = lab[np.unravel_index(np.argmin(d), U.shape)]
+    mask = ndi.binary_fill_holes(lab == c)
+    # Surface and rim points to the vertebra frame.
+    world = lambda m: p + U[m][:, None] * ex + V[m][:, None] * ey + H[m][:, None] * n
+    inner = mask & hit
+    surf = (world(inner) - origin) @ R
+    rim_px = mask & ~ndi.binary_erosion(mask)
+    rim = (world(rim_px & hit) - origin) @ R
+    cu, cv = surf[:, 0].mean(), surf[:, 1].mean()
+    # Rim outline: outermost rim radius per angle bin, then a Fourier fit r(theta).
+    th = np.arctan2(rim[:, 1] - cv, rim[:, 0] - cu)
+    r = np.hypot(rim[:, 0] - cu, rim[:, 1] - cv)
+    bins = np.linspace(-np.pi, np.pi, 181)
+    idx = np.clip(np.digitize(th, bins) - 1, 0, 179)
+    rb = np.full(180, np.nan)
+    for b_ in range(180):
+        sel = r[idx == b_]
+        if len(sel):
+            rb[b_] = sel.max()
+    tb = 0.5 * (bins[:-1] + bins[1:])
+    good = np.isfinite(rb)
+    rb = np.interp(tb, tb[good], rb[good], period=2 * np.pi)
+    A = np.column_stack([np.ones_like(tb)] + [g(k * tb) for k in range(1, RIM_HARMONICS + 1) for g in (np.cos, np.sin)])
+    rc, *_ = np.linalg.lstsq(A, rb, rcond=None)
+    # Surface polynomial w(u, v) by trimmed least squares.
+    s = (surf[:, :2] - [cu, cv]) / POLY_SCALE
+    terms = [(i, j) for i in range(POLY_DEG + 1) for j in range(POLY_DEG + 1 - i)]
+    P = np.column_stack([s[:, 0] ** i * s[:, 1] ** j for i, j in terms])
+    keep = np.ones(len(s), bool)
+    for _ in range(3):
+        wc, *_ = np.linalg.lstsq(P[keep], surf[keep, 2], rcond=None)
+        res = surf[:, 2] - P @ wc
+        keep = np.abs(res) < 3 * np.std(res[keep]) + 0.2
+    return {"center": [float(cu), float(cv)], "rim": rc.tolist(), "poly": wc.tolist(),
+            "poly_terms": terms, "area_mm2": float(inner.sum() * h * h),
+            "rim_fit_rms": float(np.sqrt(np.mean((A @ rc - rb) ** 2))),
+            "surface_rms": float(np.sqrt(np.mean(res[keep] ** 2))),
+            "rim_points": rim[:, :2]}
 
 
 def detect(bone_dir, log=print):
@@ -276,7 +395,32 @@ def detect(bone_dir, log=print):
         marks["C2"]["inf"] = opposing_endplate(fields["C2"], marks["C3"], "sup", 1)
         marks["C2"]["inf_from"] = "C3"
         log(f"  C2: inferior endplate rms {marks['C2']['inf']['rms']:.2f} mm (from C3)")
-    out = {lv: _jsonable({k: v for k, v in e.items() if k != "footprint_uv"})
+    # Endplate shapes (rim outline and surface) for the disc blocks.
+    for lv, e in marks.items():
+        f = fields["sacrum" if lv == "S1" else lv]
+        for ep in ("sup", "inf"):
+            if ep not in e:
+                continue
+            if lv == "S1":  # no isolated body: stay within L5's lower rim (+5 mm)
+                l5 = marks.get("L5", {}).get("inf_shape")
+                guide = None
+                if l5 is not None:
+                    rp = l5["rim_points"]
+                    guide = marks["L5"]["body_center"] + np.column_stack([rp, np.zeros(len(rp))]) @ marks["L5"]["R"].T
+                grow = 5.0
+            else:
+                guide, grow = e.get("body_pts"), 2.0
+            try:
+                e[f"{ep}_shape"] = endplate_shape(f, e[ep]["point"], e[ep]["normal"], e["R"], e["body_center"],
+                                                  guide, grow)
+                sh = e[f"{ep}_shape"]
+                log(f"  {lv} {ep} endplate: {sh['area_mm2'] / 100:.1f} cm2, rim fit {sh['rim_fit_rms']:.2f} mm, "
+                    f"surface fit {sh['surface_rms']:.2f} mm")
+            except RuntimeError as err:
+                log(f"  {lv} {ep} endplate shape: {err}")
+    drop = {"footprint_uv", "body_pts"}
+    out = {lv: _jsonable({k: ({kk: vv for kk, vv in v.items() if kk != "rim_points"} if k.endswith("_shape") else v)
+                          for k, v in e.items() if k not in drop})
            for lv, e in marks.items()}
     (bone_dir / "landmarks.json").write_text(json.dumps(
         {"frame": "scanner RAS, mm", "landmarks": out}, indent=1))

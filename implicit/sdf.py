@@ -750,6 +750,120 @@ class FramePose(SDF):
         return self.child.eval(o + loc @ E)
 
 
+RIM_N = 17      # rim outline coefficients (8 harmonics)
+POLY_TERMS = [(i, j) for i in range(5) for j in range(5 - i)]  # endplate surface, degree 4
+POLY_SCALE = 20.0
+HEIGHT_LIP = 1.3  # bound on |grad| of the height terms (endplate slopes < 35 deg -> 1.22)
+
+
+def _rim_np(th, c):
+    r = np.full_like(th, c[0])
+    dr = np.zeros_like(th)
+    for k in range(1, 9):
+        ca, sa = np.cos(k * th), np.sin(k * th)
+        r += c[2 * k - 1] * ca + c[2 * k] * sa
+        dr += k * (c[2 * k] * ca - c[2 * k - 1] * sa)
+    return r, dr
+
+
+def _rim_dist_np(q, c0, k, c):
+    d = q - c0 + np.array([1e-6, 0.0])
+    rho = np.hypot(d[:, 0], d[:, 1])
+    r, dr = _rim_np(np.arctan2(d[:, 1], d[:, 0]), c)
+    r, dr = k * r, k * dr
+    g = dr / np.maximum(rho, 0.5 * r)
+    return (rho - r) / np.sqrt(1 + g * g)
+
+
+def _endplate_w_np(s, c):
+    s = np.clip(s, -2.5, 2.5)
+    return sum(ci * s[:, 0] ** i * s[:, 1] ** j for ci, (i, j) in zip(c, POLY_TERMS))
+
+
+class Endplate:
+    """An endplate's shape in its vertebra's frame: rim outline and surface polynomial.
+
+    ``center`` (2), ``rim`` (17) and ``poly`` (15) are expressions (constants from the
+    landmarks, or template placeholders); the frame comes from the vertebra (may be posed).
+    """
+
+    def __init__(self, origin, ex, ey, ez, center, rim, poly):
+        self.o, self.ex, self.ey, self.ez = vec3(origin), vec3(ex), vec3(ey), vec3(ez)
+        self.center = [wrap(c) for c in center]
+        self.rim, self.poly = [wrap(c) for c in rim], [wrap(c) for c in poly]
+
+    def exprs(self):
+        return [self.o, self.ex, self.ey, self.ez] + self.center + self.rim + self.poly
+
+    def local_glsl(self, ctx, p):
+        o = self.o.glsl()
+        q = ctx.var("vec3", f"{p} - {o}")
+        return ctx.var("vec3", f"vec3(dot({q}, {self.ex.glsl()}), dot({q}, {self.ey.glsl()}), dot({q}, {self.ez.glsl()}))")
+
+    def arrays_glsl(self):
+        c = f"vec2({self.center[0].glsl()}, {self.center[1].glsl()})"
+        return (c, "float[17](" + ", ".join(e.glsl() for e in self.rim) + ")",
+                "float[15](" + ", ".join(e.glsl() for e in self.poly) + ")")
+
+    def local_np(self, p):
+        E = np.stack([_vv(self.ex), _vv(self.ey), _vv(self.ez)])
+        return (p - _vv(self.o)) @ E.T
+
+    def values(self):
+        return (np.array([_v(c) for c in self.center]), np.array([_v(c) for c in self.rim]),
+                np.array([_v(c) for c in self.poly]))
+
+
+class DiscField(SDF):
+    """An intervertebral disc (or its nucleus) between two endplates, conformal to the bones.
+
+    In each vertebra's frame the disc lies below the upper vertebra's inferior endplate
+    surface and above the lower one's superior surface (each polynomial reaching ``reach``
+    mm into the bone), inside an outline lofted from the lower rim to the upper rim, and
+    outside both bone fields, so where it meets bone its surface is the bone surface.
+    ``scale`` shrinks the outline about the rim centre (the nucleus), shifted ``shift`` mm
+    anteriorly (along the frames' y axes); ``bulge`` (mm) pushes the outline out mid-height.
+    """
+
+    def __init__(self, upper: Endplate, lower: Endplate, bone_up, bone_lo, scale=1.0, shift=0.0,
+                 bulge=0.0, reach=1.0):
+        self.up, self.lo, self.bone_up, self.bone_lo = upper, lower, bone_up, bone_lo
+        self.scale, self.shift, self.bulge, self.reach = wrap(scale), wrap(shift), wrap(bulge), wrap(reach)
+
+    def children(self): return [self.bone_up, self.bone_lo]
+
+    def exprs(self):
+        return self.up.exprs() + self.lo.exprs() + [self.scale, self.shift, self.bulge, self.reach]
+
+    def emit(self, ctx, p):
+        k, sh, bulge, reach = self.scale.glsl(), self.shift.glsl(), self.bulge.glsl(), self.reach.glsl()
+        lu, ll = self.up.local_glsl(ctx, p), self.lo.local_glsl(ctx, p)
+        cu, ru, pu = self.up.arrays_glsl()
+        cl, rl, pl = self.lo.arrays_glsl()
+        ps = glsl_float(1.0 / POLY_SCALE)
+        b = ctx.var("float", f"endplateW(({lu}.xy - {cu}) * {ps}, {pu}) - {lu}.z")  # below the upper surface
+        a = ctx.var("float", f"{ll}.z - endplateW(({ll}.xy - {cl}) * {ps}, {pl})")  # above the lower surface
+        s = ctx.var("float", f"clamp({a} / max({a} + {b}, 1e-3), 0.0, 1.0)")
+        fu = ctx.var("float", f"rimDist({lu}.xy, {cu} + vec2(0.0, {sh}), {k}, {ru})")
+        fl = ctx.var("float", f"rimDist({ll}.xy, {cl} + vec2(0.0, {sh}), {k}, {rl})")
+        side = ctx.var("float", f"mix({fl}, {fu}, {s}) - {bulge} * 4.0 * {s} * (1.0 - {s})")
+        bu, bl = ctx.sub(self.bone_up, p), ctx.sub(self.bone_lo, p)
+        return ctx.var("float", f"max(max({side}, (-min({a}, {b}) - {reach}) * {glsl_float(1 / HEIGHT_LIP)}), -min({bu}, {bl}))")
+
+    def eval(self, p):
+        k, sh, bulge, reach = _v(self.scale), _v(self.shift), _v(self.bulge), _v(self.reach)
+        lu, ll = self.up.local_np(p), self.lo.local_np(p)
+        (cu, ru, pu), (cl, rl, pl) = self.up.values(), self.lo.values()
+        b = _endplate_w_np((lu[:, :2] - cu) / POLY_SCALE, pu) - lu[:, 2]
+        a = ll[:, 2] - _endplate_w_np((ll[:, :2] - cl) / POLY_SCALE, pl)
+        s = np.clip(a / np.maximum(a + b, 1e-3), 0, 1)
+        fu = _rim_dist_np(lu[:, :2], cu + [0, sh], k, ru)
+        fl = _rim_dist_np(ll[:, :2], cl + [0, sh], k, rl)
+        side = fl + (fu - fl) * s - bulge * 4 * s * (1 - s)
+        bones = np.minimum(self.bone_up.eval(p), self.bone_lo.eval(p))
+        return np.maximum(np.maximum(side, (-np.minimum(a, b) - reach) / HEIGHT_LIP), -bones)
+
+
 class ScaleAbout(SDF):
     """Uniform scale by k about a centre point."""
 
@@ -801,6 +915,45 @@ vec3 poseDir(vec3 v, vec3 ex, vec3 ey, vec3 ez, vec3 ang) {{
 vec3 posePoint(vec3 p, vec3 o, vec3 ex, vec3 ey, vec3 ez, vec3 ang, vec3 sh) {{
     return o + poseDir(p - o, ex, ey, ez, ang) + ex * sh.x + ey * sh.y + ez * sh.z;
 }}
+// Endplate rim outline r(theta) = c0 + sum_k (a_k cos k theta + b_k sin k theta), 8 harmonics;
+// dr returns dr/dtheta.
+float rimRadius(float th, float c[17], out float dr) {{
+    float r = c[0];
+    dr = 0.0;
+    for (int k = 1; k <= 8; k++) {{
+        float a = float(k) * th, ca = cos(a), sa = sin(a);
+        r += c[2 * k - 1] * ca + c[2 * k] * sa;
+        dr += float(k) * (c[2 * k] * ca - c[2 * k - 1] * sa);
+    }}
+    return r;
+}}
+// Signed distance bound to the outline scaled by k about centre c0 (star-shaped curve).
+float rimDist(vec2 q, vec2 c0, float k, float c[17]) {{
+    vec2 d = q - c0 + vec2(1e-6, 0.0);
+    float rho = length(d);
+    float dr;
+    float r = k * rimRadius(atan(d.y, d.x), c, dr);
+    float g = k * dr / max(rho, 0.5 * r);
+    return (rho - r) / sqrt(1.0 + g * g);
+}}
+// Endplate surface height w(s), s = ((u, v) - centre) / 20 mm, terms s.x^i s.y^j, i + j <= 4;
+// held constant beyond 50 mm from the centre (a polynomial explodes far outside its data).
+float endplateW(vec2 s, float c[15]) {{
+    s = clamp(s, -2.5, 2.5);
+    float w = 0.0;
+    int n = 0;
+    float xi = 1.0;
+    for (int i = 0; i <= 4; i++) {{
+        float yj = 1.0;
+        for (int j = 0; j <= 4 - i; j++) {{
+            w += c[n] * xi * yj;
+            n++;
+            yj *= s.y;
+        }}
+        xi *= s.x;
+    }}
+    return w;
+}}
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
@@ -811,6 +964,6 @@ __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
     "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
-    "ScaleAbout", "FramePose",
+    "ScaleAbout", "FramePose", "Endplate", "DiscField",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]
