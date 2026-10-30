@@ -5,6 +5,16 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.8.1] - 2026-10-30
+
+### Fixed
+- The average spine took 40+ s to compile on Windows (Chrome/Edge translate
+  WebGL to Direct3D, whose compiler inlines every function at every call site)
+  and often never loaded. Bodies built alike (vertebrae, their markers, paired
+  bones) now share one shader function with their numbers in constant tables;
+  the shader is 72 kB instead of 259 kB, with the same image.
+- GPU check: fails when a viewer shader takes longer than 15 s to compile.
+
 ## [0.8.0] - 2026-10-30
 
 ### Added

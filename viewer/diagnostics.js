@@ -46,7 +46,7 @@ function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   const n = rows.length;
   const dispatch = "vec2 unitAt(int u, vec3 p) {\n"
     + units.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n  return vec2(1e10, -1.0);\n}\n";
-  const frag = GPU.FRAG_HEAD + scene.glsl + "\n" + dispatch + PROBE_LIB;
+  const frag = GPU.FRAG_HEAD + GPU.instanced(scene.glsl) + "\n" + dispatch + PROBE_LIB;  // as the viewer compiles it
   const { prog, uniforms } = GPU.program(gl, frag);
   const data = new Float32Array(n * 4);
   rows.forEach(([u, x, y, z], i) => data.set([x, y, z, u], i * 4));
@@ -88,6 +88,7 @@ vec2 probeBox(vec3 ro, vec3 rd) {
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 void main() {
+  sceneInit();
   vec4 a = texelFetch(u_probe, ivec2(int(gl_FragCoord.x), 0), 0);
   int u = int(a.w + 0.5);
   if (u_mode < 0.5) { outColor = vec4(unitAt(u, a.xyz).x, 0.0, 0.0, 0.0); return; }
