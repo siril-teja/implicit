@@ -38,6 +38,7 @@ const args = [`--use-angle=${backend}`, "--use-gl=angle", "--ignore-gpu-blocklis
 if (backend === "swiftshader") args.push("--enable-unsafe-swiftshader");
 else args.push("--disable-software-rasterizer");  // fail rather than fall back to SwiftShader
 if (backend.startsWith("d3d")) args.push("--disable-gpu-sandbox");  // D3D in a service session
+const COMPILE_LIMIT_MS = 15000;
 // Never hang a CI runner: hard stop after 12 minutes whatever happens.
 setTimeout(() => { console.log("FAIL: GPU check timed out"); process.exit(1); }, 12 * 60 * 1000).unref();
 // channel "chromium": the full browser (Playwright's default headless shell only
@@ -69,6 +70,10 @@ try {
     console.log(`[${Math.round((Date.now() - t0) / 1000)} s] viewer ${key} done`);
     console.log(`viewer ${key}: ${status.split("\n")[0]}`);
     if (!/compiled/.test(status) || errs.length) viewerErrors.push(`${key}: ${status} ${errs.join("; ")}`);
+    // A browser gives up on a GPU task that stalls for long (Chrome: about 10 s), so a
+    // shader that compiles slower than this on a CI machine fails here, not for users.
+    const ms = +(status.match(/compiled in (\d+) ms/) || [0, 0])[1];
+    if (ms > COMPILE_LIMIT_MS) viewerErrors.push(`${key}: shader compile ${ms} ms > ${COMPILE_LIMIT_MS} ms`);
     await v.close();
   }
   console.log(report);
