@@ -5,6 +5,24 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.6.0] - 2026-10-30
+
+### Added
+- **Frame-rate readout** at the top right of the 3D view: frames per second while
+  the view moves (amber below 30, red below 15) and the preview resolution, then
+  the time the sharp image took, measured when the GPU has finished it.
+- **Quality** setting (Scene tab): pixel density of the sharp image on high-DPI
+  screens (high 2×, balanced 1.5× by default, fast 1×).
+
+### Changed
+- Faster rendering, measured on the bundled scenes (software renderer, full frame):
+  - surface normals from 3 scene evaluations instead of 4, ambient occlusion
+    from 3 samples instead of 5: −17 % (anatomy), −13 % (spine segment);
+  - while the view moves, no ambient occlusion and a looser hit tolerance:
+    −28 % / −23 %; the sharp image keeps full quality;
+  - smoothed bones only sample the blur levels with non-zero weight;
+  - the preview resolution adapts to keep moving at about 30 fps.
+
 ## [0.5.0] - 2026-10-30
 
 ### Added

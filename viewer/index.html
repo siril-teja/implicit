@@ -20,7 +20,10 @@
     pointer-events: none; flex-wrap: wrap; }
   #hud > * { pointer-events: auto; }
   #hud #title { font-weight: 600; text-shadow: 0 1px 3px #000; pointer-events: none; }
-  #hud #fps { color: var(--muted); font-size: 11px; text-shadow: 0 1px 3px #000; pointer-events: none; }
+  #hud #fps { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
+    background: #0008; border-radius: 5px; padding: 3px 8px; }
+  #hud #fps:empty { display: none; }
+  #hud #fps.mid { color: #ffd27a; } #hud #fps.slow { color: var(--err); }
   #hud .spacer { flex: 1; pointer-events: none; }
   #dock { flex: none; height: var(--dock-h, 42vh); display: flex; flex-direction: column;
     background: var(--panel); border-top: 1px solid var(--border); min-height: 0; }
@@ -115,8 +118,8 @@
     <div id="hud">
       <span id="title">Loading…</span>
       <select id="scenePick" hidden></select>
-      <span id="fps"></span>
       <span class="spacer"></span>
+      <span id="fps" title="Frames per second while the view moves; then the time to draw the sharp image"></span>
       <button id="dockToggle" title="Show or hide the panel (Tab)">Hide panel</button>
     </div>
   </div>
@@ -162,6 +165,11 @@
           <h2>View</h2>
           <div class="buttons">
             <button id="resetView">Reset view</button>
+            <select id="quality" title="Pixel density of the sharp image (high-DPI screens)">
+              <option value="high">Quality: high</option>
+              <option value="balanced">Quality: balanced</option>
+              <option value="fast">Quality: fast</option>
+            </select>
             <button id="copyParams">Copy params</button>
             <button id="exportStl" hidden>Export STL</button>
           </div>

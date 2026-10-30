@@ -479,16 +479,17 @@ class Grid(SDF):
     def bounds(self):
         return self.origin, self.origin + self.spacing * (np.array(self.shape) - 1)
 
-    def emit(self, ctx, p):
+    def call(self, p):
+        """GLSL expression for the field at point ``p``."""
         if self.atlas_offset is None:
             raise RuntimeError("Grid not packed; add it to a Scene before emitting GLSL")
         f = lambda xs: "vec3(" + ", ".join(glsl_float(x) for x in xs) + ")"
         n = np.array(self.shape) - 1
-        return ctx.var(
-            "float",
-            f"gridSDF({p}, {f(self.origin)}, {glsl_float(1.0 / self.spacing)}, {f(n)}, "
-            f"{f(np.array(self.atlas_offset) + 0.5)}, {glsl_float(self.spacing)}, {glsl_float(self.margin)})",
-        )
+        return (f"gridSDF({p}, {f(self.origin)}, {glsl_float(1.0 / self.spacing)}, {f(n)}, "
+                f"{f(np.array(self.atlas_offset) + 0.5)}, {glsl_float(self.spacing)}, {glsl_float(self.margin)})")
+
+    def emit(self, ctx, p):
+        return ctx.var("float", self.call(p))
 
     def eval(self, p):
         q = (p - self.origin) / self.spacing
@@ -566,14 +567,20 @@ class GridSmooth(SDF):
         return s / s1 if s <= s1 else min(1.0 + np.log2(s / s1), float(self.LEVELS))
 
     def emit(self, ctx, p):
+        # At most two levels have non-zero weight; the others are not sampled. The
+        # condition depends only on uniforms (same for every pixel), and the grid
+        # lookup uses textureLod, so skipping it is well defined on every GPU.
         t = ctx.var("float", self._t_glsl())
         pres = self.preserve.glsl()
         terms = []
         for k, g in enumerate([self.grid] + self.levels):
-            d = ctx.sub(g, p)
-            w = f"max(1.0 - abs({t} - {glsl_float(float(k))}), 0.0)"
+            w = ctx.var("float", f"max(1.0 - abs({t} - {glsl_float(float(k))}), 0.0)")
             off = f" - {pres} * {glsl_float(self.offsets[k])}" if self.offsets[k] else ""
-            terms.append(f"{w} * ({d}{off})")
+            if k == 0:  # the bone itself: may be shared with other uses of it
+                d = ctx.sub(g, p)
+                terms.append(f"{w} * ({d}{off})")
+            else:
+                terms.append(ctx.var("float", f"{w} > 0.0 ? {w} * ({g.call(p)}{off}) : 0.0"))
         return ctx.var("float", " + ".join(terms))
 
     def eval(self, p):
