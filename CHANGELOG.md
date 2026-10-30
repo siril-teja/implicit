@@ -5,12 +5,20 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.2.1] - 2026-10-30
+
+### Changed
+- Documentation describes the method on its own terms. The primer's background
+  section now cites the published literature on function representation and
+  distance fields, and its meshing notes describe the current marching-tetrahedra
+  mesher.
+
 ## [0.2.0] - 2026-10-29
 
 ### Added
 - **Live surface smoothing of bones** (`implicit.sdf.smooth`, `GridSmooth`):
-  Gaussian blur of the implicit field, like nTop's "Smoothen Body", with the
-  width σ (mm) as a slider per bone. The blur is precomputed as a small
+  Gaussian blur of the implicit field, with the width σ (mm) as a slider per
+  bone. The blur is precomputed as a small
   pyramid (σ = 2, 4, 8 voxels, each at matching coarser spacing, about +15 %
   texture memory), so moving the slider is instant. The smoothed field stays
   1-Lipschitz, so it ray-marches and meshes like any body. A

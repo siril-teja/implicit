@@ -1,32 +1,24 @@
 # Implicit modeling for parametric spine FE models: primer and roadmap
 
-## 1. What nTop does (scouted)
+## 1. Why implicit modeling
 
-Verified from nTop's own material (vendor claims are marked as such):
+- **Representation.** A solid is the sub-level set of a scalar field rather than
+  a boundary representation (B-rep). Function representation (FRep) and its
+  set operations are described by
+  [Pasko et al. 1995](https://doi.org/10.1007/BF02464333); sampled distance
+  fields for shapes from scans by
+  [Frisken et al. 2000](https://doi.org/10.1145/344779.344899).
+- **Robustness.** A model is a composition of functions, so changing a
+  parameter re-evaluates the composition. There is no topology to rebuild, so
+  none of the regeneration failures of feature-based B-rep CAD.
+- **Fields everywhere.** Geometry, material properties and simulation results
+  are all fields on the same domain, so one can drive another (e.g. CT density
+  driving modulus, or a sizing field driving the FE mesh).
 
-- **Representation.** nTop's engine represents solids as distance fields, not
-  boundary representations (B-rep). Simulation results are stored as fields too,
-  so they can drive geometry directly ("field-driven design"). Sources:
-  [How does nTop work?](https://learn.ntop.com/lessons/how-does-ntop-work),
-  [Implicit modeling for mechanical design](https://www.ntop.com/resources/blog/implicit-modeling-for-mechanical-design/),
-  [Implicit modeling whitepaper](https://www.ntop.com/resources/whitepaper-implicit-modeling-technology).
-- **Robustness.** nTop says parameter changes can't cause the feature failures
-  that B-rep CAD regeneration can. That is a vendor claim, but the reason is
-  structural: a model is a composition of functions, so there is no topology to rebuild.
-- **FE output.** The *FE Volume Mesh from Implicit* block meshes an implicit
-  body directly into linear or quadratic tetrahedra, with a target edge length
-  that can vary with a field. It does not make hexahedra. Exports are Abaqus `.inp`
-  (node, element, face and edge sets) and ANSYS `.cdb` (node and element sets).
-  [Block docs](https://docs.ntop.com/Product-Documentation/ntop/block-documentation/blocks/design-analysis/mesh-generation/fe-volume-mesh-from-implicit),
-  [Simulation data import/export](https://docs.ntop.com/lessons/intro-to-structural-analysis/importing-and-exporting-simulation-data).
-- **Workflow (from memory, not verified here).** The interface is a notebook of
-  blocks (a dataflow graph), and nTop Automate runs notebooks headless with JSON
-  inputs and Python wrappers.
-
-**Takeaway for us:** a model is a dataflow graph of field operations. A
-parameter change re-evaluates the graph. Rendering evaluates the field on the
-GPU per pixel. Meshing samples the field at whatever resolution FE needs.
-Nothing is "rebuilt".
+**Takeaway:** a model is a dataflow graph of field operations. A parameter
+change re-evaluates the graph. Rendering evaluates the field on the GPU per
+pixel. Meshing samples the field at whatever resolution FE needs. Nothing is
+"rebuilt".
 
 ## 2. The math
 
@@ -87,16 +79,16 @@ works for SPO/Ponte osteotomies and multilevel alignment changes.
 
 ### 2.6 From fields to meshes
 
-- **Surface:** marching cubes, dual contouring, or **surface nets** (implemented
-  in `implicit/mesh.py`; it produces a watertight, outward-oriented mesh, which
-  the tests check).
+- **Surface:** marching cubes, dual contouring, surface nets, or **marching
+  tetrahedra** (implemented in `implicit/mesh.py`, sampled only in a narrow band
+  around the surface; closed, manifold and outward-oriented by construction,
+  which the tests check).
 - **Volume, voxel-hex:** a cell is in a body if f < 0 at its centre. This is
   trivially robust and common in bone micro-FE. Material ID comes from the body.
   The boundary is stair-stepped unless smoothed.
 - **Volume, conforming tet:** feed the surfaces to a tet mesher, or mesh the field
   directly, e.g. isosurface stuffing
   ([Labelle & Shewchuk 2007](https://people.eecs.berkeley.edu/~jrs/papers/stuffing.pdf)).
-  nTop takes the direct route.
 - **Sets** (endplate–cage contact, loading surfaces) come from fields too: tag
   faces where |f_cage| < ε and |f_bone| < ε.
 
@@ -117,7 +109,7 @@ Conversion happens once per bone (`implicit/anatomy/convert.py`):
 Each file becomes a **grid primitive**: trilinear lookup in NumPy, and a 3D
 texture in WebGL2 (hardware trilinear). Every downstream operation (offset,
 cut, shell, transform, boolean) then works the same on patient bones as on
-analytic shapes. nTop's mesh→implicit conversion is the equivalent step.
+analytic shapes.
 
 ### 2.8 Endplates on patient anatomy
 
@@ -136,7 +128,7 @@ analytic shapes. nTop's mesh→implicit conversion is the equivalent step.
 examples/*.py   Python scene scripts (source of truth; version-controlled)
       │  builds a graph of SDF nodes + Params
 implicit/       expr.py (scalar exprs, Params) · sdf.py (nodes: GLSL + NumPy)
-      │          scene.py (bodies → GLSL/JSON) · mesh.py (surface nets, STL)
+      │          scene.py (bodies → GLSL/JSON) · mesh.py (marching tets, STL)
       ├──► scene JSON ──► viewer/ (WebGL2 sphere tracer, sliders, section)
       │                    static → GitHub Pages; local → live reload + export
       └──► NumPy sampling ──► STL now; FE meshes (Marc/Abaqus) next
