@@ -33,15 +33,23 @@ function setUniforms(gl, U, scene, atlas, values = {}) {
 // each unit's code appears once in the program however many probes there are (large
 // scenes otherwise make programs too big for some drivers). mode 0: field value at the
 // point; mode 1: ray from ``eye`` toward the point with that unit alone.
-// Probes run in programs of at most UNITS_PER_PROGRAM units: functions a program
+// Probes run in programs of at most UNITS_PER_PROGRAM own units: functions a program
 // never calls are dropped before the driver compiles it, which keeps each program
 // small enough for slow compilers (D3D) in scenes of many bodies.
 const UNITS_PER_PROGRAM = 8;
 function runProbes(gl, scene, atlas, rows, values, mode, eye = [0, 0, 0]) {
   const px = new Float32Array(rows.length * 4);
   const units = [...new Set(rows.map((r) => r[0]))];
-  for (let k = 0; k < units.length; k += UNITS_PER_PROGRAM) {
-    const chunk = new Set(units.slice(k, k + UNITS_PER_PROGRAM));
+  // Units sharing code (GPU.instanced) cost one function per group: they all go in
+  // the first program; the others at most UNITS_PER_PROGRAM per program.
+  const where = GPU.instanced(scene.glsl).where;
+  const shared = units.filter((u) => u in where), own = units.filter((u) => !(u in where));
+  const chunks = [];
+  for (let k = 0; k < Math.max(own.length, 1); k += UNITS_PER_PROGRAM) chunks.push(own.slice(k, k + UNITS_PER_PROGRAM));
+  chunks[0].push(...shared);
+  for (const c of chunks) {
+    if (!c.length) continue;
+    const chunk = new Set(c);
     const idx = rows.map((r, i) => (chunk.has(r[0]) ? i : -1)).filter((i) => i >= 0);
     const out = runProbeProgram(gl, scene, atlas, idx.map((i) => rows[i]), values, mode, eye, [...chunk]);
     idx.forEach((i, j) => px.set(out.subarray(j * 4, j * 4 + 4), i * 4));
@@ -51,10 +59,18 @@ function runProbes(gl, scene, atlas, rows, values, mode, eye = [0, 0, 0]) {
 
 function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   const n = rows.length;
+  // Each shared function (grpK) is called from one place, with the row of the unit.
+  const inst = GPU.instanced(scene.glsl);
+  const grouped = units.filter((k) => k in inst.where), single = units.filter((k) => !(k in inst.where));
+  const gs = [...new Set(grouped.map((k) => inst.where[k][0]))];
   const dispatch = "vec2 unitAt(int u, vec3 p) {\n"
-    + units.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n  return vec2(1e10, -1.0);\n}\n";
+    + single.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n"
+    + "  int g = -1, row = 0;\n"
+    + grouped.map((k) => `  if (u == ${k}) { g = ${inst.where[k][0]}; row = ${inst.where[k][1]}; }`).join("\n") + "\n"
+    + gs.map((g) => `  if (g == ${g}) return grp${g}(p, row);`).join("\n") + "\n"
+    + "  return vec2(1e10, -1.0);\n}\n";
   // Compiled as the viewer compiles it (shared code for bodies built alike).
-  const built = GPU.instancedProgram(gl, GPU.FRAG_HEAD, GPU.instanced(scene.glsl), "\n" + dispatch + PROBE_LIB);
+  const built = GPU.instancedProgram(gl, GPU.FRAG_HEAD, inst, "\n" + dispatch + PROBE_LIB);
   const { prog, uniforms } = built;
   const data = new Float32Array(n * 4);
   rows.forEach(([u, x, y, z], i) => data.set([x, y, z, u], i * 4));
