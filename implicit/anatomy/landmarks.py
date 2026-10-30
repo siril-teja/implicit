@@ -20,6 +20,8 @@ Per vertebra (C2 to L5, plus the S1 superior endplate)
      The frame origin is the midpoint of the two endplate centres.
   S1 is found by marching from L5's inferior endplate down through the disc
   space; C2's inferior endplate from C3.
+With femurs, hip bones and sacrum present, the pelvic landmarks (femoral head and
+sacroiliac joint centres, see implicit.anatomy.alignment) are stored as "pelvis".
 
 Requires scipy.
 """
@@ -309,8 +311,12 @@ def detect(bone_dir, log=print):
         log(f"  C2: inferior endplate rms {marks['C2']['inf']['rms']:.2f} mm (from C3)")
     out = {lv: _jsonable({k: v for k, v in e.items() if k != "footprint_uv"})
            for lv, e in marks.items()}
-    (bone_dir / "landmarks.json").write_text(json.dumps(
-        {"frame": "scanner RAS, mm", "landmarks": out}, indent=1))
+    doc = {"frame": "scanner RAS, mm", "landmarks": out}
+    from .alignment import pelvis_landmarks
+    pelvis = pelvis_landmarks(bone_dir, log)
+    if pelvis:
+        doc["pelvis"] = _jsonable({k: np.asarray(v) for k, v in pelvis.items()})
+    (bone_dir / "landmarks.json").write_text(json.dumps(doc, indent=1))
     log(f"wrote {bone_dir / 'landmarks.json'}")
     return marks
 

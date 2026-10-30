@@ -25,8 +25,8 @@ class TestBlocks(unittest.TestCase):
         m = json.loads(json.dumps(manifest()))
         names = [b["name"] for b in m["blocks"]]
         self.assertEqual(len(names), len(set(names)))
-        types = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra", "number", "text", "color", "bool",
-                 "choice", "path"}
+        types = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra", "alignment", "number", "text",
+                 "color", "bool", "choice", "path"}
         for b in m["blocks"]:
             self.assertTrue(b["doc"], b["name"])
             for p in b["inputs"] + b["outputs"]:
@@ -123,6 +123,7 @@ class TestBrowserBuild(unittest.TestCase):
                 continue
             self.assertIn("glsl", b, b["name"])
             n_choice = [len(p["choices"]) for p in b["inputs"] if p["type"] == "choice"]
+            n_choice += [2 for parts in b.get("optional", {}).values() for _ in parts]  # present / absent
             self.assertEqual(len(b["glsl"]), int(np.prod(n_choice)) if n_choice else 1, b["name"])
             for ports in b["glsl"].values():
                 self.assertEqual(set(ports), {o["name"] for o in b["outputs"]}, b["name"])
@@ -272,6 +273,30 @@ class TestAnatomyGraph(unittest.TestCase):
             self.assertTrue((ROOT / "examples" / b["in"]["file"]).exists(), b["in"]["file"])
         for v in lv:
             self.assertEqual(g["nodes"][f"{v}_pose"]["in"]["vertebra"], f"@{v}_lm.vertebra")
+
+    def test_spinopelvic_knobs_move_bones_rigidly(self):
+        """The PI/PT/LL/TK sliders start at the subject's values (no motion); moved, each
+        aligned bone is its unmoved self carried by the solved sagittal motion."""
+        import json as _json
+        from implicit.anatomy import alignment as al
+        g = read_graph(ROOT / "examples" / "average_spine.json")
+        doc = _json.loads((ROOT / "assets" / "bones" / "vivaplus-50F" / "landmarks.json").read_text())
+        base = al.chain(doc["landmarks"], doc["pelvis"])["base"]
+        for k in ("PI", "PT", "LL", "TK"):
+            self.assertEqual(g["nodes"][f"spp_{k}"]["in"]["value"], base[k])
+        sc = load_graph(ROOT / "examples" / "average_spine.json")
+        rng = np.random.default_rng(3)
+        bodies = {n: sc.body(n) for n in ("L3", "T8", "sacrum", "hip_left")}
+        pts = {n: rng.uniform(*b.bounds, (300, 3)) for n, b in bodies.items()}
+        before = {n: b.sdf.eval(pts[n]) for n, b in bodies.items()}
+        sc.set_params({"spp_PI": 66, "spp_PT": 25, "spp_LL": 62, "spp_TK": 45})
+        seg = {"L3": "L3", "T8": "T8", "sacrum": "sacrum", "hip_left": "pelvis"}
+        for n, b in bodies.items():
+            c, s, ty, tz = (p.value() for p in sc.params() if p.name.startswith(f"spp_{seg[n]}_"))
+            q = pts[n]
+            moved = np.column_stack([q[:, 0], c * q[:, 1] - s * q[:, 2] + ty, s * q[:, 1] + c * q[:, 2] + tz])
+            self.assertGreater(abs(s), 1e-3, n)
+            np.testing.assert_allclose(b.sdf.eval(moved), before[n], atol=1e-6, err_msg=n)
 
     def test_bone_smoothing_equals_direct_construction(self):
         from implicit.anatomy.convert import load_bone

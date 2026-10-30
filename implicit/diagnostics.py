@@ -37,7 +37,8 @@ def probes(scene, n_random=8, seed=0):
     """
     params = scene.params()
     defaults = {p.name: p.value() for p in params}
-    moved = {p.name: round(p.lo + 0.37 * (p.hi - p.lo), 4) for p in params}
+    moved = {p.name: round(p.lo + 0.37 * (p.hi - p.lo), 4) for p in params
+             if not getattr(p, "solver", None)}  # computed values follow their inputs
     batches = []
     try:
         for values in ({}, moved):

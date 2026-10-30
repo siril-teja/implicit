@@ -235,6 +235,12 @@ class Scene:
             unit = units[k]
             vis = " || ".join(sorted({f"u_grp{groups.index(self.bodies[i].group)} > 0.5" for i in unit}))
             cond = f"({vis})"
+            sdf = self.bodies[unit[0]].sdf
+            if len(unit) == 1 and getattr(sdf, "local_box", None) is not None:
+                # A moved body: its own box, moved along (tight at any motion).
+                lo, hi = (", ".join(glsl_float(x) for x in v) for v in sdf.local_box)
+                cond += f" && sdAABB(sagInv(p, {sdf.m_glsl()}), vec3({lo}), vec3({hi})) < r.x"
+                return f"{indent}if ({cond}) {{ d = unit{k}(p); if (d.x < r.x) r = d; }}"
             b = unit_bounds(unit)
             if b is not None:
                 cond += " && " + box(b)
@@ -287,6 +293,8 @@ class Scene:
             "glsl": glsl,
             "bounds": self.bounds,
             "params": [p.to_json() for p in self.params()],
+            "solvers": {s.id: s.to_json() for s in {id(p.solver): p.solver for p in self.params()
+                                                     if getattr(p, "solver", None)}.values()},
             "groups": [
                 {"name": g, "color": next(b.color for b in self.bodies if b.group == g),
                  "visible": next(b.visible for b in self.bodies if b.group == g)}

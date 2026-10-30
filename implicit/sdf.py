@@ -437,9 +437,11 @@ class Grid(SDF):
 
     Values are quantised to uint8 (QSTEP mm per level, clamped to +-QRANGE) so the
     browser (an R8 3D texture, hardware trilinear) and NumPy see identical data.
-    Sample i sits at origin + i * spacing. Outside the grid the field is the
-    distance to the grid box plus the smallest boundary value, a lower bound
-    because the object lies inside the box.
+    Sample i sits at origin + i * spacing. Outside the grid the field is the larger
+    of two lower bounds: the distance to the grid box plus the smallest boundary
+    value (the object lies inside the box), and the value at the nearest grid point
+    minus the distance to it. Both tend to that value at the box faces, so the field
+    is continuous there.
 
     ``atlas_offset`` is assigned by Scene when packing grids into one texture.
     """
@@ -507,7 +509,7 @@ class Grid(SDF):
                     out += w * v[np.minimum(i0[:, 0] + dx, n[0]), np.minimum(i0[:, 1] + dy, n[1]),
                                  np.minimum(i0[:, 2] + dz, n[2])]
         ext = _len(q - qc) * self.spacing
-        return np.where(ext > 1e-4, ext + self.margin, out)
+        return np.where(ext > 0, np.maximum(ext + self.margin, out - ext), out)  # see gridSDF
 
 
 def _gauss_blur(v, sigma):
@@ -750,6 +752,73 @@ class FramePose(SDF):
         return self.child.eval(o + loc @ E)
 
 
+class Tube(SDF):
+    """Exact. Polyline through points (Vec3 expressions) swept by radius r."""
+
+    def __init__(self, points, r):
+        self.points, self.r = [vec3(q) for q in points], wrap(r)
+
+    def exprs(self): return self.points + [self.r]
+
+    CHUNK = 8  # segments per culling box
+
+    def emit(self, ctx, p):
+        # Chunks of segments behind a box around their points: a chunk whose box is
+        # farther than the nearest segment so far cannot change the minimum (exact).
+        r, pts = self.r.glsl(), [q.glsl() for q in self.points]
+        d = "1e10"
+        for i in range(0, len(pts) - 1, self.CHUNK):
+            c = pts[i:i + self.CHUNK + 1]
+            lo = ctx.var("vec3", "min(" * (len(c) - 1) + c[0] + "".join(f", {q})" for q in c[1:]))
+            hi = ctx.var("vec3", "max(" * (len(c) - 1) + c[0] + "".join(f", {q})" for q in c[1:]))
+            caps = d
+            for a, b in zip(c, c[1:]):
+                caps = f"min({caps}, sdCap({p}, {a}, {b}, {r}))"
+            d = ctx.var("float", f"sdAABB({p}, {lo} - {r}, {hi} + {r}) < {d} ? {caps} : {d}")
+        return d
+
+    def eval(self, p):
+        P = [_vv(q) for q in self.points]
+        out = np.full(len(p), np.inf)
+        for a, b in zip(P, P[1:]):
+            pa, ba = p - a, b - a
+            h = np.clip(pa @ ba / max(ba @ ba, 1e-12), 0, 1)
+            out = np.minimum(out, _len(pa - h[:, None] * ba))
+        return out - _v(self.r)
+
+
+class SagittalMove(SDF):
+    """Rigid motion in the sagittal (y-z) plane: p -> R(a) p + t, R turning about the
+    x axis; ``m`` = (cos a, sin a, t_y, t_z). Exact (a rigid motion keeps distances).
+
+    ``local_box`` (lo, hi), when set, contains the child in its own (unmoved) frame:
+    the scene then culls the body with that box moved along (Scene.glsl), which stays
+    tight however far the motion goes.
+    """
+
+    def __init__(self, child, m, local_box=None):
+        self.child = child
+        self.m = [wrap(e) for e in m]
+        self.local_box = local_box
+
+    def children(self): return [self.child]
+    def exprs(self): return self.m
+
+    def emit(self, ctx, p):
+        return ctx.sub(self.child, ctx.var("vec3", f"sagInv({p}, {self.m_glsl()})"))
+
+    def m_glsl(self):
+        return f"vec4({', '.join(e.glsl() for e in self.m)})"
+
+    def eval(self, p):
+        c, s, ty, tz = (_v(e) for e in self.m)
+        q = p - np.array([0.0, ty, tz])
+        out = q.copy()
+        out[:, 1] = c * q[:, 1] + s * q[:, 2]
+        out[:, 2] = c * q[:, 2] - s * q[:, 1]
+        return self.child.eval(out)
+
+
 class ScaleAbout(SDF):
     """Uniform scale by k about a centre point."""
 
@@ -787,7 +856,11 @@ float gridSDF(vec3 p, vec3 o, float invh, vec3 nmax, vec3 off, float h, float ma
     float ext = length(p - cw);
     vec3 qc = (cw - o) * invh;
     float d = (textureLod(u_atlas, (qc.zyx + off) / u_atlasSize, 0.0).r * 255.0 - {QZERO}.0) * {QSTEP};
-    return ext > 1e-4 ? ext + margin : d;
+    // Outside the grid both terms are lower bounds of the distance (the object lies
+    // ``margin`` inside the box; d is the value at the nearest grid point, at least
+    // ``margin`` on the border), and their max tends to d at the box faces: no jump
+    // there for GPU and NumPy rounding to fall on different sides of.
+    return ext > 0.0 ? max(ext + margin, d - ext) : d;
 }}
 // Pose (graph Pose block): R = Rz(axial) Ry(lateral) Rx(-flexion) in the frame (ex, ey, ez);
 // ang = (flexion, lateral, axial) in degrees, sh = shift along the frame axes.
@@ -800,6 +873,22 @@ vec3 poseDir(vec3 v, vec3 ex, vec3 ey, vec3 ez, vec3 ang) {{
 }}
 vec3 posePoint(vec3 p, vec3 o, vec3 ex, vec3 ey, vec3 ez, vec3 ang, vec3 sh) {{
     return o + poseDir(p - o, ex, ey, ez, ang) + ex * sh.x + ey * sh.y + ez * sh.z;
+}}
+// Distance to the segment a-b minus r (see Tube).
+float sdCap(vec3 p, vec3 a, vec3 b, float r) {{
+    vec3 pa = p - a, ba = b - a;
+    return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0)) - r;
+}}
+// Sagittal motion m = (cos a, sin a, t_y, t_z) of a point / a direction, and its inverse.
+vec3 sagDir(vec3 v, vec4 m) {{
+    return vec3(v.x, m.x * v.y - m.y * v.z, m.y * v.y + m.x * v.z);
+}}
+vec3 sagPoint(vec3 v, vec4 m) {{
+    return sagDir(v, m) + vec3(0.0, m.z, m.w);
+}}
+vec3 sagInv(vec3 p, vec4 m) {{
+    vec3 q = p - vec3(0.0, m.z, m.w);
+    return vec3(q.x, m.x * q.y + m.y * q.z, m.x * q.z - m.y * q.y);
 }}
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);

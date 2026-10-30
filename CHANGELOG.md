@@ -5,6 +5,33 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.9.0] - 2026-10-30
+
+### Added
+- **Spinopelvic alignment**: PI, PT, LL and TK sliders reshape the spine and pelvis
+  in the sagittal plane (chain model: pelvis about the hip axis, sacrum about the
+  sacroiliac joints, lordosis and kyphosis spread over their discs in proportion to
+  their angles; targets met exactly). New blocks: Spinopelvic alignment, Align,
+  Spine curve (tube through the vertebral body centres). Both example scenes use
+  them; the sliders start at the subject's measured values.
+- `python -m implicit.anatomy.alignment <bones>` prints PI, PT, SS, LL, TK and the
+  disc angles. `landmarks.json` gains "pelvis": femoral head centres (sphere fits,
+  rms 0.6 mm) and sacroiliac joint centres.
+- Computed uniforms: values a solver computes on the CPU from sliders (Python
+  `expr.Solver`/`Computed`, browser `viewer/solvers.js`), checked against each
+  other by the GPU check with the sliders moved.
+
+### Changed
+- Moved bodies are culled with their own box carried along by the motion, and the
+  viewer marches rays only through the visible bodies at the current values: the
+  average spine renders about 2.5x faster than in 0.8.
+- A shared-code group with one visibility switch tests it once, outside its loop
+  (hidden landmark markers cost nothing on software renderers either).
+
+### Fixed
+- Bone fields outside their grid: the larger of two lower bounds, continuous at the
+  grid faces (a jump there could put GPU and NumPy on different sides).
+
 ## [0.8.2] - 2026-10-30
 
 ### Fixed

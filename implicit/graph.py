@@ -42,20 +42,21 @@ from pathlib import Path
 
 import numpy as np
 
-from .expr import BinOp, Const, Expr, Func, Param, Vec3, cos, radians, sin
+from .expr import BinOp, Computed, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, SagittalMove, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
 
 LIVE = {"scalar", "vec3"}                 # literal values become parameters
-WIRED = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra"}  # types a wire can carry
-WIRE_ONLY = {"body", "bone", "plane", "frame", "vertebra"}  # inputs that need a wire (no literal)
+WIRED = {"body", "bone", "scalar", "vec3", "plane", "frame", "vertebra", "alignment"}  # types a wire can carry
+WIRE_ONLY = {"body", "bone", "plane", "frame", "vertebra", "alignment"}  # inputs that need a wire (no literal)
 STATIC = {"number", "text", "color", "bool", "choice", "path"}
 ACCEPTS = {"body": {"body", "bone"}, "bone": {"bone"}, "scalar": {"scalar"}, "vec3": {"vec3"},
-           "plane": {"plane"}, "frame": {"frame"}, "vertebra": {"vertebra"}}
+           "plane": {"plane"}, "frame": {"frame"}, "vertebra": {"vertebra"},
+           "alignment": {"alignment"}}
 
 
 class GraphError(ValueError):
@@ -99,14 +100,18 @@ class Block:
     inputs: list
     outputs: list
     build: object = field(repr=False, default=None)
+    optional: dict = field(default_factory=dict)  # {input: (part, ...)}: parts that may be absent
 
     def input(self, name):
         return next(p for p in self.inputs if p.name == name)
 
     def to_json(self):
-        return {"name": self.name, "title": self.title, "category": self.category, "doc": self.doc,
-                "inputs": [p.to_json() for p in self.inputs],
-                "outputs": [p.to_json() for p in self.outputs]}
+        d = {"name": self.name, "title": self.title, "category": self.category, "doc": self.doc,
+             "inputs": [p.to_json() for p in self.inputs],
+             "outputs": [p.to_json() for p in self.outputs]}
+        if self.optional:
+            d["optional"] = {k: list(v) for k, v in self.optional.items()}
+        return d
 
 
 BLOCKS: dict[str, Block] = {}
@@ -525,7 +530,11 @@ def _show_frame(x, node):
 # ---------------------------------------------------------------- pose
 
 def _pose_np(fn, args):
-    """NumPy value of poseDir/posePoint (see GLSL_LIB) for float vectors."""
+    """NumPy value of poseDir/posePoint/sagDir/sagPoint (see GLSL_LIB) for float vectors."""
+    if fn in ("sagDir", "sagPoint"):
+        (x, y, z), (c, s, ty, tz) = args
+        t = (ty, tz) if fn == "sagPoint" else (0.0, 0.0)
+        return np.array([x, c * y - s * z + t[0], s * y + c * z + t[1]])
     if fn == "poseDir":
         v, ex, ey, ez, ang = args
         E = np.stack([ex, ey, ez])
@@ -654,6 +663,9 @@ def _show_vertebra(x, node):
     return {"body": Field(sdf, bounds)}
 
 
+BLOCKS["show_vertebra"].optional = {"vertebra": ("sup", "inf")}  # e.g. the sacrum has no inferior endplate
+
+
 @block("vertebra_parts", "Vertebra parts", "Anatomy", [Port("vertebra", "vertebra", label="Vertebra")],
        [Port("frame", "frame", label="Frame"), Port("superior", "plane", label="Superior endplate"),
         Port("inferior", "plane", label="Inferior endplate")])
@@ -661,6 +673,125 @@ def _vertebra_parts(x, node):
     """Frame and endplate planes of a vertebra (e.g. after Pose)."""
     v = x["vertebra"]
     return {"frame": v.frame, "superior": v.sup, "inferior": v.inf}
+
+
+# ---------------------------------------------------------------- spinopelvic alignment
+
+@dataclass
+class AlignmentV:
+    """The spinopelvic chain model of one subject: a Solver and its motion uniforms."""
+    solver: Solver
+    motions: dict = field(default_factory=dict)
+
+    def motion(self, seg):
+        """(cos a, sin a, t_y, t_z) of a segment as Computed uniforms (see SagittalMove)."""
+        if seg not in self.motions:
+            self.motions[seg] = [Computed(f"{self.solver.id}_{seg}_{k}", self.solver, seg, i)
+                                 for i, k in enumerate(("c", "s", "ty", "tz"))]
+        return self.motions[seg]
+
+
+class _Vec4:
+    """vec4 of four scalar expressions (argument of sagPoint/sagDir)."""
+
+    def __init__(self, c):
+        self.c = c
+
+    def glsl(self):
+        return f"vec4({', '.join(e.glsl() for e in self.c)})"
+
+    def value(self):
+        return [e.value() for e in self.c]
+
+    def params(self):
+        return [q for e in self.c for q in e.params()]
+
+    def is_const(self):
+        return all(e.is_const() for e in self.c)
+
+
+def _sag_point(m, v: Vec3, move=True):
+    """A point (or direction) moved by the sagittal motion m, as one sagPoint/sagDir call."""
+    whole = _PoseCall("sagPoint" if move else "sagDir", [v, _Vec4(m)])
+    return Vec3(*(_PoseComp(whole, k) for k in range(3)))
+
+
+def _sag_np(m, P):
+    c, s, ty, tz = m
+    P = np.asarray(P, float)
+    return np.column_stack([P[:, 0], c * P[:, 1] - s * P[:, 2] + ty, s * P[:, 1] + c * P[:, 2] + tz])
+
+
+@block("spinopelvic", "Spinopelvic alignment", "Anatomy",
+       [Port("bone", "bone", label="Sacrum (finds the subject's landmarks)"),
+        S("PI", 58.7, 30, 90, 0.5, "deg", "Pelvic incidence"), S("PT", 17.2, -10, 45, 0.5, "deg", "Pelvic tilt"),
+        S("LL", 51.9, 0, 90, 0.5, "deg", "Lumbar lordosis (L1-S1)"),
+        S("TK", 30.3, 0, 80, 0.5, "deg", "Thoracic kyphosis (T4-T12)")],
+       [Port("alignment", "alignment", label="Alignment")])
+def _spinopelvic(x, node):
+    """Sagittal alignment from four parameters. At the subject's own values nothing
+    moves; other values turn the pelvis about the hip axis (PT), the sacrum about the
+    sacroiliac joints (PI) and the discs L1-S1 (LL) and T4-T12 (TK). Feed it to an
+    Align block per segment (see implicit/anatomy/alignment.py)."""
+    data = node.ctx.spine(x["bone"].sdf_file)
+    if data is None:
+        raise GraphError("no spine and pelvis landmarks for this subject (needs vertebrae, sacrum, hip bones "
+                         "and femurs; run python -m implicit.anatomy.landmarks on its folder)")
+    try:
+        solver = Solver(node.id, "spinopelvic", data, {k: x[k] for k in ("PI", "PT", "LL", "TK")})
+    except ValueError as e:
+        raise GraphError(str(e)) from e
+    return {"alignment": AlignmentV(solver)}
+
+
+@block("align", "Align", "Anatomy",
+       [BODY(label="Body"), Port("vertebra", "vertebra", label="Vertebra (optional)", optional=True),
+        Port("alignment", "alignment", label="Alignment"),
+        Port("segment", "text", "L5", label="Segment (pelvis, sacrum, L5 ... T1)")],
+       [Port("body", "body", label="Body"), Port("vertebra", "vertebra", label="Vertebra")])
+def _align(x, node):
+    """Move a body (and its vertebra frame) as one segment of a spinopelvic alignment."""
+    a, seg, b, v = x["alignment"], x["segment"], x["body"], x["vertebra"]
+    if seg not in a.solver.result():
+        raise GraphError(f"segment {seg!r} is not in this alignment ({', '.join(a.solver.result())})")
+    m = a.motion(seg)
+
+    def bounds(now):
+        bb = _child(b, now)
+        if bb is None:
+            return None
+        corners = [[bb[i][0], bb[j][1], bb[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)]
+        ms = [[e.value() for e in m]] if now else [r[seg] for r in a.solver.samples()]
+        pts = np.concatenate([_sag_np(q, corners) for q in ms])
+        return pts.min(0), pts.max(0)
+    out = {"body": Field(SagittalMove(b.sdf, m, _child(b, False)), bounds), "vertebra": None}  # local box: culling
+    if v is not None:
+        f = v.frame
+        plane = lambda pl: None if pl is None else PlaneV(_sag_point(m, pl.point), _sag_point(m, pl.normal, False))
+        out["vertebra"] = VertebraV(FrameV(_sag_point(m, f.origin), *(_sag_point(m, d, False) for d in (f.x, f.y, f.z))),
+                                    plane(v.sup), plane(v.inf))
+    return out
+
+
+@block("spine_curve", "Spine curve", "Anatomy",
+       [Port("alignment", "alignment", label="Alignment"), S("radius", 1.5, 0.2, 6, 0.1, "mm", "Tube radius")],
+       [Port("body", "body", label="Body")])
+def _spine_curve(x, node):
+    """A tube along the spine curve: a smooth curve through the S1 endplate centre and
+    the vertebral body centres, following the alignment."""
+    solver, r = x["alignment"].solver, x["radius"]
+    n = len(solver.result()["curve"]) // 3
+    pts = [Vec3(*(Computed(f"{solver.id}_curve_{3 * i + k}", solver, "curve", 3 * i + k) for k in range(3)))
+           for i in range(n)]
+
+    def bounds(now):
+        ru = _upper(r, now)
+        if ru is None:
+            return None
+        cs = [solver.result()["curve"]] if now else [res["curve"] for res in solver.samples()]
+        P = np.concatenate([np.reshape(c, (-1, 3)) for c in cs])
+        return P.min(0) - ru, P.max(0) + ru
+    return {"body": Field(Tube(pts, r), bounds)}
 
 
 @block("output", "Output body", "Output",
@@ -750,6 +881,22 @@ class _Context:
             if k in e:
                 out[k] = (np.array(e[k]["point"], float) - off, np.array(e[k]["normal"], float))
         return out
+
+
+def _spine(ctx, f):
+    """Chain-model data of the subject of bone file ``f`` (scene frame), or None."""
+    from .anatomy import alignment
+    path = ctx.resolve(f)
+    cache = ctx.__dict__.setdefault("_spine", {})
+    if path.parent not in cache:
+        lj = path.parent / "landmarks.json"
+        d = json.loads(lj.read_text()) if lj.exists() else {}
+        cache[path.parent] = alignment.chain(d.get("landmarks", {}), d.get("pelvis"),
+                                             getattr(ctx, "offset", np.zeros(3)))
+    return cache[path.parent]
+
+
+_Context.spine = _spine
 
 
 def _parse_wire(v):
@@ -903,6 +1050,8 @@ def build_graph(g: dict, base=".", library=None) -> Scene:
                 if x[port.name] is None:
                     raise GraphError(f"{nid}.{port.name}: {src} has no {sp.label or sp.name} "
                                      f"(e.g. the sacrum has no inferior endplate)")
+            elif port.type in WIRE_ONLY and port.optional:
+                x[port.name] = None
             elif port.type in WIRE_ONLY:
                 raise GraphError(f"{nid}.{port.name}: needs a {port.type} wire")
             elif v is None:
@@ -1006,6 +1155,9 @@ def _block_templates(blk: Block):
     combos = [{}]
     for p in choices:
         combos = [{**c, p.name: v} for c in combos for v in p.choices]
+    for inp, parts in blk.optional.items():  # one variant per present/absent part
+        for part in parts:
+            combos = [{**c, f"{inp}.{part}": v} for c in combos for v in (1, 0)]
     out = {}
     for combo in combos:
         holes, x = {}, {}
@@ -1022,6 +1174,10 @@ def _block_templates(blk: Block):
                 x[p.name] = combo[p.name]
             else:
                 x[p.name] = p.default
+        for key, present in combo.items():
+            inp, _, part = key.partition(".")
+            if part and not present:
+                setattr(x[inp], part, None)
         node = Node("trace", blk, {}, blk.title)
         res = blk.build(x, node)
         ports = {}
@@ -1060,7 +1216,7 @@ def _vec_hole(name):
 
 # Handled in viewer/graph.js: value plumbing and per-bone data from the library.
 BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts",
-                 "vertebra_parts"}
+                 "vertebra_parts", "spinopelvic", "align", "spine_curve"}
 
 
 def browser_manifest():
@@ -1112,6 +1268,8 @@ class Library:
                     "origin": lm["origin"].tolist(), "axes": lm["axes"].tolist(),
                     **{k: {"point": lm[k][0].tolist(), "normal": lm[k][1].tolist()} for k in ("sup", "inf") if k in lm},
                     "markers": trace(sdf), "markers_bounds": [blo.tolist(), bhi.tolist()]}
+            if self.ctx.names[path] == "sacrum" and (spine := self.ctx.spine(path)) is not None:
+                bones[self.keys[path]]["spine"] = spine
         a = self.atlas
         atlas = None if a is None else {"size": [a.shape[2], a.shape[1], a.shape[0]], "url": atlas_url}
         return {"frame_offset": [float(x) for x in self.offset], "attribution": self.ctx.attribution,
