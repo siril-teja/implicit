@@ -150,10 +150,11 @@ void main() {
   // array u_SP. Only texture fetches and uniform-array reads: D3D compiles such
   // loops as loops (local arrays made it unroll them). ``unitN`` remain as one-line
   // wrappers (used by the diagnostics).
-  // Returns { glsl, sp: uniform names in u_SP order, table: { data, w, h } | null }.
+  // Returns { glsl, sp: uniform names in u_SP order, table: { data, w, h } | null,
+  // where: { unit: [group, row] } for grouped units }.
   const FLOAT_RE = /\bu_\w+\b|(?:(?<=[(, ])-)?(?<![\w.])(?:(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)(?![\w.])/g;  // a unary minus belongs to the literal
   function instanced(glsl) {
-    const none = { glsl, sp: [], table: null };
+    const none = { glsl, sp: [], table: null, where: {} };
     const floatUniforms = new Set([...glsl.matchAll(/uniform float (u_\w+);/g)].map((m) => m[1]));
     const mapAt = glsl.indexOf("vec2 sceneMap(vec3 p) {");
     if (mapAt < 0) return none;
@@ -186,7 +187,7 @@ void main() {
     }
     const sp = new Map();  // uniform -> index in u_SP
     const spIndex = (name) => { if (!sp.has(name)) sp.set(name, sp.size); return sp.get(name); };
-    const funcs = [], loops = [], drop = new Set(), wrappers = new Map(), rows = [];
+    const funcs = [], loops = [], drop = new Set(), wrappers = new Map(), rows = [], where = {};
     let g = 0;
     for (const [skel, ks] of groups) {
       if (ks.length < 2) continue;
@@ -222,7 +223,7 @@ void main() {
         vec4 lo = texelFetch(u_inst, ivec2(0, row), 0), hi = texelFetch(u_inst, ivec2(1, row), 0);
         if (spGet(int(lo.w)) > 0.5 && sdAABB(p, lo.xyz, hi.xyz) < r.x) { d = grp${g}(p, row); if (d.x < r.x) r = d; }
     }`);
-      ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${row0 + i}); }`); });
+      ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${row0 + i}); }`); where[k] = [g, row0 + i]; });
       g++;
     }
     if (!g) return none;
@@ -248,7 +249,7 @@ float spGet(int k) {
     const w = Math.max(...rows.map((r) => Math.ceil(r.length / 4))), h = rows.length;
     const data = new Float32Array(w * h * 4);
     rows.forEach((r, i) => data.set(r, i * w * 4));
-    return { glsl: [head, lib, ...funcs, ...wrappers.values(), kept.join("\n")].join("\n"), sp: [...sp.keys()], table: { data, w, h } };
+    return { glsl: [head, lib, ...funcs, ...wrappers.values(), kept.join("\n")].join("\n"), sp: [...sp.keys()], table: { data, w, h }, where };
   }
 
   // Compile a fragment source made with instanced(): the program plus its instance

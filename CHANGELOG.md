@@ -5,6 +5,13 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.8.2] - 2026-10-30
+
+### Fixed
+- GPU check: probe programs call each shared shader function once, and bodies
+  sharing code are probed in one program (the Windows check took ~10 of its
+  12 minutes).
+
 ## [0.8.1] - 2026-10-30
 
 ### Fixed
