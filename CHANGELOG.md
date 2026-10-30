@@ -5,6 +5,31 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.5.0] - 2026-10-30
+
+### Added
+- **Landmarks block** (Anatomy): from a vertebra or the sacrum, outputs its body
+  frame (origin between the endplates; right, anterior and cranial axes), its
+  superior and inferior endplate planes, and a marker body (endplate discs and
+  axes) to check them in 3D. The sacrum gives the S1 endplate.
+- New wire types **plane** and **frame**, and blocks Plane, Plane parts, Frame
+  parts, Show plane and Show frame. For example, Frame parts → origin wired to
+  Rotate's centre rotates a vertebra about its own body centre.
+- `examples/anatomy.json` has a Landmarks block for every vertebra and the
+  sacrum; their markers are in the "Landmarks" group (hidden at first).
+- CI's GPU check also builds a test graph that uses every landmark block.
+
+### Fixed
+- Vertebral frames: the axial axis is now the bisector of the two endplate
+  normals, refined until it settles, and the origin is midway between the
+  endplate centres. Before, the axis came from the body's principal axes or
+  the neighbouring centroids, which tilted L3 by about 25° and L5 by about 40°
+  (its lower neighbour was the sacrum's centroid). The L5 endplates themselves
+  were already right: this subject's sacrum is steep, so the L5–S1 disc faces
+  posteriorly-inferiorly.
+- `assets/bones/s0751/landmarks.json` is now included, so builds do not need to
+  detect landmarks (or scipy).
+
 ## [0.4.0] - 2026-10-30
 
 ### Added

@@ -94,6 +94,17 @@ class Endplates(unittest.TestCase):
             ang = np.degrees(np.arccos(np.clip(self.e[which]["normal"] @ (sign * z), -1, 1)))
             self.assertLess(ang, 2.0, which)
 
+    def test_frame_axis_converges_from_a_poor_start(self):
+        """The axial axis settles on the body axis even when the start axis is 20 deg off."""
+        from implicit.anatomy.landmarks import vertebra_landmarks
+        z = self.R[:, 2]
+        off = np.cos(np.radians(20)) * z + np.sin(np.radians(20)) * self.R[:, 1]
+        canal = self.c + self.R @ np.array([0, -24.0, 0])
+        for e in (self.e, vertebra_landmarks(self.f, "L3", off, canal)):
+            ang = np.degrees(np.arccos(np.clip(e["R"][:, 2] @ z, -1, 1)))
+            self.assertLess(ang, 2.0)
+            self.assertLess(np.linalg.norm(e["body_center"] - self.c), 1.0)
+
     def test_endplate_heights_and_body(self):
         for which, h in (("sup", 13.0), ("inf", -13.0)):
             p = self.e[which]["point"]

@@ -22,8 +22,9 @@ parameters named ``<node>_<port>`` (``_x``/``_y``/``_z`` for vectors), so
 changing a value never rebuilds the shader; only rewiring does.
 
 Port types: ``body`` (a field), ``bone`` (a sampled field from a bone file,
-also accepted wherever a body is), ``scalar``, ``vec3``, and static settings
-``number``, ``text``, ``color``, ``bool``, ``choice``, ``path``.
+also accepted wherever a body is), ``scalar``, ``vec3``, ``plane`` (point and
+unit normal), ``frame`` (origin and right/anterior/cranial axes), and static
+settings ``number``, ``text``, ``color``, ``bool``, ``choice``, ``path``.
 
     python -m implicit.graph blocks             # block manifest (JSON) for the editor
     python -m implicit.graph check GRAPH.json   # validate and summarise
@@ -42,15 +43,17 @@ import numpy as np
 
 from .expr import BinOp, Const, Expr, Func, Param, Vec3
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Ctx, Cylinder, Difference, Grid, GridSmooth, HalfSpace,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, Grid, GridSmooth, HalfSpace,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
 
 LIVE = {"scalar", "vec3"}                 # literal values become parameters
-WIRED = {"body", "bone", "scalar", "vec3"}  # types a wire can carry
+WIRED = {"body", "bone", "scalar", "vec3", "plane", "frame"}  # types a wire can carry
+WIRE_ONLY = {"body", "bone", "plane", "frame"}  # inputs that need a wire (no literal)
 STATIC = {"number", "text", "color", "bool", "choice", "path"}
-ACCEPTS = {"body": {"body", "bone"}, "bone": {"bone"}, "scalar": {"scalar"}, "vec3": {"vec3"}}
+ACCEPTS = {"body": {"body", "bone"}, "bone": {"bone"}, "scalar": {"scalar"}, "vec3": {"vec3"},
+           "plane": {"plane"}, "frame": {"frame"}}
 
 
 class GraphError(ValueError):
@@ -144,6 +147,26 @@ class Field:
         return self.bfun(True) if self.bfun else None
 
 
+@dataclass
+class PlaneV:
+    """A plane on a wire: a point on it and its unit normal (vectors of expressions)."""
+    point: Vec3
+    normal: Vec3
+
+
+@dataclass
+class FrameV:
+    """A frame on a wire: origin and the right (x), anterior (y), cranial (z) axes."""
+    origin: Vec3
+    x: Vec3
+    y: Vec3
+    z: Vec3
+
+
+def _const_vec(v):
+    return Vec3(*(Const(float(c)) for c in v))
+
+
 def _interval(e: Expr, now=False):
     """(lo, hi) of an expression over its parameters' slider ranges (``now``: at their
     current values), or None if unknown."""
@@ -235,7 +258,9 @@ def _vector(x, node):
 def _bone(x, node):
     """One implicit bone converted from a segmentation (implicit.anatomy.convert)."""
     g = node.ctx.grid(x["file"])
-    return {"bone": Field(g, lambda now: _grow(g.bounds(), 0.5))}
+    f = Field(g, lambda now: _grow(g.bounds(), 0.5))
+    f.sdf_file = x["file"]
+    return {"bone": f}
 
 
 @block("sphere", "Sphere", "Shapes",
@@ -333,8 +358,17 @@ def _rotate(x, node):
         bb, civ = _child(b, now), _vec_interval(c, now)
         if bb is None or civ is None:
             return None
-        # Any rotation stays inside the sphere about the centre through the farthest corner.
         corners = np.array([[bb[i][0], bb[j][1], bb[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)])
+        if now:  # exact: the box corners rotated by the current angle
+            i, j = {"x": (1, 2), "y": (2, 0), "z": (0, 1)}[x["axis"]]
+            a = np.radians(x["angle"].value())
+            q = corners - civ[0]
+            r = q.copy()
+            r[:, i] = np.cos(a) * q[:, i] - np.sin(a) * q[:, j]
+            r[:, j] = np.sin(a) * q[:, i] + np.cos(a) * q[:, j]
+            r += civ[0]
+            return r.min(0), r.max(0)
+        # Any rotation stays inside the sphere about the centre through the farthest corner.
         far = np.maximum(np.abs(corners - civ[0]), np.abs(corners - civ[1]))  # any centre in range
         r = np.linalg.norm(far, axis=1).max()
         return civ[0] - r, civ[1] + r
@@ -373,6 +407,105 @@ def _smooth(x, node):
     """Gaussian smoothing of a bone surface, width σ; optionally keeps the bone volume."""
     b = x["bone"]
     return {"body": Field(smooth(b.sdf, x["sigma"], x["preserve"]), lambda now: _child(b, now))}
+
+
+# ---------------------------------------------------------------- landmarks, planes, frames
+
+MARK_R, MARK_T, AXIS_L, AXIS_R = 14.0, 0.35, 12.0, 0.6  # landmark marker sizes (mm)
+
+
+def _disc(p: Vec3, n: Vec3, radius, half_t):
+    return Intersect(Intersect(HalfSpace(p + n * half_t, n), HalfSpace(p - n * half_t, -n)),
+                     Translate(Sphere(radius), p))
+
+
+def _axes(f: FrameV, length, radius):
+    o = f.origin
+    return Union(Union(Capsule(o, o + f.x * length, radius), Capsule(o, o + f.y * length, radius)),
+                 Capsule(o, o + f.z * length, radius))
+
+
+def landmark_markers(lm):
+    """Marker body of a bone's landmarks (endplate discs and frame axes) and its bounds."""
+    frame = FrameV(_const_vec(lm["origin"]), *(_const_vec(a) for a in lm["axes"]))
+    sdf = _axes(frame, AXIS_L, AXIS_R)
+    pts = [lm["origin"] - AXIS_L - AXIS_R, lm["origin"] + AXIS_L + AXIS_R]
+    for k in ("sup", "inf"):
+        if k in lm:
+            p, n = lm[k]
+            sdf = Union(sdf, _disc(_const_vec(p), _const_vec(n), MARK_R, MARK_T))
+            pts += [p - MARK_R - MARK_T, p + MARK_R + MARK_T]
+    return sdf, (np.min(pts, axis=0), np.max(pts, axis=0))
+
+
+@block("landmarks", "Landmarks", "Anatomy",
+       [Port("bone", "bone", label="Vertebra (or sacrum)")],
+       [Port("frame", "frame", label="Frame"), Port("superior", "plane", label="Superior endplate"),
+        Port("inferior", "plane", label="Inferior endplate"), Port("markers", "body", label="Markers")])
+def _landmarks(x, node):
+    """Vertebral body frame (origin between the endplates; right, anterior, cranial axes) and the
+    endplate planes (normals point away from the body), detected from the implicit bone."""
+    lm = node.ctx.landmarks(x["bone"].sdf_file)
+    if lm is None:
+        raise GraphError("no landmarks for this bone (vertebrae and sacrum only; "
+                         "run python -m implicit.anatomy.landmarks on its folder)")
+    out = {"frame": FrameV(_const_vec(lm["origin"]), *(_const_vec(a) for a in lm["axes"]))}
+    for k, port in (("sup", "superior"), ("inf", "inferior")):
+        out[port] = PlaneV(_const_vec(lm[k][0]), _const_vec(lm[k][1])) if k in lm else None
+    sdf, b = landmark_markers(lm)
+    out["markers"] = Field(sdf, lambda now: b)
+    return out
+
+
+@block("plane", "Plane", "Planes & frames",
+       [P("point"), V("normal", (0, 0, 1), -1, 1, 0.01, "", "Normal")], [Port("plane", "plane")])
+def _plane(x, node):
+    """Plane through a point with a normal (normalised)."""
+    return {"plane": PlaneV(x["point"], x["normal"])}
+
+
+@block("plane_parts", "Plane parts", "Planes & frames", [Port("plane", "plane", label="Plane")],
+       [Port("point", "vec3", label="Point"), Port("normal", "vec3", label="Normal")])
+def _plane_parts(x, node):
+    """Point and normal of a plane."""
+    return {"point": x["plane"].point, "normal": x["plane"].normal}
+
+
+@block("frame_parts", "Frame parts", "Planes & frames", [Port("frame", "frame", label="Frame")],
+       [Port("origin", "vec3", label="Origin"), Port("x", "vec3", label="Right (x)"),
+        Port("y", "vec3", label="Anterior (y)"), Port("z", "vec3", label="Cranial (z)")])
+def _frame_parts(x, node):
+    """Origin and axes of a frame."""
+    f = x["frame"]
+    return {"origin": f.origin, "x": f.x, "y": f.y, "z": f.z}
+
+
+@block("show_plane", "Show plane", "Planes & frames",
+       [Port("plane", "plane", label="Plane"), S("radius", 14, 1, 60, 0.5, "mm"),
+        S("thickness", 0.7, 0.1, 5, 0.1, "mm")], [Port("body", "body")])
+def _show_plane(x, node):
+    """A thin disc on a plane, to see it in 3D."""
+    pl, r, t = x["plane"], x["radius"], x["thickness"]
+    n = Vec3(*(c for c in pl.normal.c))
+
+    def bounds(now):
+        piv, ru, tu = _vec_interval(pl.point, now), _upper(r, now), _upper(t, now)
+        return None if piv is None or ru is None or tu is None else (piv[0] - ru - tu, piv[1] + ru + tu)
+    # The normal is used as given: planes from Landmarks and Plane parts are unit length.
+    return {"body": Field(_disc(pl.point, n, r, t * 0.5), bounds)}
+
+
+@block("show_frame", "Show frame", "Planes & frames",
+       [Port("frame", "frame", label="Frame"), S("length", 12, 1, 60, 0.5, "mm"),
+        S("radius", 0.6, 0.1, 5, 0.1, "mm")], [Port("body", "body")])
+def _show_frame(x, node):
+    """The three axes of a frame as thin rods (right, anterior, cranial)."""
+    f, length, r = x["frame"], x["length"], x["radius"]
+
+    def bounds(now):
+        oiv, lu, ru = _vec_interval(f.origin, now), _upper(length, now), _upper(r, now)
+        return None if oiv is None or lu is None or ru is None else (oiv[0] - lu - ru, oiv[1] + lu + ru)
+    return {"body": Field(_axes(f, length, r), bounds)}
 
 
 @block("output", "Output body", "Output",
@@ -439,6 +572,26 @@ class _Context:
     def shift(self, offset):
         for g in self._grids.values():
             g.origin = g.origin - offset
+        self.offset = np.asarray(offset, float)
+
+    def landmarks(self, f):
+        """Landmarks of a bone (landmarks.json next to it), in the scene frame, or None."""
+        path = self.resolve(f)
+        cache = self.__dict__.setdefault("_lm", {})
+        if path.parent not in cache:
+            lj = path.parent / "landmarks.json"
+            cache[path.parent] = json.loads(lj.read_text())["landmarks"] if lj.exists() else {}
+        name = self.names.get(path, path.stem)
+        e = cache[path.parent].get("S1" if name == "sacrum" else name)
+        if not e:
+            return None
+        off = getattr(self, "offset", np.zeros(3))
+        R = np.array(e["R"], float)
+        out = {"origin": np.array(e["body_center"], float) - off, "axes": R.T.copy()}
+        for k in ("sup", "inf"):
+            if k in e:
+                out[k] = (np.array(e[k]["point"], float) - off, np.array(e[k]["normal"], float))
+        return out
 
 
 def _parse_wire(v):
@@ -589,7 +742,10 @@ def build_graph(g: dict, base=".", library=None) -> Scene:
                     raise GraphError(f"{nid}.{port.name}: cannot connect {sp.type} ({src}.{sp.name}) "
                                      f"to a {port.type} input")
                 x[port.name] = values[src][sp.name]
-            elif port.type in ("body", "bone"):
+                if x[port.name] is None:
+                    raise GraphError(f"{nid}.{port.name}: {src} has no {sp.label or sp.name} "
+                                     f"(e.g. the sacrum has no inferior endplate)")
+            elif port.type in WIRE_ONLY:
                 raise GraphError(f"{nid}.{port.name}: needs a {port.type} wire")
             elif v is None:
                 raise GraphError(f"{nid}.{port.name}: missing value")
@@ -695,6 +851,10 @@ def _block_templates(blk: Block):
                 h = _Hole(p.name)
                 holes[id(h)] = p.name
                 x[p.name] = Field(h, None)
+            elif p.type == "plane":
+                x[p.name] = PlaneV(*(_vec_hole(f"{p.name}.{k}") for k in ("point", "normal")))
+            elif p.type == "frame":
+                x[p.name] = FrameV(*(_vec_hole(f"{p.name}.{k}") for k in ("origin", "x", "y", "z")))
             elif p.type == "scalar":
                 x[p.name] = _ScalarHole(p.name)
             elif p.type == "vec3":
@@ -709,7 +869,12 @@ def _block_templates(blk: Block):
     return out
 
 
-BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output"}  # handled in viewer/graph.js
+def _vec_hole(name):
+    return Vec3(*(_ScalarHole(f"{name}.{a}") for a in "xyz"))
+
+
+# Handled in viewer/graph.js: value plumbing and per-bone data from the library.
+BROWSER_BUILT = {"number", "vector", "bone", "smooth", "output", "landmarks", "plane", "plane_parts", "frame_parts"}
 
 
 def browser_manifest():
@@ -754,6 +919,13 @@ class Library:
                 "bounds": [(lo - 0.5).tolist(), (hi + 0.5).tolist()],
                 "bone": trace(g), "smooth": trace(sm, {id(g): "bone"}),
             }
+            lm = self.ctx.landmarks(path)
+            if lm:
+                sdf, (blo, bhi) = landmark_markers(lm)
+                bones[self.keys[path]]["landmarks"] = {
+                    "origin": lm["origin"].tolist(), "axes": lm["axes"].tolist(),
+                    **{k: {"point": lm[k][0].tolist(), "normal": lm[k][1].tolist()} for k in ("sup", "inf") if k in lm},
+                    "markers": trace(sdf), "markers_bounds": [blo.tolist(), bhi.tolist()]}
         a = self.atlas
         atlas = None if a is None else {"size": [a.shape[2], a.shape[1], a.shape[0]], "url": atlas_url}
         return {"frame_offset": [float(x) for x in self.offset], "attribution": self.ctx.attribution,

@@ -31,5 +31,17 @@
   "sacrum_smooth": {"block": "smooth", "title": "sacrum smoothing", "pos": [1000, 300], "in": {"bone": "@sacrum", "sigma": 0, "preserve": "@smooth_preserve"}},
   "sacrum_out": {"block": "output", "title": "sacrum", "pos": [1240, 300], "in": {"body": "@sacrum_smooth", "name": "sacrum", "color": "#e0c29e", "group": "Sacrum", "visible": true}},
   "spinal_cord": {"block": "bone", "title": "spinal_cord", "pos": [760, 400], "in": {"file": "../assets/bones/s0751/spinal_cord.npz"}},
-  "spinal_cord_out": {"block": "output", "title": "spinal_cord", "pos": [1240, 400], "in": {"body": "@spinal_cord", "name": "spinal_cord", "color": "#f2d959", "group": "Spinal cord", "visible": false}}
+  "spinal_cord_out": {"block": "output", "title": "spinal_cord", "pos": [1240, 400], "in": {"body": "@spinal_cord", "name": "spinal_cord", "color": "#f2d959", "group": "Spinal cord", "visible": false}},
+  "L1_lm": {"block": "landmarks", "title": "L1 landmarks", "pos": [1520, 0], "in": {"bone": "@L1"}},
+  "L1_lm_out": {"block": "output", "title": "L1 landmarks", "pos": [1760, 0], "in": {"body": "@L1_lm.markers", "name": "L1 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
+  "L2_lm": {"block": "landmarks", "title": "L2 landmarks", "pos": [1520, 130], "in": {"bone": "@L2"}},
+  "L2_lm_out": {"block": "output", "title": "L2 landmarks", "pos": [1760, 130], "in": {"body": "@L2_lm.markers", "name": "L2 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
+  "L3_lm": {"block": "landmarks", "title": "L3 landmarks", "pos": [1520, 260], "in": {"bone": "@L3"}},
+  "L3_lm_out": {"block": "output", "title": "L3 landmarks", "pos": [1760, 260], "in": {"body": "@L3_lm.markers", "name": "L3 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
+  "L4_lm": {"block": "landmarks", "title": "L4 landmarks", "pos": [1520, 390], "in": {"bone": "@L4"}},
+  "L4_lm_out": {"block": "output", "title": "L4 landmarks", "pos": [1760, 390], "in": {"body": "@L4_lm.markers", "name": "L4 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
+  "L5_lm": {"block": "landmarks", "title": "L5 landmarks", "pos": [1520, 520], "in": {"bone": "@L5"}},
+  "L5_lm_out": {"block": "output", "title": "L5 landmarks", "pos": [1760, 520], "in": {"body": "@L5_lm.markers", "name": "L5 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
+  "sacrum_lm": {"block": "landmarks", "title": "sacrum landmarks", "pos": [1520, 650], "in": {"bone": "@sacrum"}},
+  "sacrum_lm_out": {"block": "output", "title": "sacrum landmarks", "pos": [1760, 650], "in": {"body": "@sacrum_lm.markers", "name": "sacrum landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}}
 }}

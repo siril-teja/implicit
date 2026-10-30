@@ -10,10 +10,14 @@ Per vertebra (C2 to L5, plus the S1 superior endplate)
      by marching anteriorly from the spinal-cord centroid, when the cord file
      exists), morphological opening (removes pedicles and processes), largest
      remaining component;
-  2. local frame: axial axis w from the body's smallest principal axis (or the
-     spine tangent when they differ by > 30 deg), anterior a, lateral l = a x w;
+  2. local frame: axial axis w, anterior a (scanner +y made orthogonal to w),
+     lateral l = a x w. w starts as the spine tangent through the neighbouring
+     vertebrae and is then refined to the bisector of the two endplate normals
+     (step 3) until it settles, so a wedge-shaped body (L5) or one with large
+     processes does not tilt the frame;
   3. endplates: march from the body centre along +-w through central columns to
      the bone surface (sub-voxel zero crossing), robust least-squares plane.
+     The frame origin is the midpoint of the two endplate centres.
   S1 is found by marching from L5's inferior endplate down through the disc
   space; C2's inferior endplate from C3.
 
@@ -100,20 +104,13 @@ def isolate_body(f: Field, region, canal=None, tangent=None):
     raise RuntimeError("could not isolate the vertebral body")
 
 
-def body_frame(body_pts, tangent):
-    """Columns (l, a, w): lateral (right), anterior, axial (cranial)."""
-    c = body_pts.mean(0)
-    evals, evecs = np.linalg.eigh(np.cov((body_pts - c).T))
-    w = evecs[:, 0]
-    if np.dot(w, tangent) < 0:
-        w = -w
-    if np.degrees(np.arccos(np.clip(np.dot(w, tangent), -1, 1))) > 30:
-        w = tangent
+def frame_from_axis(w):
+    """Columns (l, a, w): lateral (right), anterior, axial (cranial) for axial axis w."""
+    w = w / np.linalg.norm(w)
     a = np.array([0.0, 1.0, 0.0])
     a = a - a.dot(w) * w
     a /= np.linalg.norm(a)
-    l = np.cross(a, w)
-    return c, np.stack([l, a, w], axis=1)
+    return np.stack([np.cross(a, w), a, w], axis=1)
 
 
 def central_columns(local_uv, frac=0.3, h=1.0):
@@ -175,14 +172,12 @@ def plane_world(c, R, coef, uv0, sign):
     return point, n
 
 
-def vertebra_landmarks(f: Field, level, tangent, canal):
-    body = isolate_body(f, level[0], canal, tangent)
-    c, R = body_frame(body, tangent)
+def _endplates(f: Field, level, body, c, R):
     local = (body - c) @ R
     uv, fp, lo = central_columns(local[:, :2], frac=0.3, h=f.h)
     uv0 = local[:, :2].mean(0)
     height = np.ptp(local[:, 2])
-    out = {"level": level, "body_center": c, "R": R, "height": float(height),
+    out = {"level": level, "R": R, "height": float(height),
            "width": float(np.ptp(local[:, 0])), "depth": float(np.ptp(local[:, 1])),
            "footprint_uv": uv}
     for name, sign in (("sup", 1.0), ("inf", -1.0)):
@@ -193,6 +188,24 @@ def vertebra_landmarks(f: Field, level, tangent, canal):
         p, n = plane_world(c, R, coef, uv0, sign)
         out[name] = {"point": p, "normal": n, "n_pts": int(keep.sum()),
                      "rms": float(np.sqrt(np.mean((pts[keep, 2] - (pts[keep, :2] @ coef[:2] + coef[2])) ** 2)))}
+    return out
+
+
+def vertebra_landmarks(f: Field, level, tangent, canal, iters=6):
+    """Body frame and endplates; the axial axis converges to the endplate-normal bisector."""
+    body = isolate_body(f, level[0], canal, tangent)
+    c, w = body.mean(0), tangent / np.linalg.norm(tangent)
+    for _ in range(iters):
+        out = _endplates(f, level, body, c, frame_from_axis(w))
+        bis = out["sup"]["normal"] - out["inf"]["normal"]
+        bis /= np.linalg.norm(bis)
+        settled = np.degrees(np.arccos(np.clip(bis @ w, -1, 1))) < 0.5
+        w = bis
+        if settled:
+            break
+    out = _endplates(f, level, body, c, frame_from_axis(w))
+    out["R"] = frame_from_axis(w)
+    out["body_center"] = 0.5 * (out["sup"]["point"] + out["inf"]["point"])
     return out
 
 
@@ -239,10 +252,10 @@ def detect(bone_dir, log=print):
     for i, lv in enumerate(levels):
         if lv == "C1":
             continue
+        # Initial axis through the neighbouring vertebrae (one-sided at the ends;
+        # never the sacrum or skull, whose centroids are far off the column).
         up = centroids[levels[i - 1]] if i > 0 else centroids[lv]
         dn = centroids[levels[i + 1]] if i + 1 < len(levels) else centroids[lv]
-        if i + 1 == len(levels) and "sacrum" in fields:  # last level: look down to the sacrum
-            dn = fields["sacrum"].inside_points().mean(0)
         tangent = (up - dn) / np.linalg.norm(up - dn)
         canal = None
         if cord_pts is not None:
