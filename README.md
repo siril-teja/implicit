@@ -1,6 +1,6 @@
 # implicit
 
-nTop-style implicit (signed-distance-field) modeling for parametric spine FE
+Implicit (signed-distance-field) modeling for parametric spine FE
 models. Geometry is written as Python scripts, rendered live in the browser,
 and exported for meshing.
 
@@ -12,7 +12,7 @@ and exported for meshing.
 - **Export:** the graph is evaluated in NumPy and meshed with narrow-band
   marching tetrahedra to closed, manifold STL. FE mesh export (Marc/Abaqus) is next.
 
-Read [docs/primer.md](docs/primer.md) for the nTop scouting, the math, and the
+Read [docs/primer.md](docs/primer.md) for the background, the math, and the
 roadmap. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
@@ -35,7 +35,7 @@ python -m implicit.serve examples/anatomy.py
 ```
 
 Each bone has a **smoothing** slider (σ in mm, Gaussian blur of the implicit
-field, like nTop's "Smoothen Body") that keeps the bone volume by default. To mesh
+field) that keeps the bone volume by default. To mesh
 bodies at chosen slider values (closed, manifold STL):
 
 ```bash
