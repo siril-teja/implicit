@@ -47,6 +47,8 @@ const headless = process.env.GPU_CHECK_HEADED !== "1";
 const browser = await chromium.launch({ args, channel: "chromium", headless, timeout: 60000 });
 const page = await browser.newPage();
 page.on("pageerror", (e) => console.log("pageerror:", e.message));
+const t0 = Date.now();  // progress in the CI log, so a timeout shows where it stopped
+page.on("console", (m) => { const s = m.text().match(/^diag: \s*(== .*)/); if (s) console.log(`[${Math.round((Date.now() - t0) / 1000)} s] ${s[1]}`); });
 let code = 1;
 try {
   await page.goto(url, { timeout: 60000 });
@@ -64,6 +66,7 @@ try {
     await v.waitForFunction(() => /compiled|error|could not/i.test(document.querySelector("#status").textContent),
       null, { timeout: 5 * 60 * 1000, polling: 1000 });
     const status = await v.textContent("#status");
+    console.log(`[${Math.round((Date.now() - t0) / 1000)} s] viewer ${key} done`);
     console.log(`viewer ${key}: ${status.split("\n")[0]}`);
     if (!/compiled/.test(status) || errs.length) viewerErrors.push(`${key}: ${status} ${errs.join("; ")}`);
     await v.close();

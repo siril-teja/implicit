@@ -8,11 +8,9 @@
 const $ = (s) => document.querySelector(s);
 const TOL = (d) => 0.15 + 0.002 * Math.abs(d);  // mm; trilinear filtering differs slightly per GPU
 const lines = [];
-const log = (s) => { lines.push(s); $("#report").value = lines.join("\n"); };
+const log = (s) => { lines.push(s); $("#report").value = lines.join("\n"); console.log("diag: " + s); };
 window.DIAG = { done: false, pass: false, failures: [], checks: 0 };
 
-const f = (v) => v.toFixed(4);
-const vec3 = (p) => `vec3(${f(p[0])}, ${f(p[1])}, ${f(p[2])})`;
 
 function setUniforms(gl, U, scene, atlas, values = {}) {
   if (U.u_atlas) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D, atlas); gl.uniform1i(U.u_atlas, 0); }
@@ -23,14 +21,40 @@ function setUniforms(gl, U, scene, atlas, values = {}) {
   if (U.u_bmin) { gl.uniform3fv(U.u_bmin, scene.bounds[0]); gl.uniform3fv(U.u_bmax, scene.bounds[1]); }
 }
 
-// One output pixel per probe; each fragment runs its probe statement (sets vec4 o).
-function runProbes(gl, scene, atlas, stmts, values) {
-  const n = stmts.length;
-  let body = "";
-  stmts.forEach((st, i) => { body += `  if (i == ${i}) { ${st} }\n`; });
-  const frag = GPU.FRAG_HEAD + scene.glsl + PROBE_LIB
-    + `\nvoid main() {\n  int i = int(gl_FragCoord.x);\n  vec4 o = vec4(-999.0);\n${body}  outColor = o;\n}`;
+// One output pixel per probe. Probe i reads its point and shader unit from a data
+// texture (RGBA32F: xyz, unit) and calls that unit through one dispatch function, so
+// each unit's code appears once in the program however many probes there are (large
+// scenes otherwise make programs too big for some drivers). mode 0: field value at the
+// point; mode 1: ray from ``eye`` toward the point with that unit alone.
+// Probes run in programs of at most UNITS_PER_PROGRAM units: functions a program
+// never calls are dropped before the driver compiles it, which keeps each program
+// small enough for slow compilers (D3D) in scenes of many bodies.
+const UNITS_PER_PROGRAM = 8;
+function runProbes(gl, scene, atlas, rows, values, mode, eye = [0, 0, 0]) {
+  const px = new Float32Array(rows.length * 4);
+  const units = [...new Set(rows.map((r) => r[0]))];
+  for (let k = 0; k < units.length; k += UNITS_PER_PROGRAM) {
+    const chunk = new Set(units.slice(k, k + UNITS_PER_PROGRAM));
+    const idx = rows.map((r, i) => (chunk.has(r[0]) ? i : -1)).filter((i) => i >= 0);
+    const out = runProbeProgram(gl, scene, atlas, idx.map((i) => rows[i]), values, mode, eye, [...chunk]);
+    idx.forEach((i, j) => px.set(out.subarray(j * 4, j * 4 + 4), i * 4));
+  }
+  return px;
+}
+
+function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
+  const n = rows.length;
+  const dispatch = "vec2 unitAt(int u, vec3 p) {\n"
+    + units.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n  return vec2(1e10, -1.0);\n}\n";
+  const frag = GPU.FRAG_HEAD + scene.glsl + "\n" + dispatch + PROBE_LIB;
   const { prog, uniforms } = GPU.program(gl, frag);
+  const data = new Float32Array(n * 4);
+  rows.forEach(([u, x, y, z], i) => data.set([x, y, z, u], i * 4));
+  const dtex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE4);
+  gl.bindTexture(gl.TEXTURE_2D, dtex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, n, 1, 0, gl.RGBA, gl.FLOAT, data);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
   const tex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE3);
   gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -40,24 +64,45 @@ function runProbes(gl, scene, atlas, stmts, values) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.useProgram(prog);
   setUniforms(gl, uniforms, scene, atlas, values);
+  gl.uniform1i(uniforms.u_probe, 4);
+  gl.uniform1f(uniforms.u_mode, mode);
+  if (uniforms.u_eye0) gl.uniform3fv(uniforms.u_eye0, eye);
   gl.viewport(0, 0, n, 1);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   const px = new Float32Array(n * 4);
   gl.readPixels(0, 0, n, 1, gl.RGBA, gl.FLOAT, px);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.deleteFramebuffer(fb); gl.deleteTexture(tex); gl.deleteProgram(prog);
+  gl.deleteFramebuffer(fb); gl.deleteTexture(tex); gl.deleteTexture(dtex); gl.deleteProgram(prog);
   return px;
 }
 
 // Ray march toward a target with one unit alone: (iterations, t, min distance, hit).
 const PROBE_LIB = `
+uniform highp sampler2D u_probe;
+uniform float u_mode;
+uniform vec3 u_eye0;
 vec2 probeBox(vec3 ro, vec3 rd) {
   vec3 inv = 1.0 / rd;
   vec3 t0 = (u_bmin - ro) * inv, t1 = (u_bmax - ro) * inv;
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
-#define MARCH(UNIT, RO, TARGET) { vec3 rd = normalize(TARGET - RO); vec2 bh = probeBox(RO, rd); float t = max(bh.x, 0.0), mind = 1e9, it = 0.0, hit = 0.0; for (int k = 0; k < 300; k++) { float d = UNIT(RO + rd * t).x; mind = min(mind, d); it += 1.0; if (d < 0.002 * t + 0.01) { hit = 1.0; break; } t += 0.85 * d; if (t > bh.y) break; } o = vec4(it, t, mind, hit); }
+void main() {
+  vec4 a = texelFetch(u_probe, ivec2(int(gl_FragCoord.x), 0), 0);
+  int u = int(a.w + 0.5);
+  if (u_mode < 0.5) { outColor = vec4(unitAt(u, a.xyz).x, 0.0, 0.0, 0.0); return; }
+  vec3 ro = u_eye0, rd = normalize(a.xyz - ro);
+  vec2 bh = probeBox(ro, rd);
+  float t = max(bh.x, 0.0), mind = 1e9, it = 0.0, hit = 0.0;
+  for (int k = 0; k < 300; k++) {
+    float d = unitAt(u, ro + rd * t).x;
+    mind = min(mind, d); it += 1.0;
+    if (d < 0.002 * t + 0.01) { hit = 1.0; break; }
+    t += 0.85 * d;
+    if (t > bh.y) break;
+  }
+  outColor = vec4(it, t, mind, hit);
+}
 `;
 
 const getJson = async (url) => (await fetch(url, { cache: "no-store" })).json();
@@ -86,12 +131,12 @@ async function check(gl, key, scene, probes, atlas, how) {
     const label = (b === 0 ? "slider defaults" : "sliders moved") + how;
     log(`\n== ${scene.name} (${key}), ${label}: ${batch.units.length} units`);
     // 1) distances at probe points
-    const exprs = [], meta = [];
+    const rows = [], meta = [];
     for (const u of batch.units) for (const p of u.points) {
-      exprs.push(`o = vec4(unit${u.unit}(${vec3(p)}).x, 0.0, 0.0, 0.0);`);
+      rows.push([u.unit, p[0], p[1], p[2]]);
       meta.push([u, p]);
     }
-    const px = runProbes(gl, scene, atlas, exprs, batch.params);
+    const px = runProbes(gl, scene, atlas, rows, batch.params, 0);
     let bad = 0;
     meta.forEach(([u, p], i) => {
       const gpu = px[i * 4], ref = p[3];
@@ -108,8 +153,7 @@ async function check(gl, key, scene, probes, atlas, how) {
     const ext = Math.max(...hi.map((v, i) => v - lo[i]));
     const eye = [c[0] + 1.6 * ext, c[1] + 0.6 * ext, c[2] + 0.3 * ext];
     const targets = batch.units.filter((u) => u.target);
-    const rays = runProbes(gl, scene, atlas,
-      targets.map((u) => `MARCH(unit${u.unit}, ${vec3(eye)}, ${vec3(u.target)})`), batch.params);
+    const rays = runProbes(gl, scene, atlas, targets.map((u) => [u.unit, ...u.target]), batch.params, 1, eye);
     let missed = 0;
     targets.forEach((u, i) => {
       window.DIAG.checks++;

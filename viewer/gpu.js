@@ -29,21 +29,6 @@ vec2 mapClip(vec3 p) {
   if (u_clipOn > 0.5) m.x = max(m.x, dot(p, u_clip.xyz) - u_clip.w);
   return m;
 }
-// Forward differences from the field value d0 already known at p: 3 scene evaluations.
-vec3 calcNormal(vec3 p, float d0) {
-  const float e = 0.02;
-  return normalize(vec3(mapClip(p + vec3(e, 0.0, 0.0)).x, mapClip(p + vec3(0.0, e, 0.0)).x,
-                        mapClip(p + vec3(0.0, 0.0, e)).x) - d0);
-}
-float calcAO(vec3 p, vec3 n) {
-  float occ = 0.0, w = 1.0;
-  for (int i = 1; i <= 3; i++) {
-    float h = 0.9 * float(i);
-    occ += w * (h - mapClip(p + n * h).x);
-    w *= 0.7;
-  }
-  return clamp(1.0 - 0.15 * occ, 0.0, 1.0);
-}
 vec2 boxHit(vec3 ro, vec3 rd) {
   vec3 inv = 1.0 / rd;
   vec3 t0 = (u_bmin - ro) * inv, t1 = (u_bmax - ro) * inv;
@@ -65,14 +50,39 @@ void main() {
   vec3 bg = mix(vec3(0.13, 0.14, 0.17), vec3(0.24, 0.26, 0.31), 0.5 + 0.5 * uv.y);
   vec2 bh = boxHit(ro, rd);
   if (bh.x > bh.y || bh.y < 0.0) { outColor = u_pick > 0.5 ? vec4(0.0) : vec4(pow(bg, vec3(0.4545)), 1.0); return; }
+  // One loop, one call of the scene: march to the surface, then 3 samples for the
+  // normal (forward differences), then 3 for ambient occlusion. Drivers inline every
+  // call site of sceneMap, so a single site keeps compile time and code size down in
+  // scenes of many bodies (D3D especially).
   float t = max(bh.x, 0.0);
   float id = -1.0, d0 = 0.0;
   float tol = u_fast > 0.5 ? 0.004 : 0.002;  // hit tolerance per mm of ray length
-  for (int i = 0; i < 300; i++) {
-    vec2 m = mapClip(ro + rd * t);
-    if (m.x < tol * t + 0.01) { id = m.y; d0 = m.x; break; }
-    t += 0.85 * m.x;
-    if (t > bh.y) break;
+  const float e = 0.02;
+  int last = u_pick > 0.5 ? 0 : (u_fast > 0.5 ? 3 : 6);  // final phase
+  int phase = 0;  // 0 march, 1-3 normal, 4-6 occlusion
+  vec3 p = ro, g = vec3(0.0), n = vec3(0.0, 0.0, 1.0);
+  float occ = 0.0, w = 1.0;
+  for (int i = 0; i < 310; i++) {
+    vec3 q = phase == 0 ? ro + rd * t
+           : phase <= 3 ? p + e * vec3(phase == 1, phase == 2, phase == 3)
+           : p + n * (0.9 * float(phase - 3));
+    vec2 m = mapClip(q);
+    if (phase == 0) {
+      if (m.x < tol * t + 0.01) { id = m.y; d0 = m.x; p = q; if (last == 0) break; phase = 1; continue; }
+      t += 0.85 * m.x;
+      if (t > bh.y || i >= 299) break;
+    } else if (phase <= 3) {
+      g[phase - 1] = m.x;
+      if (phase == 3) n = normalize(g - d0);
+      if (phase == last) break;
+      phase++;
+    } else {
+      float h = 0.9 * float(phase - 3);
+      occ += w * (h - m.x);
+      w *= 0.7;
+      if (phase == last) break;
+      phase++;
+    }
   }
   if (u_pick > 0.5) {
     float v = id + 1.0;
@@ -81,15 +91,13 @@ void main() {
   }
   vec3 col = bg;
   if (id >= 0.0) {
-    vec3 p = ro + rd * t;
-    vec3 n = calcNormal(p, d0);
     vec3 base = bodyColor(int(id));
     bool cut = u_clipOn > 0.5 && abs(dot(p, u_clip.xyz) - u_clip.w) < 0.05;
     if (cut) base *= 0.75 + 0.25 * step(0.5, fract((p.x + p.y + p.z) * 0.35));
     vec3 l1 = normalize(-u_fwd + u_up * 0.6 + u_right * 0.4);
     float dif = max(dot(n, l1), 0.0);
     float hemi = 0.5 + 0.5 * n.z;
-    float ao = u_fast > 0.5 ? 0.85 : calcAO(p, n);
+    float ao = u_fast > 0.5 ? 0.85 : clamp(1.0 - 0.15 * occ, 0.0, 1.0);
     float spec = pow(max(dot(reflect(rd, n), l1), 0.0), 32.0);
     col = base * (0.85 * dif + 0.35 * hemi * ao) + 0.15 * spec;
     if (highlighted(int(id))) {

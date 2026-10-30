@@ -7,8 +7,8 @@ masks) and writes ``landmarks.json`` next to them, in the same scanner frame.
 
 Per vertebra (C2 to L5, plus the S1 superior endplate)
   1. isolate the vertebral body: drop points behind the posterior wall (found
-     by marching anteriorly from the spinal-cord centroid, when the cord file
-     exists), morphological opening (removes pedicles and processes), largest
+     by marching anteriorly from the spinal-cord centroid, or from the centre of
+     the vertebral foramen when there is no cord file), morphological opening (removes pedicles and processes), largest
      remaining component;
   2. local frame: axial axis w, anterior a (scanner +y made orthogonal to w),
      lateral l = a x w. w starts as the spine tangent through the neighbouring
@@ -34,7 +34,8 @@ import numpy as np
 
 from .convert import VERTEBRAE, load_bones
 
-OPEN_RADIUS = {"C": 4.5, "T": 4.5, "L": 5.5, "S": 5.5}  # mm, body isolation
+OPEN_RADIUS = {"C": 4.5, "T": 4.5, "L": 5.5, "S": 5.5, "L5": 7.0}  # mm, body isolation
+# (by region; L5 by level: its transverse processes are thick enough to survive 5.5)
 
 
 def _ndi():
@@ -69,7 +70,35 @@ def posterior_wall(f: Field, canal, tangent, reach=45.0, step=0.25):
     return canal + ts[hit[0]] * a, a
 
 
-def isolate_body(f: Field, region, canal=None, tangent=None):
+def foramen_centre(f: Field, z, slab=4.0):
+    """Centre of the vertebral foramen near height ``z``, or None.
+
+    Used when there is no spinal-cord file: the bone inside a thin axial slab is
+    projected onto the axial plane and the largest enclosed hole is the canal.
+    """
+    ndi = _ndi()
+    pts = f.inside_points()
+    pts = pts[np.abs(pts[:, 2] - z) < slab]
+    if len(pts) < 50:
+        return None
+    lo = pts[:, :2].min(0) - 2 * f.h
+    ij = np.round((pts[:, :2] - lo) / f.h).astype(int)
+    img = np.zeros(ij.max(0) + 3, dtype=bool)
+    img[ij[:, 0], ij[:, 1]] = True
+    img = ndi.binary_closing(img, iterations=2)
+    holes = ndi.binary_fill_holes(img) & ~img
+    lab, n = ndi.label(holes)
+    if n == 0:
+        return None
+    sizes = ndi.sum(holes, lab, range(1, n + 1))
+    k = int(np.argmax(sizes)) + 1
+    if sizes[k - 1] * f.h ** 2 < 40:  # mm^2; smaller holes are foramina of vessels
+        return None
+    uv = lo + f.h * np.argwhere(lab == k).mean(0)
+    return np.array([uv[0], uv[1], z])
+
+
+def isolate_body(f: Field, level, canal=None, tangent=None):
     """Points of the vertebral body.
 
     Morphological opening removes thin processes; when the canal is known, all
@@ -83,7 +112,7 @@ def isolate_body(f: Field, region, canal=None, tangent=None):
         if wall is not None:
             grid_pts = f.o + f.h * np.indices(f.v.shape).reshape(3, -1).T
             inside = inside & ((grid_pts - wall) @ a > -1.0).reshape(f.v.shape)
-    r = OPEN_RADIUS[region]
+    r = OPEN_RADIUS.get(level, OPEN_RADIUS[level[0]])
     for _ in range(4):
         core = (f.v < -r) & inside
         if core.any():
@@ -193,7 +222,7 @@ def _endplates(f: Field, level, body, c, R):
 
 def vertebra_landmarks(f: Field, level, tangent, canal, iters=6):
     """Body frame and endplates; the axial axis converges to the endplate-normal bisector."""
-    body = isolate_body(f, level[0], canal, tangent)
+    body = isolate_body(f, level, canal, tangent)
     c, w = body.mean(0), tangent / np.linalg.norm(tangent)
     for _ in range(iters):
         out = _endplates(f, level, body, c, frame_from_axis(w))
@@ -262,6 +291,8 @@ def detect(bone_dir, log=print):
             near = cord_pts[np.abs(cord_pts[:, 2] - centroids[lv][2]) < 6]
             if len(near) > 20:
                 canal = near.mean(0)
+        else:
+            canal = foramen_centre(fields[lv], centroids[lv][2])
         try:
             marks[lv] = vertebra_landmarks(fields[lv], lv, tangent, canal)
             e = marks[lv]
