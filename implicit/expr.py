@@ -177,6 +177,11 @@ class Vec3:
         self.c = (wrap(x), wrap(y), wrap(z))
 
     def glsl(self):
+        # The x, y, z of one vector-valued call (e.g. posePoint(...)): emit the call once.
+        whole = getattr(self.c[0], "whole", None)
+        if whole is not None and all(getattr(c, "whole", None) is whole and c.comp == k
+                                     for k, c in enumerate(self.c)):
+            return whole.glsl()
         return "vec3(" + ", ".join(c.glsl() for c in self.c) + ")"
 
     def value(self):
@@ -188,21 +193,64 @@ class Vec3:
     def is_const(self):
         return all(c.is_const() for c in self.c)
 
+    # Arithmetic stays vector-level in GLSL ("(a + b)", "(a * k)"), so a long vector
+    # expression is not repeated once per component; per-component expressions are kept
+    # for values, parameters and bounds.
     def __neg__(self):
-        return Vec3(*(-c for c in self.c))
+        return _vec_op("neg", self, None, [-c for c in self.c])
 
     def __add__(self, o):
         o = vec3(o)
-        return Vec3(*(a + b for a, b in zip(self.c, o.c)))
+        return _vec_op("+", self, o, [a + b for a, b in zip(self.c, o.c)])
 
     def __sub__(self, o):
         o = vec3(o)
-        return Vec3(*(a - b for a, b in zip(self.c, o.c)))
+        return _vec_op("-", self, o, [a - b for a, b in zip(self.c, o.c)])
 
     def __mul__(self, k):
-        return Vec3(*(c * k for c in self.c))
+        k = wrap(k)
+        return _vec_op("*", self, k, [c * k for c in self.c])
 
     __rmul__ = __mul__
+
+
+class _VecOp:
+    """A vector expression emitted whole: (a + b), (a - b), (a * k) or (-a)."""
+
+    def __init__(self, op, a, b):
+        self.op, self.a, self.b = op, a, b
+
+    def glsl(self):
+        if self.op == "neg":
+            return f"(-{self.a.glsl()})"
+        return f"({self.a.glsl()} {self.op} {self.b.glsl()})"
+
+
+class VecComp(Expr):
+    """Component of a whole vector expression; ``expanded()`` is the same value per component."""
+
+    def __init__(self, whole, comp, expanded):
+        self.whole, self.comp, self._expanded = whole, comp, expanded
+
+    def glsl(self):
+        return f"{self.whole.glsl()}.{'xyz'[self.comp]}"
+
+    def value(self):
+        return self._expanded.value()
+
+    def params(self):
+        return self._expanded.params()
+
+    def is_const(self):
+        return self._expanded.is_const()
+
+    def expanded(self):
+        return self._expanded
+
+
+def _vec_op(op, a, b, comps):
+    whole = _VecOp(op, a, b)
+    return Vec3(*(VecComp(whole, k, c) for k, c in enumerate(comps)))
 
 
 class SlotRef(Expr):

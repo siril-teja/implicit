@@ -332,7 +332,7 @@ const Graph = (() => {
   function valueFrom(t, inputs, params) {
     if (t === null || t === undefined) return null;
     const scalar = (s) => {
-      const g = s.replace(/\$\{([^}]+)\}/g, (_, inp) => scalarGlsl(inputs, inp));
+      const g = collapseVec(s, inputs).replace(/\$\{([^}]+)\}/g, (_, inp) => scalarGlsl(inputs, inp));
       return { g, iv: null, ev: evaluator(g, params) };
     };
     if (typeof t === "string") return scalar(t);
@@ -374,9 +374,19 @@ const Graph = (() => {
     return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.g) ? v.g : `(${v.g})`;
   }
 
+  // vec3(${a.x}, ${a.y}, ${a.z}) where the three are the parts of one vector call
+  // (e.g. posePoint(...).x/.y/.z): emit the call once, as the Python side does.
+  function collapseVec(s, inputs) {
+    return s.replace(/vec3\(\$\{([^}]+)\.x\}, \$\{\1\.y\}, \$\{\1\.z\}\)/g, (whole, base) => {
+      const g = ["x", "y", "z"].map((a) => scalarGlsl(inputs, `${base}.${a}`).replace(/^\((.*)\)$/, "$1"));
+      const m = g[0].match(/^(.*)\.x$/);
+      return m && g[1] === `${m[1]}.y` && g[2] === `${m[1]}.z` ? m[1] : whole;
+    });
+  }
+
   function expand(ctx, body, p) {
     const res = [];
-    const subst = (s) => s.replace(/\$\{([^}]+)\}|\$(p|\d+)/g, (_, inp, tok) =>
+    const subst = (s) => collapseVec(s, body.inputs).replace(/\$\{([^}]+)\}|\$(p|\d+)/g, (_, inp, tok) =>
       inp ? scalarGlsl(body.inputs, inp) : tok === "p" ? p : res[+tok]);
     for (const op of body.tmpl.ops) {
       if (op[0] === "var") res.push(ctx.var(op[1], subst(op[2])));

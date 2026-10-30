@@ -22,6 +22,12 @@ publishes that section as the GitHub release notes. Versions follow
 - Blocks can output moved planes, frames and vertebrae (not only bodies); the
   browser evaluates them from expressions recorded from the Python blocks.
 
+### Changed
+- Smaller shaders: vector arithmetic is emitted as whole-vector GLSL instead of
+  one expression per component, and moved planes and frames are calls to
+  `posePoint`/`poseDir` helpers. The anatomy shader is 87 kB instead of
+  620 kB with the expanded form, which Direct3D compiled too slowly.
+
 ### Fixed
 - Landmark axes are re-orthonormalised when loaded (`landmarks.json` stores 4
   decimals), so a pose with zero angles is exactly the identity.

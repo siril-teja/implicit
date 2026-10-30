@@ -789,6 +789,18 @@ float gridSDF(vec3 p, vec3 o, float invh, vec3 nmax, vec3 off, float h, float ma
     float d = (textureLod(u_atlas, (qc.zyx + off) / u_atlasSize, 0.0).r * 255.0 - {QZERO}.0) * {QSTEP};
     return ext > 1e-4 ? ext + margin : d;
 }}
+// Pose (graph Pose block): R = Rz(axial) Ry(lateral) Rx(-flexion) in the frame (ex, ey, ez);
+// ang = (flexion, lateral, axial) in degrees, sh = shift along the frame axes.
+vec3 poseRot(vec3 l, vec3 ang) {{
+    return rotZ(rotY(rotX(l, -radians(ang.x)), radians(ang.y)), radians(ang.z));
+}}
+vec3 poseDir(vec3 v, vec3 ex, vec3 ey, vec3 ez, vec3 ang) {{
+    vec3 l = poseRot(vec3(dot(v, ex), dot(v, ey), dot(v, ez)), ang);
+    return ex * l.x + ey * l.y + ez * l.z;
+}}
+vec3 posePoint(vec3 p, vec3 o, vec3 ex, vec3 ey, vec3 ez, vec3 ang, vec3 sh) {{
+    return o + poseDir(p - o, ex, ey, ez, ang) + ex * sh.x + ey * sh.y + ez * sh.z;
+}}
 float sdAABB(vec3 p, vec3 lo, vec3 hi) {{
     vec3 q = abs(p - 0.5 * (lo + hi)) - 0.5 * (hi - lo);
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);

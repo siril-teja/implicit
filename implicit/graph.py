@@ -45,6 +45,7 @@ import numpy as np
 from .expr import BinOp, Const, Expr, Func, Param, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
 from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace,
+                  _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
 FORMAT, VERSION = "implicit.graph", 1
@@ -179,6 +180,8 @@ def _const_vec(v):
 def _interval(e: Expr, now=False):
     """(lo, hi) of an expression over its parameters' slider ranges (``now``: at their
     current values), or None if unknown."""
+    if hasattr(e, "expanded"):  # component of a whole vector expression
+        return _interval(e.expanded(), now)
     if isinstance(e, Param):
         return (e.v, e.v) if now else (min(e.lo, e.v), max(e.hi, e.v))
     if isinstance(e, Const) or e.is_const():
@@ -521,79 +524,77 @@ def _show_frame(x, node):
 
 # ---------------------------------------------------------------- pose
 
-def _dot(a: Vec3, b: Vec3):
-    return a.c[0] * b.c[0] + a.c[1] * b.c[1] + a.c[2] * b.c[2]
+def _pose_np(fn, args):
+    """NumPy value of poseDir/posePoint (see GLSL_LIB) for float vectors."""
+    if fn == "poseDir":
+        v, ex, ey, ez, ang = args
+        E = np.stack([ex, ey, ez])
+        loc = (E @ v)[None]
+        loc = _rot_np(_rot_np(_rot_np(loc, 0, -np.radians(ang[0])), 1, np.radians(ang[1])), 2, np.radians(ang[2]))
+        return loc[0] @ E
+    p, o, ex, ey, ez, ang, sh = args
+    E = np.stack([ex, ey, ez])
+    return o + _pose_np("poseDir", [p - o, ex, ey, ez, ang]) + sh @ E
 
 
-def _rot_matrix(axis, deg):
-    """Rotation matrix (rows of expressions) by ``deg`` degrees about axis 0/1/2."""
-    c, s = cos(radians(deg)), sin(radians(deg))
-    m = [[Const(1.0) if r == k else Const(0.0) for k in range(3)] for r in range(3)]
-    i, j = {0: (1, 2), 1: (2, 0), 2: (0, 1)}[axis]
-    m[i][i], m[i][j], m[j][i], m[j][j] = c, -s, s, c
-    return m
+class _PoseCall:
+    """poseDir(...) or posePoint(...) (see GLSL_LIB) on vectors of expressions."""
+
+    def __init__(self, fn, args):
+        self.fn, self.args = fn, args
+
+    def glsl(self):
+        return f"{self.fn}({', '.join(a.glsl() for a in self.args)})"
+
+    def value(self):
+        return _pose_np(self.fn, [np.array(a.value(), float) for a in self.args])
 
 
-def _matmul(a, b):
-    def term(r, k):
-        parts = [_mul(a[r][m], b[m][k]) for m in range(3)
-                 if not (_is_zero(a[r][m]) or _is_zero(b[m][k]))]
-        if not parts:
-            return Const(0.0)
-        out = parts[0]
-        for q in parts[1:]:
-            out = out + q
-        return out
-    return [[term(r, k) for k in range(3)] for r in range(3)]
+class _PoseComp(Expr):
+    """One component of a pose call. A Vec3 of the three components emits the call once,
+    so moved planes and frames stay small in the shader."""
 
+    def __init__(self, whole: _PoseCall, comp):
+        self.whole, self.comp = whole, comp
 
-def _is_zero(e):
-    return isinstance(e, Const) and e.v == 0.0
+    def glsl(self):
+        return f"{self.whole.glsl()}.{'xyz'[self.comp]}"
 
+    def value(self):
+        return float(self.whole.value()[self.comp])
 
-def _mul(a, b):
-    if isinstance(a, Const) and a.v == 1.0:
-        return b
-    if isinstance(b, Const) and b.v == 1.0:
-        return a
-    return a * b
+    def params(self):
+        return [q for a in self.whole.args for q in a.params()]
+
+    def is_const(self):
+        return all(a.is_const() for a in self.whole.args)
 
 
 class _Pose:
-    """The rigid motion of the Pose block, applied to points and directions (as expressions).
-
-    In frame coordinates R = Rz(axial) Ry(lateral) Rx(-flexion); the frame axes are
-    orthonormal, so a moved axis is the frame combination of a column of R.
-    """
+    """The rigid motion of the Pose block, applied to points and directions (as expressions)."""
 
     def __init__(self, f: FrameV, flexion, lateral, axial, shift: Vec3):
         self.f, self.shift = f, shift
-        self.R = _matmul(_matmul(_rot_matrix(2, axial), _rot_matrix(1, lateral)), _rot_matrix(0, -flexion))
+        self.ang = Vec3(flexion, lateral, axial)
 
-    def _to_world(self, loc):
-        f = self.f
-        return f.x * loc[0] + f.y * loc[1] + f.z * loc[2]
-
-    def _rotate(self, w: Vec3):
-        f = self.f
-        loc = [_dot(w, f.x), _dot(w, f.y), _dot(w, f.z)]
-        return self._to_world([self.R[r][0] * loc[0] + self.R[r][1] * loc[1] + self.R[r][2] * loc[2]
-                               for r in range(3)])
+    def _call(self, fn, *args):
+        whole = _PoseCall(fn, list(args))
+        return Vec3(*(_PoseComp(whole, k) for k in range(3)))
 
     def direction(self, n: Vec3):
-        return self._rotate(n)
+        f = self.f
+        return self._call("poseDir", n, f.x, f.y, f.z, self.ang)
 
     def point(self, p: Vec3):
-        f, t = self.f, self.shift.c
-        return f.origin + self._rotate(p - f.origin) + (f.x * t[0] + f.y * t[1] + f.z * t[2])
+        f = self.f
+        return self._call("posePoint", p, f.origin, f.x, f.y, f.z, self.ang, self.shift)
 
     def plane(self, pl):
         return None if pl is None else PlaneV(self.point(pl.point), self.direction(pl.normal))
 
     def frame(self):
-        f, t = self.f, self.shift.c
-        axes = [self._to_world([self.R[r][k] for r in range(3)]) for k in range(3)]
-        return FrameV(f.origin + (f.x * t[0] + f.y * t[1] + f.z * t[2]), *axes)
+        f = self.f
+        return FrameV(self.point(f.origin), self.direction(f.x), self.direction(f.y), self.direction(f.z))
 
 
 @block("pose", "Pose", "Anatomy",
