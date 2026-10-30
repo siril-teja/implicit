@@ -82,6 +82,8 @@ function useScene(scene, keep) {
   }
   const first = !state.scene;
   if (state.prog) gl.deleteProgram(state.prog);
+  if (state.built && state.built.instTex) gl.deleteTexture(state.built.instTex);
+  state.built = built;
   state.prog = built.prog;
   state.uniforms = built.uniforms;
   const oldVals = state.values;
@@ -545,6 +547,8 @@ function setUniforms(w, h) {
   if (U.u_fast) gl.uniform1f(U.u_fast, 0);
   if (U.u_hl) gl.uniform4uiv(U.u_hl, state.hl);
   s.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], state.vis[i] ? 1 : 0); });
+  const byUniform = Object.fromEntries(s.params.map((p) => [p.uniform, state.values[p.name]]));
+  GPU.bindInstances(gl, state.built, (u) => (u.startsWith("u_grp") ? (state.vis[+u.slice(5)] ? 1 : 0) : byUniform[u]));
 }
 
 // Quality: the pixel density of the sharp (refined) image on high-DPI screens.

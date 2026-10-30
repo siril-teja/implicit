@@ -11,8 +11,9 @@ publishes that section as the GitHub release notes. Versions follow
 - The average spine took 40+ s to compile on Windows (Chrome/Edge translate
   WebGL to Direct3D, whose compiler inlines every function at every call site)
   and often never loaded. Bodies built alike (vertebrae, their markers, paired
-  bones) now share one shader function with their numbers in constant tables;
-  the shader is 72 kB instead of 259 kB, with the same image.
+  bones) now share one shader function, called from one loop; their numbers come
+  from a small float texture and their parameters from a uniform array. The
+  shader is 26 kB instead of 259 kB, with the same image, and renders faster.
 - GPU check: fails when a viewer shader takes longer than 15 s to compile.
 
 ## [0.8.0] - 2026-10-30

@@ -43,7 +43,6 @@ bool highlighted(int i) {
   return ((bits >> uint(i & 31)) & 1u) != 0u;
 }
 void main() {
-  sceneInit();
   vec2 fc = u_pick > 0.5 ? u_pickPx : gl_FragCoord.xy;
   vec2 uv = (2.0 * fc - u_res) / u_res.y;
   vec3 rd = normalize(u_fwd + uv.x * u_fov * u_right + uv.y * u_fov * u_up);
@@ -145,26 +144,32 @@ void main() {
   // (40 in the average spine) can take most of a minute to compile on Windows, long
   // enough for the browser to give up. Units whose code differs only in float
   // literals and uniform names (vertebrae, their markers, left/right bones) become
-  // one function ``grpK(p, i)``: per-instance numbers come from constant tables,
-  // uniforms from a table SP filled once per pixel by sceneInit(), and sceneMap loops
-  // over the instances. ``unitN`` stay as one-line wrappers (used by diagnostics).
+  // one function ``grpK(p, row)`` called from one loop in sceneMap. Per-instance
+  // numbers come from a float texture (u_inst; row: box min + visibility uniform,
+  // box max, then the instance's literals and uniform indices), uniforms through the
+  // array u_SP. Only texture fetches and uniform-array reads: D3D compiles such
+  // loops as loops (local arrays made it unroll them). ``unitN`` remain as one-line
+  // wrappers (used by the diagnostics).
+  // Returns { glsl, sp: uniform names in u_SP order, table: { data, w, h } | null }.
   const FLOAT_RE = /\bu_\w+\b|(?:(?<=[(, ])-)?(?<![\w.])(?:(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+[eE][-+]?\d+)(?![\w.])/g;  // a unary minus belongs to the literal
   function instanced(glsl) {
+    const none = { glsl, sp: [], table: null };
     const floatUniforms = new Set([...glsl.matchAll(/uniform float (u_\w+);/g)].map((m) => m[1]));
     const mapAt = glsl.indexOf("vec2 sceneMap(vec3 p) {");
-    if (mapAt < 0) return glsl + "\nvoid sceneInit() {}\n";
+    if (mapAt < 0) return none;
     // Units, and their line in sceneMap (visibility uniform, bounds).
     const units = new Map();
     for (const m of glsl.matchAll(/vec2 unit(\d+)\(vec3 p\) \{[^\n]*\n/g)) {
       const end = glsl.indexOf("\n}", m.index) + 2;
       units.set(+m[1], { start: m.index, end, body: glsl.slice(m.index + m[0].length, end - 2) });
     }
-    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\(p, (vec3\([^)]*\)), (vec3\([^)]*\))\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
-    const NO_BOX = ["vec3(-1e30)", "vec3(1e30)"];  // unbounded unit
+    const lineRe = /^\s*if \(\((u_grp\d+) > 0\.5\)(?: && sdAABB\(p, vec3\(([^)]*)\), vec3\(([^)]*)\)\) < r\.x)?\) \{ d = unit(\d+)\(p\); if \(d\.x < r\.x\) r = d; \}$/;
     const mapLines = glsl.slice(mapAt).split("\n");
     for (const [i, line] of mapLines.entries()) {
       const m = line.match(lineRe);
-      if (m && units.has(+m[4])) Object.assign(units.get(+m[4]), { line: i, vis: m[1], lo: m[2] || NO_BOX[0], hi: m[3] || NO_BOX[1] });
+      if (!m || !units.has(+m[4])) continue;
+      const box = (s, inf) => (s ? s.split(",").map(Number) : [inf, inf, inf]);
+      Object.assign(units.get(+m[4]), { line: i, vis: m[1], lo: box(m[2], -1e30), hi: box(m[3], 1e30) });
     }
     // Group by code skeleton (literals and float uniforms taken out).
     const groups = new Map();
@@ -172,92 +177,111 @@ void main() {
       if (u.line === undefined || !floatUniforms.has(u.vis)) continue;
       u.slots = [];
       const skel = u.body.replace(FLOAT_RE, (s) => {
-        if (s.startsWith("u_")) {
-          if (!floatUniforms.has(s)) return s;
-          u.slots.push({ u: s });
-          return "\u0001U";
-        }
-        u.slots.push({ f: s });
-        return "\u0001F";
+        if (s.startsWith("u_") && !floatUniforms.has(s)) return s;
+        u.slots.push(s);
+        return s.startsWith("u_") ? "\u0001U" : "\u0001F";
       });
       if (!groups.has(skel)) groups.set(skel, []);
       groups.get(skel).push(k);
     }
-    const sp = new Map();  // uniform -> index in SP
+    const sp = new Map();  // uniform -> index in u_SP
     const spIndex = (name) => { if (!sp.has(name)) sp.set(name, sp.size); return sp.get(name); };
-    const out = [], drop = new Set(), loops = [], wrappers = new Map();
+    const funcs = [], loops = [], drop = new Set(), wrappers = new Map(), rows = [];
     let g = 0;
     for (const [skel, ks] of groups) {
       if (ks.length < 2) continue;
-      const n = ks.length, inst = ks.map((k) => units.get(k));
-      const nSlots = inst[0].slots.length;
-      // Columns of per-instance values; identical columns are stored once.
-      const fcols = new Map(), ucols = new Map(), expr = [];
-      for (let s = 0; s < nSlots; s++) {
+      const inst = ks.map((k) => units.get(k)), row0 = rows.length;
+      // Columns of per-instance values; slots equal in all instances stay inline,
+      // identical columns are stored once.
+      const cols = new Map(), expr = [];
+      for (let s = 0; s < inst[0].slots.length; s++) {
         const vals = inst.map((u) => u.slots[s]);
-        if (vals[0].f !== undefined) {
-          const fs = vals.map((v) => v.f);
-          if (fs.every((v) => +v === +fs[0])) { expr.push(fs[0]); continue; }
-          const key = fs.join(",");
-          if (!fcols.has(key)) fcols.set(key, fs);
-          expr.push({ f: [...fcols.keys()].indexOf(key) });
-        } else {
-          const us = vals.map((v) => v.u);
-          if (us.every((v) => v === us[0])) { expr.push(us[0]); continue; }
-          const key = us.join(",");
-          if (!ucols.has(key)) ucols.set(key, us);
-          expr.push({ u: [...ucols.keys()].indexOf(key) });
-        }
+        const isU = vals[0].startsWith("u_");
+        if (isU ? vals.every((v) => v === vals[0]) : vals.every((v) => +v === +vals[0])) { expr.push(vals[0]); continue; }
+        const key = (isU ? "U" : "F") + vals.join(",");
+        if (!cols.has(key)) cols.set(key, { k: cols.size, isU, vals });
+        expr.push(cols.get(key));
       }
-      const nf = fcols.size, nu = ucols.size;
-      const fdata = [], udata = [];
-      for (let i = 0; i < n; i++) {
-        for (const col of fcols.values()) fdata.push(col[i]);
-        for (const col of ucols.values()) udata.push(spIndex(col[i]));
+      for (const [i, u] of inst.entries()) {
+        const r = [...u.lo, spIndex(u.vis), ...u.hi, 0];
+        for (const c of cols.values()) r.push(c.isU ? spIndex(c.vals[i]) : +c.vals[i]);
+        rows.push(r);
       }
-      while (fdata.length % 4) fdata.push("0.0");
-      if (nf) {
-        const vecs = [];
-        for (let j = 0; j < fdata.length; j += 4) vecs.push(`vec4(${fdata.slice(j, j + 4).map((v) => (/[.eE]/.test(v) ? v : v + ".0")).join(", ")})`);
-        out.push(`const vec4 G${g}F[${vecs.length}] = vec4[${vecs.length}](${vecs.join(", ")});`);
-      }
-      if (nu) out.push(`const int G${g}U[${udata.length}] = int[${udata.length}](${udata.join(", ")});`);
+      const texel = (k) => `t${(k >> 2) + 2}.${"xyzw"[k & 3]}`;
+      const used = new Set([...cols.values()].map((c) => (c.k >> 2) + 2));
       let s = 0;
       const body = skel.replace(/\u0001[FU]/g, () => {
         const e = expr[s++];
         if (typeof e === "string") return e;
-        if (e.f !== undefined) return `G${g}F[(i * ${nf} + ${e.f}) >> 2][(i * ${nf} + ${e.f}) & 3]`;
-        return `SP[G${g}U[i * ${nu} + ${e.u}]]`;
+        return e.isU ? `spGet(int(${texel(e.k)}))` : texel(e.k);
       });
-      out.push(`vec2 grp${g}(vec3 p, int i) {  // ${n} bodies\n${body}\n}`);
-      const vis = inst.map((u) => spIndex(u.vis));
-      out.push(`const int G${g}V[${n}] = int[${n}](${vis.join(", ")});`);
-      out.push(`const vec3 G${g}LO[${n}] = vec3[${n}](${inst.map((u) => u.lo).join(", ")});`);
-      out.push(`const vec3 G${g}HI[${n}] = vec3[${n}](${inst.map((u) => u.hi).join(", ")});`);
-      loops.push(`    for (int i = 0; i < ${n}; i++) {\n        if (SP[G${g}V[i]] > 0.5 && sdAABB(p, G${g}LO[i], G${g}HI[i]) < r.x) { d = grp${g}(p, i); if (d.x < r.x) r = d; }\n    }`);
-      ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${i}); }`); });
+      const fetches = [...used].sort((x, y) => x - y)
+        .map((c) => `    vec4 t${c} = texelFetch(u_inst, ivec2(${c}, row), 0);`);
+      funcs.push(`vec2 grp${g}(vec3 p, int row) {  // ${inst.length} bodies\n${fetches.join("\n")}\n${body}\n}`);
+      loops.push(`    for (int row = ${row0}; row < ${row0 + inst.length}; row++) {
+        vec4 lo = texelFetch(u_inst, ivec2(0, row), 0), hi = texelFetch(u_inst, ivec2(1, row), 0);
+        if (spGet(int(lo.w)) > 0.5 && sdAABB(p, lo.xyz, hi.xyz) < r.x) { d = grp${g}(p, row); if (d.x < r.x) r = d; }
+    }`);
+      ks.forEach((k, i) => { drop.add(units.get(k).line); wrappers.set(k, `vec2 unit${k}(vec3 p) { return grp${g}(p, ${row0 + i}); }`); });
       g++;
     }
-    if (!g) return glsl + "\nvoid sceneInit() {}\n";
+    if (!g) return none;
     // Reassemble: unit definitions (grouped ones replaced by wrappers placed after
     // the shared code), then sceneMap without the grouped lines plus the loops.
     let head = "", at = 0;
-    for (const [k, u] of [...units].sort((a, b) => a[1].start - b[1].start)) {
+    for (const [k, u] of [...units].sort((x, y) => x[1].start - y[1].start)) {
       head += glsl.slice(at, u.start);
       if (!wrappers.has(k)) head += glsl.slice(u.start, u.end);
       at = u.end;
     }
     head += glsl.slice(at, mapAt);
-    const init = `float SP[${sp.size}];\nvoid sceneInit() {\n${[...sp].map(([name, i]) => `    SP[${i}] = ${name};`).join("\n")}\n}`;
+    const n4 = Math.ceil(sp.size / 4);
+    const lib = `uniform vec4 u_SP[${n4}];
+uniform highp sampler2D u_inst;
+float spGet(int k) {
+    vec4 v = u_SP[k >> 2];
+    int c = k & 3;
+    return c == 0 ? v.x : c == 1 ? v.y : c == 2 ? v.z : v.w;
+}`;
     const kept = mapLines.filter((_, i) => !drop.has(i));
-    const ret = kept.lastIndexOf("    return r;");
-    kept.splice(ret, 0, ...loops);
-    return [head, init, ...out, ...wrappers.values(), kept.join("\n")].join("\n");
+    kept.splice(kept.lastIndexOf("    return r;"), 0, ...loops);
+    const w = Math.max(...rows.map((r) => Math.ceil(r.length / 4))), h = rows.length;
+    const data = new Float32Array(w * h * 4);
+    rows.forEach((r, i) => data.set(r, i * w * 4));
+    return { glsl: [head, lib, ...funcs, ...wrappers.values(), kept.join("\n")].join("\n"), sp: [...sp.keys()], table: { data, w, h } };
+  }
+
+  // Compile a fragment source made with instanced(): the program plus its instance
+  // table texture (texture unit 5) and the u_SP order.
+  function instancedProgram(gl, head, inst, tail) {
+    const built = program(gl, head + inst.glsl + tail);
+    built.sp = inst.sp;
+    if (inst.table) {
+      const { data, w, h } = inst.table;
+      built.instTex = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE5);
+      gl.bindTexture(gl.TEXTURE_2D, built.instTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, data);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+    }
+    return built;
+  }
+
+  // Bind the instance table and fill u_SP; ``value(uniformName)`` gives each value.
+  // Call with the program in use, after setting the scene's own uniforms.
+  function bindInstances(gl, built, value) {
+    if (!built.instTex || !built.uniforms.u_SP) return;
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, built.instTex);
+    gl.uniform1i(built.uniforms.u_inst, 5);
+    const v = new Float32Array(Math.ceil(built.sp.length / 4) * 4);
+    built.sp.forEach((name, i) => { v[i] = value(name); });
+    gl.uniform4fv(built.uniforms.u_SP, v);
   }
 
   // The ray-marching program for a scene's GLSL (implicit.scene.Scene.glsl).
   function sceneProgram(gl, sceneGlsl) {
-    return program(gl, FRAG_HEAD + instanced(sceneGlsl) + FRAG_TAIL);
+    return instancedProgram(gl, FRAG_HEAD, instanced(sceneGlsl), FRAG_TAIL);
   }
 
   // Template instance data (RGBA32F), or a 1x1 placeholder.
@@ -317,5 +341,5 @@ void main() {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   }
 
-  return { VERT, FRAG_HEAD, FRAG_TAIL, program, sceneProgram, instanced, dataTexture, atlasTexture, info, fullscreenTriangle };
+  return { VERT, FRAG_HEAD, FRAG_TAIL, program, sceneProgram, instanced, instancedProgram, bindInstances, dataTexture, atlasTexture, info, fullscreenTriangle };
 })();

@@ -12,6 +12,13 @@ const log = (s) => { lines.push(s); $("#report").value = lines.join("\n"); conso
 window.DIAG = { done: false, pass: false, failures: [], checks: 0 };
 
 
+// Value of a scene uniform: a parameter (moved or default) or a group's visibility (on).
+function uniformValue(scene, values, u) {
+  if (u.startsWith("u_grp")) return 1;
+  const p = scene.params.find((q) => q.uniform === u);
+  return p.name in values ? values[p.name] : p.value;
+}
+
 function setUniforms(gl, U, scene, atlas, values = {}) {
   if (U.u_atlas) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D, atlas); gl.uniform1i(U.u_atlas, 0); }
   if (U.u_data) gl.uniform1i(U.u_data, 2);
@@ -46,8 +53,9 @@ function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   const n = rows.length;
   const dispatch = "vec2 unitAt(int u, vec3 p) {\n"
     + units.map((k) => `  if (u == ${k}) return unit${k}(p);`).join("\n") + "\n  return vec2(1e10, -1.0);\n}\n";
-  const frag = GPU.FRAG_HEAD + GPU.instanced(scene.glsl) + "\n" + dispatch + PROBE_LIB;  // as the viewer compiles it
-  const { prog, uniforms } = GPU.program(gl, frag);
+  // Compiled as the viewer compiles it (shared code for bodies built alike).
+  const built = GPU.instancedProgram(gl, GPU.FRAG_HEAD, GPU.instanced(scene.glsl), "\n" + dispatch + PROBE_LIB);
+  const { prog, uniforms } = built;
   const data = new Float32Array(n * 4);
   rows.forEach(([u, x, y, z], i) => data.set([x, y, z, u], i * 4));
   const dtex = gl.createTexture();
@@ -64,6 +72,7 @@ function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.useProgram(prog);
   setUniforms(gl, uniforms, scene, atlas, values);
+  GPU.bindInstances(gl, built, (u) => uniformValue(scene, values, u));
   gl.uniform1i(uniforms.u_probe, 4);
   gl.uniform1f(uniforms.u_mode, mode);
   if (uniforms.u_eye0) gl.uniform3fv(uniforms.u_eye0, eye);
@@ -73,6 +82,7 @@ function runProbeProgram(gl, scene, atlas, rows, values, mode, eye, units) {
   gl.readPixels(0, 0, n, 1, gl.RGBA, gl.FLOAT, px);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.deleteFramebuffer(fb); gl.deleteTexture(tex); gl.deleteTexture(dtex); gl.deleteProgram(prog);
+  if (built.instTex) gl.deleteTexture(built.instTex);
   return px;
 }
 
@@ -88,7 +98,6 @@ vec2 probeBox(vec3 ro, vec3 rd) {
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
 void main() {
-  sceneInit();
   vec4 a = texelFetch(u_probe, ivec2(int(gl_FragCoord.x), 0), 0);
   int u = int(a.w + 0.5);
   if (u_mode < 0.5) { outColor = vec4(unitAt(u, a.xyz).x, 0.0, 0.0, 0.0); return; }
