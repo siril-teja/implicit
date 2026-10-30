@@ -24,7 +24,7 @@ publishes that section as the GitHub release notes. Versions follow
 ### Changed
 - The TPS warp block is now Field warp and uses the chosen field.
 - Every third-party dependency is pinned to one exact version: numpy 2.5.3,
-  scipy 1.18.1, nibabel 5.4.2, Python 3.12.10 and Node 22.22.0 in CI, and the
+  scipy 1.18.1, nibabel 5.4.2, Python 3.13.17 and Node 22.22.0 in CI, and the
   GitHub Actions by release (rule in CONTRIBUTING.md).
 
 ## [0.10.0] - 2026-10-31
