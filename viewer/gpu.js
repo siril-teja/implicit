@@ -319,8 +319,35 @@ float spGet(int k) {
   }
 
   // The ray-marching program for a scene's GLSL (implicit.scene.Scene.glsl).
-  function sceneProgram(gl, sceneGlsl) {
-    return instancedProgram(gl, FRAG_HEAD, instanced(sceneGlsl), FRAG_TAIL);
+  // ``skip``: indices of groups left out (hidden at compile time): their scene lines and
+  // unit functions are removed, so the shader compiles faster (the viewer recompiles
+  // when one is shown). The landmark markers alone are three quarters of the average
+  // spine's scene code.
+  function sceneProgram(gl, sceneGlsl, skip = null) {
+    const p = instancedProgram(gl, FRAG_HEAD, instanced(skip && skip.size ? pruneGroups(sceneGlsl, skip) : sceneGlsl), FRAG_TAIL);
+    p.skip = new Set(skip || []);
+    return p;
+  }
+
+  function pruneGroups(src, skip) {
+    const units = new Set();
+    const lines = src.split("\n").filter((line) => {
+      const m = /^\s*if \(\(u_grp(\d+) > 0\.5\).*\bunit(\d+)\(p\)/.exec(line);
+      if (m && skip.has(+m[1])) { units.add(m[2]); return false; }
+      return true;
+    });
+    let out = lines.join("\n");
+    for (const k of units) {  // drop the unit's function (brace-matched)
+      const head = `vec2 unit${k}(vec3 p) {`, i = out.indexOf(head);
+      if (i < 0) continue;
+      let depth = 0, j = i + head.length - 1;
+      for (; j < out.length; j++) {
+        if (out[j] === "{") depth++;
+        else if (out[j] === "}" && --depth === 0) break;
+      }
+      out = out.slice(0, i) + out.slice(j + 1);
+    }
+    return out;
   }
 
   // Template instance data (RGBA32F), or a 1x1 placeholder.

@@ -18,6 +18,11 @@ publishes that section as the GitHub release notes. Versions follow
   the disc centre (Dimnet et al. 1978). Targets are met exactly as before.
 - `landmarks.json` stores each disc's centres ("rotation", on the upper vertebra);
   landmarks regenerated for both subjects (the other values are unchanged).
+- **Faster first load**: groups hidden when a scene loads (landmark markers, field
+  views) are left out of the shader and compiled in when shown. The landmark
+  markers were three quarters of the average spine's shader code; its viewer
+  shader took 9-15 s to compile on the Windows (D3D11) CI runner, close to the
+  15 s limit. The GPU check also compiles each scene with every group shown.
 
 ### Notes
 - LL 80 / TK 60: L4-L5 overlap 1.70 -> 0.86 mm, L3-L4 0.27 -> 0.10 mm, L2-L3 now
