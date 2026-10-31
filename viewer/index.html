@@ -23,6 +23,9 @@
   #hud #fps { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
     background: #0008; border-radius: 5px; padding: 3px 8px; }
   #hud #fps:empty { display: none; }
+  #clearance .clr { display: flex; justify-content: space-between; font-size: 12px; padding: 1px 0;
+    font-variant-numeric: tabular-nums; color: var(--muted); }
+  #clearance .clr.hit { color: var(--err); font-weight: 600; }
   #hud #legend { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text);
     background: #0008; border-radius: 5px; padding: 3px 8px; pointer-events: none; }
   #hud #legend[hidden] { display: none; }
@@ -156,6 +159,8 @@
         <div class="pane" id="scenePane" hidden>
           <h2 id="paramsHead">Parameters</h2>
           <div id="params"></div>
+          <h2 id="clearHead" hidden title="Smallest gap between neighbouring bones; negative: they overlap">Clearance</h2>
+          <div id="clearance"></div>
           <h2>Show</h2>
           <div id="bodies"></div>
           <h2>Section</h2>
@@ -196,6 +201,7 @@
 <script src="gpu.js"></script>
 <script src="solvers.js"></script>
 <script src="graph.js"></script>
+<script src="clearance.js"></script>
 <script src="editor.js"></script>
 <script src="viewer.js"></script>
 </body>

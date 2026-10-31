@@ -146,6 +146,7 @@ class Field:
     sdf: object
     bfun: object = None
     colormap: object = None  # (ColorValue, max): per-point colour (field displays)
+    rigid: object = None  # (Grid, motion()): a bone moved rigidly, motion() -> (R, t) now (clearance)
 
     @property
     def bounds(self):
@@ -276,7 +277,7 @@ def _vector(x, node):
 def _bone(x, node):
     """One implicit bone converted from a segmentation (implicit.anatomy.convert)."""
     g = node.ctx.grid(x["file"])
-    f = Field(g, lambda now: _grow(g.bounds(), 0.5))
+    f = Field(g, lambda now: _grow(g.bounds(), 0.5), rigid=(g, lambda: (np.eye(3), np.zeros(3))))
     f.sdf_file = x["file"]
     return {"bone": f}
 
@@ -424,7 +425,8 @@ def _plane_cut(x, node):
 def _smooth(x, node):
     """Gaussian smoothing of a bone surface, width σ; optionally keeps the bone volume."""
     b = x["bone"]
-    return {"body": Field(smooth(b.sdf, x["sigma"], x["preserve"]), lambda now: _child(b, now))}
+    return {"body": Field(smooth(b.sdf, x["sigma"], x["preserve"]), lambda now: _child(b, now),
+                          rigid=b.rigid)}  # clearance uses the unsmoothed bone
 
 
 # ---------------------------------------------------------------- landmarks, planes, frames
@@ -639,7 +641,24 @@ def _pose(x, node):
             return None
         r = np.linalg.norm(far, axis=1).max() + np.linalg.norm(np.maximum(np.abs(siv[0]), np.abs(siv[1])))
         return oiv[0] - r, oiv[1] + r
-    return {"body": Field(sdf, bounds), "vertebra": VertebraV(pose.frame(), pose.plane(v.sup), pose.plane(v.inf))}
+    rigid = None
+    if b.rigid is not None:
+        def motion(inner=b.rigid[1]):
+            num = lambda e: np.array([c.value() for c in e.c], float)
+            o, E = num(f.origin), [num(f.x), num(f.y), num(f.z)]
+            ang = np.array([e.value() for e in (x["flexion"], x["lateral"], x["axial"])], float)
+            fwd = lambda q: _pose_np("posePoint", [q, o, *E, ang, num(x["shift"])])
+            t0 = fwd(np.zeros(3))
+            P = (np.column_stack([fwd(e) - t0 for e in np.eye(3)]), t0)
+            return _compose_rigid(P, inner())
+        rigid = (b.rigid[0], motion)
+    return {"body": Field(sdf, bounds, rigid=rigid),
+            "vertebra": VertebraV(pose.frame(), pose.plane(v.sup), pose.plane(v.inf))}
+
+
+def _compose_rigid(A, B):
+    """Rigid motion A after B, each (R, t)."""
+    return A[0] @ B[0], A[0] @ B[1] + A[1]
 
 
 @block("show_vertebra", "Show vertebra", "Anatomy",
@@ -800,7 +819,14 @@ def _align(x, node):
         ms = [[e.value() for e in m]] if now else [r[seg] for r in a.solver.samples()]
         pts = np.concatenate([_rig_np(q, corners) for q in ms])
         return pts.min(0), pts.max(0)
-    out = {"body": Field(RigidMove(b.sdf, m, _child(b, False)), bounds), "vertebra": None}  # local box: culling
+    rigid = None
+    if b.rigid is not None:
+        def motion(inner=b.rigid[1]):
+            v12 = np.array([e.value() for e in m], float)
+            return _compose_rigid((v12[:9].reshape(3, 3).T, v12[9:]), inner())
+        rigid = (b.rigid[0], motion)
+    out = {"body": Field(RigidMove(b.sdf, m, _child(b, False)), bounds, rigid=rigid),  # local box: culling
+           "vertebra": None}
     if v is not None:
         f = v.frame
         plane = lambda pl: None if pl is None else PlaneV(_rig_point(m, pl.point), _rig_point(m, pl.normal, False))
@@ -1176,6 +1202,7 @@ def build_graph(g: dict, base=".", library=None) -> Scene:
         scene.add(x["name"] or node.id, f.sdf, x["color"], group=x["group"] or None,
                   bounds=f.bounds, visible=x["visible"], colormap=f.colormap)
         scene.bodies[-1].bounds_now = f.now
+        scene.bodies[-1].rigid = f.rigid
     now = [b for _, x in outputs if (b := x["body"].now()) is not None]
     if now:  # where the bodies are at the current values: the viewer frames this
         scene.extra["view_bounds"] = [np.min([b[0] for b in now], axis=0).tolist(),
@@ -1341,6 +1368,7 @@ class Library:
             self.keys.setdefault(path, Path(os.path.relpath(path, self.base.resolve())).as_posix())
 
     def to_json(self, atlas_url=None):
+        from .anatomy.clearance import surface_samples
         bones = {}
         for path, g in self.ctx._grids.items():
             lo, hi = g.bounds()
@@ -1349,6 +1377,11 @@ class Library:
                 "name": self.ctx.names[path], "kind": self.ctx.kinds[path],
                 "bounds": [(lo - 0.5).tolist(), (hi + 0.5).tolist()],
                 "bone": trace(g), "smooth": trace(sm, {id(g): "bone"}),
+                # For clearance (implicit.anatomy.clearance, viewer/clearance.js): where the
+                # grid sits in the atlas, and its surface points.
+                "grid": {"origin": g.origin.tolist(), "spacing": g.spacing, "n": list(g.shape),
+                         "offset": list(g.atlas_offset), "margin": g.margin},
+                "samples": [float(v) for v in surface_samples(g).ravel()],
             }
             lm = self.ctx.landmarks(path)
             if lm:

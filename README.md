@@ -79,6 +79,18 @@ The femoral head centres (sphere fits) and sacroiliac joint centres it needs are
 found by `python -m implicit.anatomy.landmarks` and stored in `landmarks.json`.
 The patient scene (lumbar only) has the sagittal sliders and pelvic obliquity.
 
+**Clearance.** The viewer measures the smallest gap between every pair of
+neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with each
+hip bone, hip bone and femur) at the current sliders: a table under Clearance,
+smallest first, and colliding bones tinted red. A bone's field is evaluated at the
+other bone's surface points (2 mm apart), both ways; negative is the depth of the
+overlap. The sliders do not yet avoid collisions (roadmap steps 1.2-1.4).
+
+```bash
+python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60
+python -m implicit.anatomy.clearance examples/average_spine.json --sweep    # collisions over a grid of sliders
+```
+
 ## Patient anatomy: implicit bones
 
 TotalSegmentator provides voxel label masks (NIfTI), not CAD. They are converted

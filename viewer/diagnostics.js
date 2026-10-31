@@ -140,7 +140,7 @@ const getJson = async (url) => (await fetch(url, { cache: "no-store" })).json();
 async function diagnose(gl, key) {
   const scene = await getJson(`scenes/${key}.json`);
   const probes = await getJson(`scenes/${key}.probes.json`);
-  const atlas = scene.atlas ? (await GPU.atlasTexture(gl, scene)).tex : null;
+  const up = scene.atlas ? await GPU.atlasTexture(gl, scene) : null, atlas = up && up.tex;
   GPU.dataTexture(gl, scene);
   await check(gl, key, scene, probes, atlas, "");
   if (scene.graph) {
@@ -150,8 +150,30 @@ async function diagnose(gl, key) {
     const errs = Object.entries(built.errors);
     if (errs.length) throw new Error(`browser build: ${errs.map(([k, v]) => `${k}: ${v}`).join("; ")}`);
     await check(gl, key, built.scene, probes, atlas, ", built in the browser");
+    if (up) checkClearance(key, built.scene, library, probes, up.data, scene.atlas.size);
   }
   gl.deleteTexture(atlas);
+}
+
+// Clearance of neighbouring bones: viewer/clearance.js against implicit.anatomy.clearance.
+const CLEARANCE_TOL = 0.01;  // mm
+function checkClearance(key, scene, library, probes, atlasData, size) {
+  for (const [b, batch] of probes.batches.entries()) {
+    if (!batch.clearance || !batch.clearance.length) continue;
+    const values = Solvers.apply(scene, { ...batch.params });
+    const got = Clearance.compute(atlasData, size, Graph.rigidBodies(scene, library, values));
+    const byPair = Object.fromEntries(got.map(([a, c, d]) => [`${a}|${c}`, d]));
+    let bad = 0;
+    for (const [a, c, ref] of batch.clearance) {
+      window.DIAG.checks++;
+      const v = byPair[`${a}|${c}`];
+      if (v === undefined || !(Math.abs(v - ref) <= CLEARANCE_TOL)) {
+        bad++;
+        window.DIAG.failures.push(`${key} (${b ? "sliders moved" : "slider defaults"}) clearance ${a}-${c}: browser ${v === undefined ? "missing" : v.toFixed(4)} vs NumPy ${ref.toFixed(4)} mm`);
+      }
+    }
+    log(`clearance (${b ? "sliders moved" : "slider defaults"}): ${batch.clearance.length - bad}/${batch.clearance.length} pairs match NumPy`);
+  }
 }
 
 async function check(gl, key, scene, probes, atlas, how) {

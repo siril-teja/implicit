@@ -290,7 +290,8 @@ const Graph = (() => {
     if (name === "bone") {
       const b = library && library.bones[x.file];
       if (!b) throw new Error(`bone file not in this scene's library: ${x.file}`);
-      return { bone: { node: id, tmpl: b.bone, inputs: {}, bf: () => b.bounds, lib: x.file } };
+      return { bone: { node: id, tmpl: b.bone, inputs: {}, bf: () => b.bounds, lib: x.file,
+        rigid: { lib: x.file, motion: () => [[[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0]] } } };
     }
     if (name === "landmarks") {
       const b = library && library.bones[x.bone.lib];
@@ -311,7 +312,8 @@ const Graph = (() => {
     if (name === "smooth") {
       const b = library.bones[x.bone.lib];
       if (!b) throw new Error("smooth needs a bone directly");
-      return { body: { node: id, tmpl: b.smooth, inputs: x, bf: (iv) => BOUNDS.smooth(x, iv) } };
+      return { body: { node: id, tmpl: b.smooth, inputs: x, bf: (iv) => BOUNDS.smooth(x, iv),
+        rigid: x.bone.rigid } };  // clearance uses the unsmoothed bone
     }
     if (name === "spinopelvic") return { alignment: spinopelvic(id, x, library) };
     if (name === "align") return align(id, x, params);
@@ -333,6 +335,44 @@ const Graph = (() => {
       } else {
         out[op.name] = valueFrom(tmpl, x, params);
       }
+    }
+    if (name === "pose" && x.body.rigid) {  // the pose's rigid motion (clearance)
+      const inner = x.body.rigid;
+      out.body.rigid = { lib: inner.lib, motion: (iv) => composeRigid(poseMotion(x, iv), inner.motion(iv)) };
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------ rigid motions (clearance)
+  // A motion is [R rows, t]: p -> R p + t.
+  const composeRigid = ([Ra, ta], [Rb, tb]) => [
+    [0, 1, 2].map((i) => [0, 1, 2].map((j) => Ra[i][0] * Rb[0][j] + Ra[i][1] * Rb[1][j] + Ra[i][2] * Rb[2][j])),
+    [0, 1, 2].map((i) => Ra[i][0] * tb[0] + Ra[i][1] * tb[1] + Ra[i][2] * tb[2] + ta[i])];
+  // The Pose block's motion at the values of ``iv`` (as posePoint, see BOUNDS.pose).
+  function poseMotion(x, iv) {
+    const v = (vec) => vec.c.map((s) => iv(s)[0]);
+    const o = v(x.vertebra.frame.origin), e = ["x", "y", "z"].map((k) => v(x.vertebra.frame[k])), sh = v(x.shift);
+    const [f, l, a] = ["flexion", "lateral", "axial"].map((k) => iv(x[k])[0] * Math.PI / 180);
+    const rot = (u, ax, ang) => {
+      const [i, j] = [[1, 2], [2, 0], [0, 1]][ax], c = Math.cos(ang), s = Math.sin(ang), r = u.slice();
+      r[i] = c * u[i] - s * u[j]; r[j] = s * u[i] + c * u[j]; return r;
+    };
+    const dot = (u, w) => u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+    const fwd = (p) => {
+      const q = p.map((val, k) => val - o[k]);
+      const loc = rot(rot(rot([dot(q, e[0]), dot(q, e[1]), dot(q, e[2])], 0, -f), 1, l), 2, a);
+      return [0, 1, 2].map((k) => o[k] + e[0][k] * (loc[0] + sh[0]) + e[1][k] * (loc[1] + sh[1]) + e[2][k] * (loc[2] + sh[2]));
+    };
+    const t0 = fwd([0, 0, 0]), cols = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((u) => fwd(u).map((val, k) => val - t0[k]));
+    return [[0, 1, 2].map((r) => cols.map((c) => c[r])), t0];
+  }
+
+  // The moved bones of a built scene at slider values: { name: { grid, samples, motion } }.
+  function rigidBodies(scene, library, values) {
+    const out = {}, iv = nowIv(values);
+    for (const b of scene._bodies || []) {
+      const r = b.body.rigid, lib = r && library && library.bones[r.lib];
+      if (lib && lib.grid) out[b.name] = { grid: lib.grid, samples: lib.samples, motion: r.motion(iv) };
     }
     return out;
   }
@@ -393,9 +433,13 @@ const Graph = (() => {
       return [lo, hi];
     };
     const mv = [0, 3, 6, 9].map((i) => `vec3(${g[i]}, ${g[i + 1]}, ${g[i + 2]})`).join(", ");
+    const rigid = x.body.rigid && { lib: x.body.rigid.lib, motion: (iv) => {
+      const m12 = m.map((q) => iv(q)[0]);
+      return composeRigid([[0, 1, 2].map((r) => [m12[r], m12[3 + r], m12[6 + r]]), m12.slice(9)], x.body.rigid.motion(iv));
+    } };
     const box = child(x.body, rangeIv);
     const out = {
-      body: { node: id, inputs: { body: x.body }, bf, local: box ? { m: mv, box } : null,  // local box: culling (scene.py)
+      body: { node: id, inputs: { body: x.body }, bf, local: box ? { m: mv, box } : null, rigid,  // local box: culling (scene.py)
         tmpl: { ops: [["var", "vec3", `rigInv($p, ${mv})`], ["sub", "body", "$0"]], out: "$1" } },
       vertebra: null,
     };
@@ -714,7 +758,7 @@ const Graph = (() => {
     return { scene, errors: ev.errors, params: ev.params, upstream: upstream(graph) };
   }
 
-  return { build, parseWire, ACCEPTS, WIRED, WIRE_ONLY, glslFloat, colorOf,
+  return { build, parseWire, ACCEPTS, WIRED, WIRE_ONLY, glslFloat, colorOf, rigidBodies,
     viewBounds: (scene, values) => viewBounds(scene._bodies || [], values),
     rayBounds: (scene, values, vis) => (scene._bodies ? rayBounds(scene._bodies, values, vis) : null) };
 })();

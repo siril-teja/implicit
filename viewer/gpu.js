@@ -20,6 +20,7 @@ uniform float u_clipOn;
 uniform float u_pick;    // 1: write the body id under u_pickPx instead of a colour
 uniform vec2 u_pickPx;
 uniform highp uvec4 u_hl[2];  // highlighted bodies, one bit per body (first 256)
+uniform highp uvec4 u_col[2]; // colliding bones (clearance below zero), same layout
 uniform float u_fast;    // 1 while the view is moving: cheaper shading (no ambient occlusion)
 `;
 
@@ -35,9 +36,9 @@ vec2 boxHit(vec3 ro, vec3 rd) {
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
-bool highlighted(int i) {
+bool inMask(uvec4 a, uvec4 b, int i) {
   if (i < 0 || i >= 256) return false;
-  uvec4 w = u_hl[i >> 7];
+  uvec4 w = i < 128 ? a : b;
   int j = (i >> 5) & 3;
   uint bits = j == 0 ? w.x : j == 1 ? w.y : j == 2 ? w.z : w.w;
   return ((bits >> uint(i & 31)) & 1u) != 0u;
@@ -100,7 +101,8 @@ void main() {
     float ao = u_fast > 0.5 ? 0.85 : clamp(1.0 - 0.15 * occ, 0.0, 1.0);
     float spec = pow(max(dot(reflect(rd, n), l1), 0.0), 32.0);
     col = base * (0.85 * dif + 0.35 * hemi * ao) + 0.15 * spec;
-    if (highlighted(int(id))) {
+    if (inMask(u_col[0], u_col[1], int(id))) col = mix(col, vec3(0.95, 0.22, 0.18), 0.5);  // collision
+    if (inMask(u_hl[0], u_hl[1], int(id))) {
       float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.0);
       col = mix(col, vec3(0.42, 0.66, 1.0), 0.28) + vec3(0.35, 0.55, 1.0) * rim * 0.9;
     }
@@ -359,7 +361,7 @@ float spGet(int k) {
     const err = gl.getError();
     if (err !== gl.NO_ERROR) throw new Error(`3D texture upload failed (WebGL error 0x${err.toString(16)}, `
       + `${(w * h * d / 1e6).toFixed(0)} MB): the GPU may be out of memory`);
-    return { tex, mb: w * h * d / 1e6 };
+    return { tex, mb: w * h * d / 1e6, data };  // data: the CPU copy (clearance)
   }
 
   function info(gl) {
