@@ -33,8 +33,12 @@ class TestTemplate(unittest.TestCase):
         1.3 mm thoracic): on the surface of each, the two distances add up to at least
         the space (to the 0.1 mm the values are stored to)."""
         grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
-        self.assertEqual(set(self.record["joints"]), {"T3-T4", "T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-sacrum"})
-        for k in self.record["joints"]:
+        joints, rec = set(), self.record
+        while rec:  # every run's carved joints
+            joints |= set(rec.get("joints", {}))
+            rec = rec.get("previous")
+        self.assertTrue({"T3-T4", "T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-sacrum"} <= joints)
+        for k in joints:
             u, l = k.split("-")
             for a, b in ((u, l), (l, u)):
                 f = grids[a].values
@@ -53,6 +57,8 @@ class TestTemplate(unittest.TestCase):
 
     def test_bone_files_record_their_shift(self):
         for lv, t in self.record["vertebrae_mm"].items():
+            if not isinstance(t, list):  # carried parts (resampled, not shifted)
+                continue
             meta = load_bone(SUBJECT / f"{lv}.npz")[1]
             if np.linalg.norm(t) >= template.TOL:
                 np.testing.assert_allclose(meta["template_shift_mm"], t, atol=1e-3)

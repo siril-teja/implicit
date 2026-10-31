@@ -97,7 +97,7 @@ class TestSpineClearance(unittest.TestCase):
 
     def test_baseline_clean(self):
         c = self.clearances()
-        self.assertEqual(len(c), 23)
+        self.assertEqual(len(c), 23 + 4 * 12 - 2 + 2 * 11)  # spine, ribs with their vertebrae, rib to rib
         self.assertTrue(all(v > cl.COLLIDE for v in c.values()), {k: v for k, v in c.items() if v <= cl.COLLIDE})
 
     def test_hyperlordosis_collides(self):
