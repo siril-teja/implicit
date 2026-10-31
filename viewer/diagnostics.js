@@ -174,6 +174,22 @@ function checkClearance(key, scene, library, probes, atlasData, size) {
     }
     log(`clearance (${b ? "sliders moved" : "slider defaults"}): ${batch.clearance.length - bad}/${batch.clearance.length} pairs match NumPy`);
   }
+  for (const [b, batch] of probes.batches.entries()) {
+    if (!batch.discs || !batch.discs.length) continue;
+    const values = Solvers.apply(scene, { ...batch.params });
+    const got = Discs.heights(Graph.rigidBodies(scene, library, values));
+    const byPair = Object.fromEntries(got.map(([u, l, ...h]) => [`${u}|${l}`, h]));
+    let bad = 0;
+    for (const [u, l, ...ref] of batch.discs) {
+      window.DIAG.checks++;
+      const h = byPair[`${u}|${l}`];
+      if (!h || ref.some((x, i) => !(Math.abs(h[i] - x) <= CLEARANCE_TOL))) {
+        bad++;
+        window.DIAG.failures.push(`${key} (${b ? "sliders moved" : "slider defaults"}) disc ${u}-${l}: browser ${h ? h.map((x) => x.toFixed(3)).join("/") : "missing"} vs NumPy ${ref.map((x) => x.toFixed(3)).join("/")} mm`);
+      }
+    }
+    log(`disc heights (${b ? "sliders moved" : "slider defaults"}): ${batch.discs.length - bad}/${batch.discs.length} discs match NumPy`);
+  }
 }
 
 async function check(gl, key, scene, probes, atlas, how) {

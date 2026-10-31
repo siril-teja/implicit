@@ -277,6 +277,8 @@ def _vector(x, node):
 def _bone(x, node):
     """One implicit bone converted from a segmentation (implicit.anatomy.convert)."""
     g = node.ctx.grid(x["file"])
+    lm = node.ctx.landmarks(x["file"])
+    g.corners = lm.get("corners") if lm else None  # disc space heights (implicit.anatomy.discs)
     f = Field(g, lambda now: _grow(g.bounds(), 0.5), rigid=(g, lambda: (np.eye(3), np.zeros(3))))
     f.sdf_file = x["file"]
     return {"bone": f}
@@ -995,6 +997,10 @@ class _Context:
         for k in ("sup", "inf"):
             if k in e:
                 out[k] = (np.array(e[k]["point"], float) - off, np.array(e[k]["normal"], float))
+        corners = {k: {c: np.array(v, float) - (0.0 if c == "normal" else off) for c, v in e[k]["corners"].items()}
+                   for k in ("sup", "inf") if k in e and "corners" in e[k]}
+        if corners:
+            out["corners"] = corners  # endplate corners and centres (implicit.anatomy.discs)
         return out
 
 
@@ -1388,6 +1394,8 @@ class Library:
                 sdf, (blo, bhi) = landmark_markers(lm)
                 bones[self.keys[path]]["landmarks"] = {
                     "origin": lm["origin"].tolist(), "axes": lm["axes"].tolist(),
+                    **({"corners": {k: {c: v.tolist() for c, v in e.items()} for k, e in lm["corners"].items()}}
+                       if "corners" in lm else {}),
                     **{k: {"point": lm[k][0].tolist(), "normal": lm[k][1].tolist()} for k in ("sup", "inf") if k in lm},
                     "markers": trace(sdf), "markers_bounds": [blo.tolist(), bhi.tolist()]}
             if self.ctx.names[path] == "sacrum" and (spine := self.ctx.spine(path)) is not None:

@@ -88,11 +88,26 @@ neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with eac
 hip bone, hip bone and femur) at the current sliders: a table under Clearance,
 smallest first, and colliding bones tinted red. A bone's field is evaluated at the
 other bone's surface points (2 mm apart), both ways; negative is the depth of the
-overlap. The sliders do not yet avoid collisions (roadmap steps 1.2-1.4).
+overlap. The sliders do not yet avoid collisions (roadmap steps 1.4, 1.5).
 
 ```bash
 python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60
 python -m implicit.anatomy.clearance examples/average_spine.json --sweep    # collisions over a grid of sliders
+```
+
+**Disc space heights.** Each endplate has its anterior, posterior, left and right
+corners and its centre (stored with the landmarks); the disc space between two
+vertebrae has anterior, middle, posterior, left and right heights, measured along
+the disc axis, in the viewer's Discs table (A / M / P; left and right in the
+tooltip). A disc is red when the posture deforms it beyond what healthy discs do in
+vivo (middle height +-10 %, anterior/posterior/left/right +-40 % of rest; Xi et al.
+2025), and marked * when its rest height is outside the population mean +- 2 SD
+(lumbar: Shin et al. 2024, CT, women; thoracic: Kunkel et al. 2011). Definitions and
+references: `implicit/anatomy/discs.py`.
+
+```bash
+python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60
+python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagged discs over a grid of sliders
 ```
 
 ## Patient anatomy: implicit bones

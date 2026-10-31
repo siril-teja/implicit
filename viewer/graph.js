@@ -367,12 +367,15 @@ const Graph = (() => {
     return [[0, 1, 2].map((r) => cols.map((c) => c[r])), t0];
   }
 
-  // The moved bones of a built scene at slider values: { name: { grid, samples, motion } }.
+  // The moved bones of a built scene at slider values: { name: { grid, samples, motion, corners } }.
   function rigidBodies(scene, library, values) {
     const out = {}, iv = nowIv(values);
     for (const b of scene._bodies || []) {
       const r = b.body.rigid, lib = r && library && library.bones[r.lib];
-      if (lib && lib.grid) out[b.name] = { grid: lib.grid, samples: lib.samples, motion: r.motion(iv) };
+      if (lib && lib.grid) {
+        out[b.name] = { grid: lib.grid, samples: lib.samples, motion: r.motion(iv),
+          corners: (lib.landmarks && lib.landmarks.corners) || null };  // disc heights (discs.js)
+      }
     }
     return out;
   }

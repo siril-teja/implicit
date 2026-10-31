@@ -44,7 +44,7 @@ def probes(scene, n_random=8, seed=0):
         for values in ({}, moved):
             scene.set_params({**defaults, **values})
             batches.append({"params": values, "units": _units(scene, n_random, seed),
-                            "clearance": _clearance(scene)})
+                            "clearance": _clearance(scene), "discs": _discs(scene)})
     finally:
         scene.set_params(defaults)
     return {"batches": batches}
@@ -61,6 +61,12 @@ def _clearance(scene):
         if n not in cache:
             cache[n] = surface_samples(g)
     return [[a, b, round(c, 6)] for a, b, c, _ in report(scene, cache)]
+
+
+def _discs(scene):
+    """Disc space heights of neighbouring vertebrae: [[upper, lower, A, M, P, L, R]] (mm)."""
+    from .anatomy.discs import report
+    return [[u, l, *(round(x, 6) for x in h)] for u, l, *h in report(scene)[0]]
 
 
 def _now(body):
