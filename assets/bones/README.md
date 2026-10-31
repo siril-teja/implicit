@@ -16,10 +16,10 @@ Coordinates are right-anterior-superior (mm): the CT scanner frame for `s0751`, 
 (downloads the release from Zenodo once).
 
 The vertebrae of `vivaplus-50F` are translated (not rotated) from the model's positions so
-that the rest disc spaces have population middle heights (`python -m implicit.anatomy.template`,
-run by the converter; the shifts are in `template.json` and in each bone file's metadata,
-`template_shift_mm`). L1-L2 and L2-L3 stop where their facets come as close as the model's
-closest pair already was (0.31 mm).
+that the rest disc spaces have population middle heights, and the facet joints are carved
+(implicit Boolean cut) to the population joint space (2.0 mm lumbar, 1.3 mm thoracic):
+`python -m implicit.anatomy.template`, run by the converter; recorded in `template.json`
+and in each bone file's metadata (`template_shift_mm`, `template_joints_carved`).
 
 Source: Wasserthal J. et al., *TotalSegmentator: robust segmentation of 104 anatomical
 structures in CT images*, Radiology: Artificial Intelligence 2023;

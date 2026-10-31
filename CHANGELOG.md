@@ -17,20 +17,27 @@ publishes that section as the GitHub release notes. Versions follow
   than its floor is red; e.g. TK 70 thins T4-T5, T5-T6 and T8-T9 to 1.3-1.5 mm.
 
 ### Changed
-- **VIVA+ 50F template: disc spaces at population values**
-  (`implicit.anatomy.template`, run by the VIVA+ converter): the thoracic and lumbar
-  vertebrae are translated along their disc axes so that every measured disc space
-  takes the population mean middle height (Shin et al. 2024; Kunkel et al. 2011),
-  and no disc is thinner anywhere than its floor at rest. Translations only:
-  orientations, Cobb angles and pelvic parameters unchanged (within 0.05 deg, the
-  endplate refit). A disc is not closed further than where its vertebrae come as
-  close as the model's closest pair already was (0.31 mm, the facets). Shifts in
-  `template.json` and each bone file.
-  - Middle heights before -> after (mm): L1-L2 11.8 -> 6.7 (facet-limited; mean
-    6.4), L2-L3 11.1 -> 10.7 (facet-limited; mean 7.6), L3-L4 8.2 -> 8.5, L4-L5
-    7.9 -> 9.0, L5-S1 8.5 -> 8.1; thoracic discs opened 0.2-2.1 mm to the Kunkel
-    means; T5-T6 and T8-T9 0.24 and 0.13 mm further, to their thickness floors.
-  - Thinnest point of any disc at rest: 2.4 mm (T3-T4, floor 2.2).
+- **VIVA+ 50F template at population values** (`implicit.anatomy.template`, run by
+  the VIVA+ converter):
+  - Disc spaces: the thoracic and lumbar vertebrae are translated along their disc
+    axes so that every measured disc space takes the population mean middle height
+    (Shin et al. 2024; Kunkel et al. 2011), and no disc is thinner anywhere than its
+    floor at rest. Translations only: orientations, Cobb angles and pelvic
+    parameters unchanged (within 0.05 deg, the endplate refit).
+  - Facet joints: VIVA+'s lumbar facets nearly touch (0.3 mm) and collide once the
+    upper lumbar discs are closed. Every pair of neighbouring bones closer than its
+    joint space is carved with an implicit Boolean cut back from the surface midway
+    between them (f = max(f, (f - f_other + g) / 2) on both bones; 1-Lipschitz, so
+    the bones end at least g apart, each losing only what that needs): g = 2.0 mm in
+    the lumbar joints (lower normal limit on CT, Weishaupt et al. 1999 via Tiwari et
+    al. 2021), 1.3 mm in the thoracic (mean on CT, Tiwari et al. 2021); room for the
+    cartilage (0.57 mm a side, Woldtvedt et al. 2011). Carved: T12-L1 to L5-S1,
+    16-326 mm3 a joint; gaps 2.00-2.03 mm on the exact surfaces.
+  - Middle heights before -> after (mm): L1-L2 11.8 -> 6.4, L2-L3 11.1 -> 7.6, L3-L4
+    8.2 -> 8.5, L4-L5 7.9 -> 9.0, L5-S1 8.5 -> 8.1 (the population means); thoracic
+    discs opened 0.2-2.1 mm to the Kunkel means, T5-T6 and T8-T9 a little further,
+    to their thickness floors. Thinnest point of any disc at rest: 2.4 mm (T3-T4,
+    floor 2.2). Shifts and carving recorded in `template.json` and each bone file.
 - **Smooth sliders**: the coronal balance (CB) jumped by up to 400 mm in one slider
   step (TL below -42 deg, MT beyond -80 deg, and extreme combinations): with only the
   discs below the TL curve (L4-L5, L5-S1) to balance, the solve ran out of its +-30
@@ -42,7 +49,9 @@ publishes that section as the GitHub release notes. Versions follow
   Same in `viewer/solvers.js`; a test sweeps every knob and random paths.
 
 ### Notes
-- LL 80 / TK 60: L4-L5 overlap 0.86 -> 0.07 mm, L3-L4 0.10 -> 0.01 mm.
+- LL 80 / TK 60: L4-L5 overlap 0.86 -> 0.07 mm, L3-L4 clear (was 0.10 mm).
+- The sampled clearance (step 1.1) reads up to ~0.3 mm low (surface samples within
+  half a voxel of the surface): carved joints show 1.75-1.85 mm there.
 
 ## [0.14.0] - 2026-10-31
 

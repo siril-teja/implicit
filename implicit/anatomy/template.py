@@ -1,37 +1,54 @@
-"""Template disc space heights: bring a template's rest disc heights to population values.
+"""Template disc spaces and facet joints: bring a template to population values.
 
     python -m implicit.anatomy.template assets/bones/vivaplus-50F [--dry-run]
 
 The VIVA+ 50F spine has upper lumbar disc spaces about twice the population height
-(implicit.anatomy.discs). This step moves the vertebrae rigidly along the spine so
-that the disc spaces take the population's middle height, without changing any
-orientation:
+(implicit.anatomy.discs) and lumbar facet joints whose bones nearly touch (0.3 mm).
+This step makes the template representative of the average population:
 
-  - per disc, the shift d along its disc axis (bisector of the two endplate normals)
-    that gives the population mean middle height (implicit.anatomy.discs.NORMS);
-  - a disc is not closed so far that its two vertebrae come closer than the
-    unmodified template's closest pair is at rest (the floor: the smallest clearance
-    of any neighbouring pair, implicit.anatomy.clearance; kept in template.json for
-    later runs): the facets of the template
-    fit its own disc heights, and closing a disc further would push its articular
-    processes into the vertebra below. The shift stops there (bisection), so such
-    a disc ends between its old height and the population mean;
-  - a disc whose thinnest point (discs.thickness, over the whole endplates) would
-    be below its floor (discs.thickness_floor) is opened until it is not;
-  - the upper vertebra of the disc and everything above it move by d along that
-    axis; the shifts add up the spine (the sacrum, hips and femurs stay).
+1. Disc spaces. The vertebrae move rigidly along the spine, without changing any
+   orientation:
+   - per disc, the shift d along its disc axis (bisector of the two endplate
+     normals) that gives the population mean middle height (discs.NORMS);
+   - a disc whose thinnest point (discs.thickness, over the whole endplates) would
+     be below its floor (discs.thickness_floor) is opened until it is not;
+   - the upper vertebra of the disc and everything above it move by d along that
+     axis; the shifts add up the spine (the sacrum, hips and femurs stay).
+   Only translations: the endplate angles, the sagittal and coronal Cobb angles and
+   the pelvic parameters are unchanged. A, M and P change by the same amount, so the
+   disc wedge (A - P) is the template's own. Discs without corners (T1-T2 of VIVA+
+   50F, see discs.RMS_MAX) are not changed.
 
-Only translations: every vertebra keeps its orientation, so the endplate angles, the
-sagittal and coronal Cobb angles and the pelvic parameters are unchanged. A, M and
-P change by the same amount, so the disc wedge (A - P) is the template's own, and
-A and P can stay outside the population range where the template's wedge or endplate
-shape differs from the population's. Discs without corners (T1-T2 of VIVA+ 50F, see
-discs.RMS_MAX) are not changed: the vertebra above moves with the one below.
+2. Joint spaces (``carve_joints``). The facets of the model fit its own disc
+   heights, so closing a disc pushes its articular processes into the vertebra
+   below; and even at the model's heights its lumbar facet joints are far narrower
+   than in people. Every pair of neighbouring bones closer than the joint space g is
+   carved back from the surface midway between them (an implicit Boolean cut on
+   both bones: f = max(f, (f - f_other + g) / 2), 1-Lipschitz, so the bones end at
+   least g apart, each losing only what that needs): g = 2.0 mm for the joints of the
+   lumbar spine (T12-L1 to L5-S1: the lower normal limit of the lumbar facet joint
+   space on CT, grade 0 of the Weishaupt et al. 1999 classification, as used by
+   Tiwari et al. 2021) and 1.3 mm in the thoracic spine (mean thoracic facet joint
+   space on CT, 1.27 +- 0.34 mm, 1512 joints, Tiwari et al. 2021). That space holds
+   the articular cartilage (mean 0.57 mm a side in the lumbar spine, Woldtvedt et
+   al. 2011) and the joint gap. Only bone where the two are less than g apart
+   changes (the facets, where they touch); every disc space is thicker than its g.
 
-The bone files are rewritten with shifted origins (the grids themselves are
-untouched, so nothing is resampled), landmarks are detected again, and the shifts
-are recorded in ``template.json`` next to the bones. Running it again finds shifts below
-TOL. implicit.anatomy.vivaplus runs it after converting a spine.
+The bone files are rewritten (shifted origins; carved values), landmarks are
+detected again, and everything is recorded in ``template.json`` next to the bones.
+Running it again changes nothing (shifts below TOL, joints already open).
+implicit.anatomy.vivaplus runs it after converting a spine.
+
+References
+  Weishaupt D, Zanetti M, Boos N, Hodler J. MR imaging and CT in osteoarthritis of
+    the lumbar facet joints. Skeletal Radiol 1999;28(4):215-9. doi:10.1007/s002560050503
+  Tiwari P, Kaur H, Jha V. Is thoracic facet joint arthritis over-reported? It's time
+    to review CT grading parameters. Indian J Radiol Imaging 2020;30(4):427-35.
+    doi:10.4103/ijri.IJRI_390_20
+  Woldtvedt DJ, Womack W, Gadomski BC, Schuldt D, Puttlitz CM. Finite element lumbar
+    spine facet contact parameter predictions are affected by the cartilage thickness
+    distribution and initial joint gap size. J Biomech Eng 2011;133(6):061009.
+    doi:10.1115/1.4004287
 """
 
 from __future__ import annotations
@@ -46,10 +63,13 @@ from . import clearance as cl
 from . import discs
 from .convert import VERTEBRAE, load_bone, load_bones, save_bone
 
-TOL = 0.2    # mm: shifts below this are not applied: corner detection repeats to ~0.05 mm, and
-             # near the floor the clearance changes by only ~0.04 mm per mm of shift (L1-L2)
-SCAN = 0.05  # mm: step of the search for the first contact when a disc is closed
+TOL = 0.1    # mm: shifts below this are not applied (corner detection repeats to ~0.05 mm)
+SCAN = 0.05  # mm: step of the search when a disc is opened to its thickness floor
 FLOOR_MARGIN = 0.05  # mm: discs are opened this far past their thickness floor (sample rounding)
+JOINT_SPACE_LUMBAR = 2.0    # mm (Weishaupt 1999 grade 0 lower limit, via Tiwari 2021)
+JOINT_SPACE_THORACIC = 1.3  # mm (Tiwari 2021 mean, 1.27 mm)
+JOINT_MARGIN = 0.1  # mm: carved this much wider (0.1 mm value quantisation, surface sampling)
+LUMBAR = {"L1", "L2", "L3", "L4", "L5", "sacrum"}  # lower bones of the lumbar joints
 
 
 def _bodies(landmarks):
@@ -60,21 +80,11 @@ def _bodies(landmarks):
     return out
 
 
-def _pair_clearance(grids, samples, u, l, t):
-    """Clearance of vertebra u moved by t against l (unmoved)."""
-    bodies = {u: (grids[u], (np.eye(3), t)), l: (grids[l], discs.IDENTITY)}
-    return cl.clearance(bodies, {u: samples[u], l: samples[l]})[0][2]
-
-
-def disc_shifts(landmarks, grids, floor=None):
-    """([(upper, lower, d, axis, (A, M, P) before, note)] per measured disc, d in mm;
-    the clearance floor); ``grids``: {bone name: Grid} of the subject; ``floor``: the
-    clearance floor (default: the smallest clearance of the subject as it is)."""
+def disc_shifts(landmarks, grids):
+    """[(upper, lower, d, axis, (A, M, P) before, note)] per measured disc, d in mm;
+    ``grids``: {bone name: Grid} of the subject."""
     bodies = _bodies(landmarks)
     samples = {n: cl.surface_samples(g) for n, g in grids.items()}
-    if floor is None:
-        rest = cl.clearance({n: (g, discs.IDENTITY) for n, g in grids.items()}, samples)
-        floor = min(c for _, _, c, _ in rest)
     out = []
     for u, l, *h in discs.heights(bodies):
         ref = discs.NORMS.get(discs.label(u, l))
@@ -85,20 +95,6 @@ def disc_shifts(landmarks, grids, floor=None):
         axis = np.asarray(cl_["normal"], float) - np.asarray(cu["normal"], float)
         axis /= np.linalg.norm(axis)
         note = ""
-        if d < 0:  # closing: stop at the first contact with the floor
-            c = lambda s: _pair_clearance(grids, samples, u, l, s * axis)
-            prev, s = 0.0, 0.0
-            while s > d:
-                s = max(s - SCAN, d)
-                if c(s) < floor:
-                    lo, hi = s, prev  # c(hi) >= floor > c(lo)
-                    for _ in range(12):
-                        mid = 0.5 * (lo + hi)
-                        lo, hi = (lo, mid) if c(mid) >= floor else (mid, hi)
-                    note = f"limited by clearance (floor {floor:.2f} mm): {d:+.2f} -> {hi:+.2f} mm"
-                    d = hi
-                    break
-                prev = s
         # Thinnest point over the whole disc at least the disc's floor (discs.thickness).
         fl = discs.thickness_floor(u, l) + FLOOR_MARGIN
         th = lambda s: discs.thickness({u: (grids[u], samples[u], bodies[u][0], (np.eye(3), s * axis)),
@@ -110,10 +106,10 @@ def disc_shifts(landmarks, grids, floor=None):
             for _ in range(12):  # th(lo) < fl <= th(s)
                 mid = 0.5 * (lo + s)
                 lo, s = (mid, s) if th(mid) < fl else (lo, mid)
-            note = (note + "; " if note else "") + f"opened to the thickness floor {fl:.2f} mm: {d:+.2f} -> {s:+.2f} mm"
+            note = f"opened to the thickness floor {fl:.2f} mm: {d:+.2f} -> {s:+.2f} mm"
             d = s
         out.append((u, l, d, axis, tuple(h[:3]), note))
-    return out, floor
+    return out
 
 
 def vertebra_shifts(shifts, names):
@@ -130,45 +126,101 @@ def vertebra_shifts(shifts, names):
     return out
 
 
+def joint_space(upper, lower):
+    return JOINT_SPACE_LUMBAR if lower in LUMBAR else JOINT_SPACE_THORACIC
+
+
+def _points(g):
+    """World coordinates of every sample of a grid, in the grid's array order."""
+    axes = [g.origin[i] + g.spacing * np.arange(g.shape[i]) for i in range(3)]
+    return np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
+
+
+def carve_joints(grids, log=print):
+    """Carve every pair of neighbouring bones closer than their joint space (see the
+    module docstring, 2.) in place: {(upper, lower): (clearance before, after, mm3
+    removed)}."""
+    from ..sdf import Grid
+    names = set(grids)
+    levels = [lv for lv in VERTEBRAE if lv in names]
+    pairs = list(zip(levels, levels[1:])) + ([(levels[-1], "sacrum")] if levels and "sacrum" in names else [])
+    out = {}
+    for u, l in pairs:
+        gap = joint_space(u, l) + JOINT_MARGIN
+        pair = lambda gu, gl: cl.clearance({u: (gu, discs.IDENTITY), l: (gl, discs.IDENTITY)},
+                                           {u: cl.surface_samples(gu), l: cl.surface_samples(gl)})[0][2]
+        gu0, gl0 = grids[u], grids[l]
+        fu, fl = gu0.values, gl0.values
+        lu = gl0.eval(_points(gu0)).reshape(fu.shape)  # the neighbour's field at each sample
+        ul = gu0.eval(_points(gl0)).reshape(fl.shape)
+        # Closer than the joint space: a point on either surface whose two distances add
+        # up to less than the space (after a carve they never do, so a rerun does nothing;
+        # the sampled clearance reads up to ~0.3 mm low, so it is not the test).
+        need = joint_space(u, l) - JOINT_MARGIN  # values are stored to 0.1 mm
+        if not (((np.abs(fu) < gu0.spacing) & (fu + lu < need)).any()
+                or ((np.abs(fl) < gl0.spacing) & (fl + ul < need)).any()):
+            continue
+        c0 = pair(gu0, gl0)
+        # Medial carving: each bone keeps what is at least gap / 2 on its side of the
+        # surface where both fields are equal; (f - f_other + gap) / 2 is 1-Lipschitz, so
+        # the carved bones are at least gap apart, and nothing changes where f + f_other >= gap.
+        nu, nl = np.maximum(fu, 0.5 * (fu - lu + gap)), np.maximum(fl, 0.5 * (fl - ul + gap))
+        removed = float(((fu < 0) & (nu >= 0)).sum() * gu0.spacing ** 3 + ((fl < 0) & (nl >= 0)).sum() * gl0.spacing ** 3)
+        grids[u] = Grid(nu, gu0.origin, gu0.spacing, gu0.name)
+        grids[l] = Grid(nl, gl0.origin, gl0.spacing, gl0.name)
+        c = pair(grids[u], grids[l])
+        out[(u, l)] = (c0, c, removed)
+        log(f"  joint {u}-{l}: clearance {c0:+.2f} -> {c:.2f} mm (space {joint_space(u, l)} mm), {removed:.0f} mm3 removed")
+    return out
+
+
 def normalise(bone_dir, dry_run=False, log=print):
-    """Shift the vertebrae of ``bone_dir`` (see the module docstring); returns the record."""
+    """Shift the vertebrae of ``bone_dir`` and carve its joints (see the module
+    docstring); returns the record."""
     from .landmarks import detect
     bone_dir = Path(bone_dir)
     lm = json.loads((bone_dir / "landmarks.json").read_text())["landmarks"]
     grids = {n: g for n, (g, _) in load_bones(bone_dir).items()}
-    done = bone_dir / "template.json"
-    # The floor is the unmodified template's: a later run keeps it, so it finds no shift.
-    first = json.loads(done.read_text()) if done.exists() else None
-    while first and "previous" in first:
-        first = first["previous"]
-    shifts, floor = disc_shifts(lm, grids, first["clearance_floor_mm"] if first else None)
+    shifts = disc_shifts(lm, grids)
     moves = vertebra_shifts(shifts, lm)
     record = {"method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the "
-                        "rest middle disc heights take the population means (implicit.anatomy.discs.NORMS), "
-                        "no pair closer than the template's closest pair at rest",
-              "clearance_floor_mm": round(floor, 4),
+                        "rest middle disc heights take the population means (implicit.anatomy.discs.NORMS); "
+                        "neighbouring bones carved to the facet joint space",
               "discs": {discs.label(u, l): {"shift_mm": round(d, 3), "before_AMP_mm": [round(x, 2) for x in h],
                                             **({"note": n} if n else {})}
                         for u, l, d, _, h, n in shifts},
               "vertebrae_mm": {lv: [round(float(x), 3) for x in t] for lv, t in moves.items()}}
-    log(f"  clearance floor (closest pair at rest): {floor:.2f} mm")
     for u, l, d, _, h, n in shifts:
         log(f"  {discs.label(u, l):>8}: A/M/P {h[0]:5.1f} {h[1]:5.1f} {h[2]:5.1f} -> shift {d:+6.2f} mm  {n}")
-    if dry_run or all(abs(d) < TOL for _, _, d, *_ in shifts):
+    if dry_run:
         return record
-    for lv, t in moves.items():
-        if np.linalg.norm(t) < TOL:
-            continue
+    moved = {lv for lv, t in moves.items() if np.linalg.norm(t) >= TOL}
+    for lv in moved:
+        g = grids[lv]
+        grids[lv] = type(g).from_quantized(g.q, g.origin + moves[lv], g.spacing, g.name)
+    carved = carve_joints(grids, log)
+    record["joints"] = {f"{u}-{l}": {"space_mm": joint_space(u, l), "clearance_before_mm": round(c0, 3),
+                                     "clearance_after_mm": round(c, 3), "removed_mm3": round(v, 1)}
+                        for (u, l), (c0, c, v) in carved.items()}
+    changed = moved | {n for pair in carved for n in pair}
+    if not changed:
+        return record
+    for lv in sorted(changed):
         path = bone_dir / f"{lv}.npz"
         g, meta = load_bone(path)
-        prev = meta.get("template_shift_mm", [0.0, 0.0, 0.0])
-        meta["template_shift_mm"] = [round(float(a + b), 4) for a, b in zip(prev, t)]
-        save_bone(path, g.values, g.origin + t, g.spacing, meta)
+        if lv in moved:
+            prev = meta.get("template_shift_mm", [0.0, 0.0, 0.0])
+            meta["template_shift_mm"] = [round(float(a + b), 4) for a, b in zip(prev, moves[lv])]
+        cut = [f"{a}-{b}" for a, b in carved if lv in (a, b)]
+        if cut:
+            meta["template_joints_carved"] = sorted(set(meta.get("template_joints_carved", []) + cut))
+        save_bone(path, grids[lv].values, grids[lv].origin, grids[lv].spacing, meta)
     detect(bone_dir, log=lambda *a: None)
+    done = bone_dir / "template.json"
     if done.exists():  # keep the history of earlier runs
         record = {**record, "previous": json.loads(done.read_text())}
-    (bone_dir / "template.json").write_text(json.dumps(record, indent=1) + "\n")
-    log(f"wrote {bone_dir / 'template.json'}")
+    done.write_text(json.dumps(record, indent=1) + "\n")
+    log(f"wrote {done}")
     return record
 
 

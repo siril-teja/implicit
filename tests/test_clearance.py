@@ -99,7 +99,7 @@ class TestSpineClearance(unittest.TestCase):
     def test_hyperlordosis_collides(self):
         c = self.clearances(spp_LL=80, spp_TK=60)
         hits = {k for k, v in c.items() if v < cl.COLLIDE}
-        self.assertEqual(hits, {("L3", "L4"), ("L4", "L5")})
+        self.assertEqual(hits, {("L4", "L5")})
         self.assertLess(c[("L4", "L5")], -0.03)
 
 

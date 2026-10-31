@@ -104,8 +104,10 @@ vivo (middle height +-10 %, anterior/posterior/left/right +-40 % of rest; Xi et 
 2025), and marked * when its rest height is outside the population mean +- 2 SD
 (lumbar: Shin et al. 2024, CT, women; thoracic: Kunkel et al. 2011). Definitions and
 references: `implicit/anatomy/discs.py`. The VIVA+ 50F template's vertebrae are translated
-so that its rest disc spaces have the population middle heights
-(`implicit/anatomy/template.py`; orientations and alignment unchanged).
+so that its rest disc spaces have the population middle heights, and its facet
+joints are carved to the population joint space (`implicit/anatomy/template.py`;
+orientations and alignment unchanged). The Discs table also shows each disc's
+thinnest point over the whole endplates, red below its floor (at least 1.5 mm).
 
 ```bash
 python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60

@@ -88,12 +88,11 @@ class TestDiscs(unittest.TestCase):
 
     def test_template_middle_heights_at_population_means(self):
         """implicit.anatomy.template: middle heights at the population means (to 0.25 mm),
-        except where the facets stopped the shift (between the mean and the original
-        height) or the disc was opened to its thickness floor (just above the mean)."""
+        except where the disc was opened to its thickness floor (just above the mean)."""
         rec = json.loads((SUBJECT / "template.json").read_text())["discs"]
         limited = {k for k, v in rec.items() if "limited by clearance" in v.get("note", "")}
         opened = {k for k, v in rec.items() if "thickness floor" in v.get("note", "")}
-        self.assertEqual(limited, {"L1-L2", "L2-L3"})
+        self.assertEqual(limited, set())  # the facets are carved instead (template.carve_joints)
         self.assertEqual(opened, {"T5-T6", "T8-T9"})
         _, rest = self.heights()
         for u, l, a, m, p, *_ in rest:

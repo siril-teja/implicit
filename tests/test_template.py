@@ -22,11 +22,25 @@ class TestTemplate(unittest.TestCase):
         cls.record = json.loads((SUBJECT / "template.json").read_text())
 
     def test_applied_once(self):
-        """A second run finds nothing to do."""
+        """A second run finds nothing to do: no shift, no joint to carve."""
         grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
-        shifts, _ = template.disc_shifts(self.lm, grids, self.record["clearance_floor_mm"])
-        for u, l, d, *_ in shifts:
+        for u, l, d, *_ in template.disc_shifts(self.lm, grids):
             self.assertLess(abs(d), template.TOL, f"{u}-{l}")
+        self.assertEqual(template.carve_joints(dict(grids), log=lambda *a: None), {})
+
+    def test_joint_spaces(self):
+        """Every pair of neighbouring bones at least its joint space apart (2.0 mm lumbar,
+        1.3 mm thoracic): on the surface of each, the two distances add up to at least
+        the space (to the 0.1 mm the values are stored to)."""
+        grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
+        self.assertEqual(set(self.record["joints"]), {"T3-T4", "T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-sacrum"})
+        for k in self.record["joints"]:
+            u, l = k.split("-")
+            for a, b in ((u, l), (l, u)):
+                f = grids[a].values
+                g = grids[b].eval(template._points(grids[a])).reshape(f.shape)
+                near = np.abs(f) < 0.5 * grids[a].spacing
+                self.assertGreaterEqual(float((f + g)[near].min()), template.joint_space(u, l) - 0.1, k)
 
     def test_translations_only(self):
         """Orientations untouched: the subject's alignment is the unmodified VIVA+ 50F's
