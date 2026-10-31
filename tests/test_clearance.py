@@ -35,6 +35,10 @@ class TestClearance(unittest.TestCase):
         names = ["sacrum", "L5", "L4", "T12", "hip_left", "femur_left", "femur_right"]
         self.assertEqual(cl.pairs(names), [("T12", "L4"), ("L4", "L5"), ("L5", "sacrum"), ("sacrum", "hip_left"),
                                            ("L5", "hip_left"), ("hip_left", "femur_left")])
+        ribs = ["T4", "T5", "rib4_left", "rib5_left", "rib5_right"]
+        self.assertEqual(cl.pairs(ribs), [("T4", "T5"), ("T4", "rib4_left"), ("rib4_left", "rib5_left"),
+                                          ("T4", "rib5_left"), ("T5", "rib5_left"), ("T4", "rib5_right"),
+                                          ("T5", "rib5_right")])
 
     def test_balls(self):
         """Gap and overlap of two balls (radius 10) to within the sample spacing."""
@@ -93,7 +97,7 @@ class TestSpineClearance(unittest.TestCase):
 
     def test_baseline_clean(self):
         c = self.clearances()
-        self.assertEqual(len(c), 23)
+        self.assertEqual(len(c), 23 + 4 * 12 - 2 + 2 * 11)  # spine, ribs with their vertebrae, rib to rib
         self.assertTrue(all(v > cl.COLLIDE for v in c.values()), {k: v for k, v in c.items() if v <= cl.COLLIDE})
 
     def test_hyperlordosis_collides(self):

@@ -31,7 +31,8 @@ COLLIDE = 0.0       # mm: clearance below this is a collision
 def pairs(names):
     """Neighbouring bone pairs among ``names``: consecutive vertebrae, the lowest one
     with the sacrum, the sacrum with each hip bone, L5 with each hip bone, each hip
-    bone with its femur."""
+    bone with its femur; each rib with its vertebra and the one above, and with the next
+    rib on its side."""
     names = set(names)
     levels = [lv for lv in VERTEBRAE if lv in names]
     out = list(zip(levels, levels[1:]))
@@ -41,6 +42,14 @@ def pairs(names):
         hip, femur = f"hip_{side}", f"femur_{side}"
         if hip in names:
             out += [(a, b) for a, b in (("sacrum", hip), ("L5", hip), (hip, femur)) if a in names and b in names]
+    for side in ("left", "right"):  # ribs: their vertebrae (costovertebral joints) and the next rib
+        for n in range(1, 13):
+            rib = f"rib{n}_{side}"
+            if rib not in names:
+                continue
+            out += [(v, rib) for v in (f"T{n - 1}", f"T{n}") if v in names]
+            if f"rib{n + 1}_{side}" in names:
+                out.append((rib, f"rib{n + 1}_{side}"))
     return out
 
 

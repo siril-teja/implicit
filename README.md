@@ -88,7 +88,7 @@ neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with eac
 hip bone, hip bone and femur) at the current sliders: a table under Clearance,
 smallest first, and colliding bones tinted red. A bone's field is evaluated at the
 other bone's surface points (2 mm apart), both ways; negative is the depth of the
-overlap. The sliders do not yet avoid collisions (roadmap steps 1.4, 1.5).
+overlap. The sliders do not yet avoid collisions (roadmap steps 1.5, 1.6).
 
 ```bash
 python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60
@@ -113,6 +113,17 @@ thinnest point over the whole endplates, red below its floor (at least 1.5 mm).
 python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60
 python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagged discs over a grid of sliders
 ```
+
+## Rib cage
+
+The average spine has the VIVA+ 50F ribs (1-12, both sides), sternum and costal
+cartilages. Each rib follows its vertebra with the alignment sliders (Align block,
+segment T1 ... T12); the sternum and costal cartilages are carried by the
+soft-tissue field (Field warp), like the spine curve. The clearance table lists every
+rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
+in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
+the concave side into each other, which rib motion (roadmap 2.7) and the constrained
+distribution (1.6) are to resolve.
 
 ## Patient anatomy: implicit bones
 

@@ -21,6 +21,14 @@ const Clearance = (() => {
       if (!has.has(hip)) continue;
       for (const [a, b] of [["sacrum", hip], ["L5", hip], [hip, femur]]) if (has.has(a) && has.has(b)) out.push([a, b]);
     }
+    for (const side of ["left", "right"]) {  // ribs: their vertebrae and the next rib
+      for (let n = 1; n <= 12; n++) {
+        const rib = `rib${n}_${side}`;
+        if (!has.has(rib)) continue;
+        for (const v of [`T${n - 1}`, `T${n}`]) if (has.has(v)) out.push([v, rib]);
+        if (has.has(`rib${n + 1}_${side}`)) out.push([rib, `rib${n + 1}_${side}`]);
+      }
+    }
     return out;
   }
 

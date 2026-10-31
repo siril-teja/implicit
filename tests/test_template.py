@@ -33,8 +33,12 @@ class TestTemplate(unittest.TestCase):
         1.3 mm thoracic): on the surface of each, the two distances add up to at least
         the space (to the 0.1 mm the values are stored to)."""
         grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
-        self.assertEqual(set(self.record["joints"]), {"T3-T4", "T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-sacrum"})
-        for k in self.record["joints"]:
+        joints, rec = set(), self.record
+        while rec:  # every run's carved joints
+            joints |= set(rec.get("joints", {}))
+            rec = rec.get("previous")
+        self.assertTrue({"T3-T4", "T12-L1", "L1-L2", "L2-L3", "L3-L4", "L4-L5", "L5-sacrum"} <= joints)
+        for k in joints:
             u, l = k.split("-")
             for a, b in ((u, l), (l, u)):
                 f = grids[a].values
@@ -53,10 +57,29 @@ class TestTemplate(unittest.TestCase):
 
     def test_bone_files_record_their_shift(self):
         for lv, t in self.record["vertebrae_mm"].items():
+            if not isinstance(t, list):  # carried parts (resampled, not shifted)
+                continue
             meta = load_bone(SUBJECT / f"{lv}.npz")[1]
             if np.linalg.norm(t) >= template.TOL:
                 np.testing.assert_allclose(meta["template_shift_mm"], t, atol=1e-3)
         self.assertNotIn("template_shift_mm", load_bone(SUBJECT / "sacrum.npz")[1])
+
+    def test_rib_cage_follows(self):
+        """Ribs carry their vertebra's total template shift; the sternum and cartilages are
+        carried by the rib ends; the costovertebral joints are open."""
+        total = template.recorded_shifts(SUBJECT)
+        for n in (1, 6, 12):
+            for side in ("left", "right"):
+                meta = load_bone(SUBJECT / f"rib{n}_{side}.npz")[1]
+                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=1e-3)
+        for part in ("sternum", "costal_cartilage_left", "costal_cartilage_right"):
+            self.assertIn("template_carried", load_bone(SUBJECT / f"{part}.npz")[1])
+        grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
+        for v, rib in template.rib_joints(set(grids)):
+            f = grids[rib].values
+            g = grids[v].eval(template._points(grids[rib])).reshape(f.shape)
+            near = np.abs(f) < 0.5 * grids[rib].spacing
+            self.assertGreaterEqual(float((f + g)[near].min()), template.joint_space(v, rib) - 0.1, f"{v}-{rib}")
 
     def test_vertebra_shifts_add_up(self):
         ax = np.array([0.0, 0.0, 1.0])

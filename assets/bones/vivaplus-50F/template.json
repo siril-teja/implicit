@@ -2,265 +2,684 @@
  "method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the rest middle disc heights take the population means (implicit.anatomy.discs.NORMS); neighbouring bones carved to the facet joint space",
  "discs": {
   "T2-T3": {
-   "shift_mm": 1.536,
+   "shift_mm": 0.0,
    "before_AMP_mm": [
-    2.57,
-    4.26,
-    3.45
+    4.11,
+    5.8,
+    4.98
    ]
   },
   "T3-T4": {
-   "shift_mm": 0.17,
+   "shift_mm": 0.0,
    "before_AMP_mm": [
-    4.54,
-    4.23,
-    2.72
+    4.71,
+    4.4,
+    2.89
    ]
   },
   "T4-T5": {
-   "shift_mm": 1.062,
+   "shift_mm": -0.0,
    "before_AMP_mm": [
-    2.97,
-    3.94,
-    4.14
+    4.03,
+    5.0,
+    5.21
    ]
   },
   "T5-T6": {
-   "shift_mm": 1.516,
+   "shift_mm": -0.0,
    "before_AMP_mm": [
-    2.34,
-    3.42,
-    4.13
+    3.86,
+    4.93,
+    5.64
    ],
-   "note": "opened to the thickness floor 2.71 mm: +1.28 -> +1.52 mm"
+   "note": "opened to the thickness floor 2.71 mm: -0.23 -> -0.00 mm"
   },
   "T6-T7": {
-   "shift_mm": 1.453,
+   "shift_mm": -0.0,
    "before_AMP_mm": [
-    3.49,
-    4.05,
-    3.72
+    4.94,
+    5.5,
+    4.93
    ]
   },
   "T7-T8": {
-   "shift_mm": 1.812,
+   "shift_mm": 0.0,
    "before_AMP_mm": [
-    4.68,
-    3.49,
-    3.31
+    6.5,
+    5.3,
+    5.12
    ]
   },
   "T8-T9": {
-   "shift_mm": 0.934,
+   "shift_mm": -0.007,
    "before_AMP_mm": [
-    4.24,
-    5.3,
-    7.07
+    5.36,
+    6.24,
+    7.52
    ],
-   "note": "opened to the thickness floor 3.23 mm: +0.80 -> +0.93 mm"
+   "note": "opened to the thickness floor 3.23 mm: -0.14 -> -0.01 mm"
   },
   "T9-T10": {
-   "shift_mm": 1.328,
+   "shift_mm": -0.0,
    "before_AMP_mm": [
-    4.2,
-    4.17,
-    5.91
+    5.48,
+    5.5,
+    7.24
    ]
   },
   "T10-T11": {
-   "shift_mm": 2.116,
+   "shift_mm": -0.05,
    "before_AMP_mm": [
-    3.56,
-    4.58,
-    3.73
+    5.68,
+    6.75,
+    5.84
    ]
   },
   "T11-T12": {
-   "shift_mm": 0.504,
+   "shift_mm": 0.0,
    "before_AMP_mm": [
-    5.33,
-    6.0,
-    7.11
+    5.83,
+    6.5,
+    7.61
    ]
   },
   "T12-L1": {
-   "shift_mm": 0.168,
+   "shift_mm": 0.005,
    "before_AMP_mm": [
-    6.74,
-    6.33,
-    6.72
+    6.92,
+    6.49,
+    6.87
    ]
   },
   "L1-L2": {
-   "shift_mm": -5.447,
+   "shift_mm": 0.002,
    "before_AMP_mm": [
-    13.49,
-    11.81,
-    8.95
+    8.0,
+    6.36,
+    3.54
    ]
   },
   "L2-L3": {
-   "shift_mm": -3.488,
+   "shift_mm": 0.002,
    "before_AMP_mm": [
-    13.94,
-    11.1,
-    9.66
+    10.45,
+    7.61,
+    6.04
    ]
   },
   "L3-L4": {
-   "shift_mm": 0.305,
+   "shift_mm": -0.002,
    "before_AMP_mm": [
-    11.99,
-    8.22,
-    7.66
+    12.31,
+    8.53,
+    7.96
    ]
   },
   "L4-L5": {
-   "shift_mm": 1.075,
+   "shift_mm": -0.002,
    "before_AMP_mm": [
-    13.96,
-    7.91,
-    7.46
+    15.11,
+    8.99,
+    8.59
    ]
   },
   "L5-S1": {
-   "shift_mm": -0.447,
+   "shift_mm": 0.0,
    "before_AMP_mm": [
-    15.07,
-    8.52,
-    9.26
+    14.69,
+    8.07,
+    8.96
    ]
   }
  },
  "vertebrae_mm": {
   "L5": [
-   -0.0,
-   -0.253,
-   -0.369
+   0.0,
+   0.0,
+   0.0
   ],
   "L4": [
+   0.0,
    -0.0,
-   -0.007,
-   0.678
+   -0.002
   ],
   "L3": [
+   0.0,
    -0.0,
-   0.015,
-   0.983
+   -0.004
   ],
   "L2": [
+   0.0,
    -0.001,
-   0.227,
-   -2.499
+   -0.002
   ],
   "L1": [
-   0.002,
-   0.826,
-   -7.913
+   0.0,
+   -0.001,
+   -0.001
   ],
   "T12": [
-   0.002,
-   0.802,
-   -7.747
+   0.0,
+   -0.001,
+   0.004
   ],
   "T11": [
-   0.002,
-   0.735,
-   -7.247
+   0.0,
+   -0.001,
+   0.004
   ],
   "T10": [
-   0.001,
-   0.496,
-   -5.145
+   0.0,
+   0.004,
+   -0.045
   ],
   "T9": [
-   -0.002,
-   0.393,
-   -3.821
+   0.0,
+   0.004,
+   -0.046
   ],
   "T8": [
-   -0.002,
-   0.405,
-   -2.887
+   0.0,
+   0.004,
+   -0.053
   ],
   "T7": [
-   -0.001,
-   0.553,
-   -1.081
+   0.0,
+   0.004,
+   -0.053
   ],
   "T6": [
-   -0.002,
-   0.727,
-   0.362
+   0.0,
+   0.004,
+   -0.053
   ],
   "T5": [
-   -0.001,
-   1.027,
-   1.848
+   0.0,
+   0.004,
+   -0.053
   ],
   "T4": [
-   -0.003,
-   1.433,
-   2.829
+   0.0,
+   0.004,
+   -0.053
   ],
   "T3": [
-   -0.003,
-   1.502,
-   2.985
+   0.0,
+   0.004,
+   -0.053
   ],
   "T2": [
-   -0.005,
-   2.103,
-   4.398
+   0.0,
+   0.004,
+   -0.053
   ],
   "T1": [
+   0.0,
+   0.004,
+   -0.053
+  ],
+  "sternum": "carried by the rib ends (inverse distance squared)",
+  "costal_cartilage_left": "carried by the rib ends (inverse distance squared)",
+  "costal_cartilage_right": "carried by the rib ends (inverse distance squared)",
+  "rib1_left": [
    -0.005,
-   2.103,
-   4.398
+   2.107,
+   4.345
+  ],
+  "rib1_right": [
+   -0.005,
+   2.107,
+   4.345
+  ],
+  "rib2_left": [
+   -0.005,
+   2.107,
+   4.345
+  ],
+  "rib2_right": [
+   -0.005,
+   2.107,
+   4.345
+  ],
+  "rib3_left": [
+   -0.003,
+   1.506,
+   2.932
+  ],
+  "rib3_right": [
+   -0.003,
+   1.506,
+   2.932
+  ],
+  "rib4_left": [
+   -0.003,
+   1.437,
+   2.776
+  ],
+  "rib4_right": [
+   -0.003,
+   1.437,
+   2.776
+  ],
+  "rib5_left": [
+   -0.001,
+   1.031,
+   1.795
+  ],
+  "rib5_right": [
+   -0.001,
+   1.031,
+   1.795
+  ],
+  "rib6_left": [
+   -0.002,
+   0.731,
+   0.309
+  ],
+  "rib6_right": [
+   -0.002,
+   0.731,
+   0.309
+  ],
+  "rib7_left": [
+   -0.001,
+   0.557,
+   -1.134
+  ],
+  "rib7_right": [
+   -0.001,
+   0.557,
+   -1.134
+  ],
+  "rib8_left": [
+   -0.002,
+   0.409,
+   -2.94
+  ],
+  "rib8_right": [
+   -0.002,
+   0.409,
+   -2.94
+  ],
+  "rib9_left": [
+   -0.002,
+   0.397,
+   -3.867
+  ],
+  "rib9_right": [
+   -0.002,
+   0.397,
+   -3.867
+  ],
+  "rib10_left": [
+   0.001,
+   0.5,
+   -5.19
+  ],
+  "rib10_right": [
+   0.001,
+   0.5,
+   -5.19
+  ],
+  "rib11_left": [
+   0.002,
+   0.734,
+   -7.243
+  ],
+  "rib11_right": [
+   0.002,
+   0.734,
+   -7.243
+  ],
+  "rib12_left": [
+   0.002,
+   0.801,
+   -7.743
+  ],
+  "rib12_right": [
+   0.002,
+   0.801,
+   -7.743
   ]
  },
  "joints": {
-  "T3-T4": {
+  "T2-rib2_left": {
    "space_mm": 1.3,
-   "clearance_before_mm": 1.156,
-   "clearance_after_mm": 1.177,
-   "removed_mm3": 0.0
+   "clearance_before_mm": 0.637,
+   "clearance_after_mm": 0.845,
+   "removed_mm3": 0.2
   },
-  "T12-L1": {
-   "space_mm": 2.0,
-   "clearance_before_mm": 0.959,
-   "clearance_after_mm": 1.848,
-   "removed_mm3": 16.4
+  "T2-rib2_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 1.151,
+   "clearance_after_mm": 1.367,
+   "removed_mm3": 0.2
   },
-  "L1-L2": {
-   "space_mm": 2.0,
-   "clearance_before_mm": 0.3,
-   "clearance_after_mm": 1.831,
-   "removed_mm3": 149.9
+  "T4-rib4_left": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.598,
+   "clearance_after_mm": 0.68,
+   "removed_mm3": 4.5
   },
-  "L2-L3": {
-   "space_mm": 2.0,
-   "clearance_before_mm": -0.283,
-   "clearance_after_mm": 1.817,
-   "removed_mm3": 325.9
+  "T4-rib4_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.382,
+   "clearance_after_mm": 1.061,
+   "removed_mm3": 0.6
   },
-  "L3-L4": {
-   "space_mm": 2.0,
-   "clearance_before_mm": 0.446,
-   "clearance_after_mm": 1.845,
-   "removed_mm3": 196.3
+  "T7-rib7_left": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.295,
+   "clearance_after_mm": 0.658,
+   "removed_mm3": 9.6
   },
-  "L4-L5": {
-   "space_mm": 2.0,
-   "clearance_before_mm": 0.558,
-   "clearance_after_mm": 1.813,
-   "removed_mm3": 108.4
+  "T7-rib7_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.468,
+   "clearance_after_mm": 0.682,
+   "removed_mm3": 6.2
   },
-  "L5-sacrum": {
-   "space_mm": 2.0,
-   "clearance_before_mm": 1.274,
-   "clearance_after_mm": 1.749,
-   "removed_mm3": 16.2
+  "T9-rib9_left": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.527,
+   "clearance_after_mm": 0.674,
+   "removed_mm3": 4.5
+  },
+  "T9-rib9_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.602,
+   "clearance_after_mm": 0.632,
+   "removed_mm3": 0.9
+  },
+  "T11-rib11_left": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.644,
+   "clearance_after_mm": 0.78,
+   "removed_mm3": 12.1
+  },
+  "T11-rib11_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.429,
+   "clearance_after_mm": 0.71,
+   "removed_mm3": 4.5
+  },
+  "T12-rib12_left": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.505,
+   "clearance_after_mm": 0.865,
+   "removed_mm3": 0.9
+  },
+  "T12-rib12_right": {
+   "space_mm": 1.3,
+   "clearance_before_mm": 0.373,
+   "clearance_after_mm": 0.964,
+   "removed_mm3": 3.8
+  }
+ },
+ "previous": {
+  "method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the rest middle disc heights take the population means (implicit.anatomy.discs.NORMS); neighbouring bones carved to the facet joint space",
+  "discs": {
+   "T2-T3": {
+    "shift_mm": 1.536,
+    "before_AMP_mm": [
+     2.57,
+     4.26,
+     3.45
+    ]
+   },
+   "T3-T4": {
+    "shift_mm": 0.17,
+    "before_AMP_mm": [
+     4.54,
+     4.23,
+     2.72
+    ]
+   },
+   "T4-T5": {
+    "shift_mm": 1.062,
+    "before_AMP_mm": [
+     2.97,
+     3.94,
+     4.14
+    ]
+   },
+   "T5-T6": {
+    "shift_mm": 1.516,
+    "before_AMP_mm": [
+     2.34,
+     3.42,
+     4.13
+    ],
+    "note": "opened to the thickness floor 2.71 mm: +1.28 -> +1.52 mm"
+   },
+   "T6-T7": {
+    "shift_mm": 1.453,
+    "before_AMP_mm": [
+     3.49,
+     4.05,
+     3.72
+    ]
+   },
+   "T7-T8": {
+    "shift_mm": 1.812,
+    "before_AMP_mm": [
+     4.68,
+     3.49,
+     3.31
+    ]
+   },
+   "T8-T9": {
+    "shift_mm": 0.934,
+    "before_AMP_mm": [
+     4.24,
+     5.3,
+     7.07
+    ],
+    "note": "opened to the thickness floor 3.23 mm: +0.80 -> +0.93 mm"
+   },
+   "T9-T10": {
+    "shift_mm": 1.328,
+    "before_AMP_mm": [
+     4.2,
+     4.17,
+     5.91
+    ]
+   },
+   "T10-T11": {
+    "shift_mm": 2.116,
+    "before_AMP_mm": [
+     3.56,
+     4.58,
+     3.73
+    ]
+   },
+   "T11-T12": {
+    "shift_mm": 0.504,
+    "before_AMP_mm": [
+     5.33,
+     6.0,
+     7.11
+    ]
+   },
+   "T12-L1": {
+    "shift_mm": 0.168,
+    "before_AMP_mm": [
+     6.74,
+     6.33,
+     6.72
+    ]
+   },
+   "L1-L2": {
+    "shift_mm": -5.447,
+    "before_AMP_mm": [
+     13.49,
+     11.81,
+     8.95
+    ]
+   },
+   "L2-L3": {
+    "shift_mm": -3.488,
+    "before_AMP_mm": [
+     13.94,
+     11.1,
+     9.66
+    ]
+   },
+   "L3-L4": {
+    "shift_mm": 0.305,
+    "before_AMP_mm": [
+     11.99,
+     8.22,
+     7.66
+    ]
+   },
+   "L4-L5": {
+    "shift_mm": 1.075,
+    "before_AMP_mm": [
+     13.96,
+     7.91,
+     7.46
+    ]
+   },
+   "L5-S1": {
+    "shift_mm": -0.447,
+    "before_AMP_mm": [
+     15.07,
+     8.52,
+     9.26
+    ]
+   }
+  },
+  "vertebrae_mm": {
+   "L5": [
+    -0.0,
+    -0.253,
+    -0.369
+   ],
+   "L4": [
+    -0.0,
+    -0.007,
+    0.678
+   ],
+   "L3": [
+    -0.0,
+    0.015,
+    0.983
+   ],
+   "L2": [
+    -0.001,
+    0.227,
+    -2.499
+   ],
+   "L1": [
+    0.002,
+    0.826,
+    -7.913
+   ],
+   "T12": [
+    0.002,
+    0.802,
+    -7.747
+   ],
+   "T11": [
+    0.002,
+    0.735,
+    -7.247
+   ],
+   "T10": [
+    0.001,
+    0.496,
+    -5.145
+   ],
+   "T9": [
+    -0.002,
+    0.393,
+    -3.821
+   ],
+   "T8": [
+    -0.002,
+    0.405,
+    -2.887
+   ],
+   "T7": [
+    -0.001,
+    0.553,
+    -1.081
+   ],
+   "T6": [
+    -0.002,
+    0.727,
+    0.362
+   ],
+   "T5": [
+    -0.001,
+    1.027,
+    1.848
+   ],
+   "T4": [
+    -0.003,
+    1.433,
+    2.829
+   ],
+   "T3": [
+    -0.003,
+    1.502,
+    2.985
+   ],
+   "T2": [
+    -0.005,
+    2.103,
+    4.398
+   ],
+   "T1": [
+    -0.005,
+    2.103,
+    4.398
+   ]
+  },
+  "joints": {
+   "T3-T4": {
+    "space_mm": 1.3,
+    "clearance_before_mm": 1.156,
+    "clearance_after_mm": 1.177,
+    "removed_mm3": 0.0
+   },
+   "T12-L1": {
+    "space_mm": 2.0,
+    "clearance_before_mm": 0.959,
+    "clearance_after_mm": 1.848,
+    "removed_mm3": 16.4
+   },
+   "L1-L2": {
+    "space_mm": 2.0,
+    "clearance_before_mm": 0.3,
+    "clearance_after_mm": 1.831,
+    "removed_mm3": 149.9
+   },
+   "L2-L3": {
+    "space_mm": 2.0,
+    "clearance_before_mm": -0.283,
+    "clearance_after_mm": 1.817,
+    "removed_mm3": 325.9
+   },
+   "L3-L4": {
+    "space_mm": 2.0,
+    "clearance_before_mm": 0.446,
+    "clearance_after_mm": 1.845,
+    "removed_mm3": 196.3
+   },
+   "L4-L5": {
+    "space_mm": 2.0,
+    "clearance_before_mm": 0.558,
+    "clearance_after_mm": 1.813,
+    "removed_mm3": 108.4
+   },
+   "L5-sacrum": {
+    "space_mm": 2.0,
+    "clearance_before_mm": 1.274,
+    "clearance_after_mm": 1.749,
+    "removed_mm3": 16.2
+   }
   }
  }
 }

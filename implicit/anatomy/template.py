@@ -126,8 +126,37 @@ def vertebra_shifts(shifts, names):
     return out
 
 
+RIB_TIPS = range(1, 11)  # ribs whose cartilages reach the sternum or the costal margin
+
+
 def joint_space(upper, lower):
     return JOINT_SPACE_LUMBAR if lower in LUMBAR else JOINT_SPACE_THORACIC
+
+
+def rib_joints(names):
+    """(vertebra, rib) pairs of the costovertebral and costotransverse joints present:
+    rib n with T n (head and tubercle) and with T n-1 (upper half of the head)."""
+    out = []
+    for n in range(1, 13):
+        for side in ("left", "right"):
+            rib = f"rib{n}_{side}"
+            if rib in names:
+                out += [(v, rib) for v in (f"T{n - 1}", f"T{n}") if v in names]
+    return out
+
+
+def _carried(grid, controls):
+    """``grid`` resampled through the displacement u(x) interpolated (inverse distance
+    squared) from ``controls``: [(point, shift)]; the box moves by the mean shift."""
+    from ..sdf import Grid
+    C = np.array([c for c, _ in controls], float)
+    U = np.array([u for _, u in controls], float)
+    X = _points(grid) + U.mean(0)  # the new grid's samples
+    d2 = ((X[:, None, :] - C[None]) ** 2).sum(-1) + 1.0
+    w = 1.0 / d2
+    u = (w @ U) / w.sum(1, keepdims=True)
+    vals = grid.eval(X - u).reshape(grid.values.shape)
+    return Grid(vals, grid.origin + U.mean(0), grid.spacing, grid.name)
 
 
 def _points(g):
@@ -144,6 +173,7 @@ def carve_joints(grids, log=print):
     names = set(grids)
     levels = [lv for lv in VERTEBRAE if lv in names]
     pairs = list(zip(levels, levels[1:])) + ([(levels[-1], "sacrum")] if levels and "sacrum" in names else [])
+    pairs += [p for p in rib_joints(names)]
     out = {}
     for u, l in pairs:
         gap = joint_space(u, l) + JOINT_MARGIN
@@ -174,13 +204,28 @@ def carve_joints(grids, log=print):
     return out
 
 
+def recorded_shifts(bone_dir):
+    """{vertebra: total translation} recorded in template.json over all runs."""
+    f = Path(bone_dir) / "template.json"
+    out = {}
+    rec = json.loads(f.read_text()) if f.exists() else None
+    while rec:
+        for lv, u in rec.get("vertebrae_mm", {}).items():
+            if isinstance(u, list) and lv[0] in "TL" and lv[1:].isdigit():
+                out[lv] = out.get(lv, np.zeros(3)) + np.asarray(u, float)
+        rec = rec.get("previous")
+    return out
+
+
 def normalise(bone_dir, dry_run=False, log=print):
     """Shift the vertebrae of ``bone_dir`` and carve its joints (see the module
     docstring); returns the record."""
     from .landmarks import detect
     bone_dir = Path(bone_dir)
     lm = json.loads((bone_dir / "landmarks.json").read_text())["landmarks"]
-    grids = {n: g for n, (g, _) in load_bones(bone_dir).items()}
+    loaded = load_bones(bone_dir)
+    grids = {n: g for n, (g, _) in loaded.items()}
+    metas = {n: m for n, (_, m) in loaded.items()}
     shifts = disc_shifts(lm, grids)
     moves = vertebra_shifts(shifts, lm)
     record = {"method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the "
@@ -194,10 +239,39 @@ def normalise(bone_dir, dry_run=False, log=print):
         log(f"  {discs.label(u, l):>8}: A/M/P {h[0]:5.1f} {h[1]:5.1f} {h[2]:5.1f} -> shift {d:+6.2f} mm  {n}")
     if dry_run:
         return record
+    # Ribs move with their vertebra; the sternum and costal cartilages with the rib ends.
+    # A rib added after the vertebrae were shifted (no template_shift_mm yet) first
+    # takes the vertebra's shift so far (template.json).
+    prior = recorded_shifts(bone_dir)
+    for n in range(1, 13):
+        for side in ("left", "right"):
+            r = f"rib{n}_{side}"
+            if r in grids and f"T{n}" in lm:
+                u = moves.get(f"T{n}", np.zeros(3))
+                if "template_shift_mm" not in metas[r]:
+                    u = u + prior.get(f"T{n}", np.zeros(3))
+                moves[r] = u
     moved = {lv for lv, t in moves.items() if np.linalg.norm(t) >= TOL}
+    tips = []
+    for n in RIB_TIPS:
+        for side in ("left", "right"):
+            r = f"rib{n}_{side}"
+            if r in grids:
+                S = cl.surface_samples(grids[r])
+                tips.append((S[np.argmax(S[:, 1])], moves.get(r, np.zeros(3))))  # most anterior point
     for lv in moved:
         g = grids[lv]
         grids[lv] = type(g).from_quantized(g.q, g.origin + moves[lv], g.spacing, g.name)
+    carried = [n for n in ("sternum", "costal_cartilage_left", "costal_cartilage_right") if n in grids]
+    if tips and any(np.linalg.norm(u) >= TOL for _, u in tips):
+        for n in carried:
+            grids[n] = _carried(grids[n], tips)
+            moved.add(n)
+            moves[n] = np.mean([u for _, u in tips], 0)
+            record["vertebrae_mm"][n] = "carried by the rib ends (inverse distance squared)"
+    for n, u in moves.items():
+        if n.startswith("rib"):
+            record["vertebrae_mm"][n] = [round(float(x), 3) for x in u]
     carved = carve_joints(grids, log)
     record["joints"] = {f"{u}-{l}": {"space_mm": joint_space(u, l), "clearance_before_mm": round(c0, 3),
                                      "clearance_after_mm": round(c, 3), "removed_mm3": round(v, 1)}
@@ -208,7 +282,9 @@ def normalise(bone_dir, dry_run=False, log=print):
     for lv in sorted(changed):
         path = bone_dir / f"{lv}.npz"
         g, meta = load_bone(path)
-        if lv in moved:
+        if lv in carried and lv in moved:
+            meta["template_carried"] = "resampled with the rib ends' shifts (implicit.anatomy.template)"
+        elif lv in moved:
             prev = meta.get("template_shift_mm", [0.0, 0.0, 0.0])
             meta["template_shift_mm"] = [round(float(a + b), 4) for a, b in zip(prev, moves[lv])]
         cut = [f"{a}-{b}" for a, b in carved if lv in (a, b)]
