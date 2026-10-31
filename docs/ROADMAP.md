@@ -38,24 +38,25 @@ The alignment sliders must only produce postures a real spine can have.
 
 | Step | Objective | Done when | Depends on | Status |
 |---|---|---|---|---|
-| **1.1 Clearance measurement** | Measure, for any slider setting, the minimum gap between every pair of neighbouring bones (vertebral bodies, facets, spinous processes, sacrum with L5, hip bones with sacrum) and show where they collide. | Clearance per pair computed on the CPU (Python and browser, same result to 0.01 mm) from the bone fields; colliding pairs drawn in red; a clearance table in the viewer; a test reproduces a known collision (e.g. LL 80, TK 60) and a known clean posture (baseline); collision counts over a grid of slider settings reported in the PR. | none || Done (0.12.0) |
-| **1.2 Physiological rotation centres** | Turn each segment about its physiological instantaneous axis of rotation instead of the disc centre. | Rotation centre per level from cited literature (lumbar: Pearcy & Bogduk 1988; thoracic: cited source), stored with the landmarks; targets still met exactly; facet/spinous collisions at the 1.1 test settings reduced, with numbers in the PR. | 1.1 || Done (0.13.0) |
-| **1.3 Motion limits and coupling** | Keep each level within its physiological range of motion, with the coupled motions of its region. | Per-level limits for flexion/extension, lateral bending and axial rotation, and coupling coefficients per region, from cited tables (White & Panjabi); the distribution never exceeds a limit; when a target needs more than the limits allow, the viewer says which target and by how much. | 1.2 | |
-| **1.4 Constrained distribution** | Distribute every target over the levels so that targets are met, limits respected and no bones collide. | A small optimisation (levels x 3 angles; targets as equalities, limits as bounds, minimum clearance, ~1 mm at facets, as inequalities, closest to the subject's own distribution) solved identically in Python and the browser at interactive speed (< 50 ms per slider move); no collisions on a grid of slider settings that is feasible; infeasible settings reported, not drawn. | 1.3 | |
-| **1.5 Global balance** | Express and control whole-body sagittal and coronal balance. | SVA, T1 pelvic angle (TPA), C7/T1 plumb line measured and shown; compensation modes (pelvic retroversion, thoracic flattening) selectable; Roussouly type presets; measured values match targets within 1 mm / 0.5 deg. | 1.4 | |
-| **1.6 Cervical spine and head** | Complete the spine up to the skull. | C1-C7 and the skull imported from VIVA+ 50F with landmarks; cervical lordosis (C2-C7) and T1 slope sliders; the 1.1-1.4 machinery covers the cervical levels. | 1.4 | |
+| **1.1 Clearance measurement** | Measure, for any slider setting, the minimum gap between every pair of neighbouring bones (vertebral bodies, facets, spinous processes, sacrum with L5, hip bones with sacrum) and show where they collide. | Clearance per pair computed on the CPU (Python and browser, same result to 0.01 mm) from the bone fields; colliding pairs drawn in red; a clearance table in the viewer; a test reproduces a known collision (e.g. LL 80, TK 60) and a known clean posture (baseline); collision counts over a grid of slider settings reported in the PR. | none | Done (0.12.0) |
+| **1.2 Physiological rotation centres** | Turn each segment about its physiological instantaneous axis of rotation instead of the disc centre. | Rotation centre per level from cited literature (lumbar: Pearcy & Bogduk 1988; thoracic: cited source), stored with the landmarks; targets still met exactly; facet/spinous collisions at the 1.1 test settings reduced, with numbers in the PR. | 1.1 | Done (0.13.0) |
+| **1.3 Disc space heights** | Keep every disc space physiological: no disc squeezed or stretched beyond what healthy discs do in vivo, and the template's rest heights checked against population values. | Anterior, middle, posterior, left and right heights per disc from endplate corners stored with the landmarks, computed in Python and the browser (same to 0.01 mm) and shown in the viewer; posture rules from cited in vivo data (middle height change, local strain) flag discs deformed beyond them; rest heights compared with cited population values (lumbar and thoracic, mean +- 2 SD); flag counts over a grid of slider settings reported in the PR. | 1.2 | Done (0.14.0) |
+| **1.4 Motion limits and coupling** | Keep each level within its physiological range of motion, with the coupled motions of its region. | Per-level limits for flexion/extension, lateral bending and axial rotation, and coupling coefficients per region, from cited tables (White & Panjabi); the distribution never exceeds a limit; when a target needs more than the limits allow, the viewer says which target and by how much. | 1.3 | |
+| **1.5 Constrained distribution** | Distribute every target over the levels so that targets are met, limits respected and no bones collide. | A small optimisation (levels x 3 angles; targets as equalities, limits as bounds, minimum clearance, ~1 mm at facets, and the 1.3 disc height rules as inequalities, closest to the subject's own distribution) solved identically in Python and the browser at interactive speed (< 50 ms per slider move); no collisions and no flagged disc on a grid of slider settings that is feasible; infeasible settings reported, not drawn. | 1.4 | |
+| **1.6 Global balance** | Express and control whole-body sagittal and coronal balance. | SVA, T1 pelvic angle (TPA), C7/T1 plumb line measured and shown; compensation modes (pelvic retroversion, thoracic flattening) selectable; Roussouly type presets; measured values match targets within 1 mm / 0.5 deg. | 1.5 | |
+| **1.7 Cervical spine and head** | Complete the spine up to the skull. | C1-C7 and the skull imported from VIVA+ 50F with landmarks; cervical lordosis (C2-C7) and T1 slope sliders; the 1.1-1.5 machinery covers the cervical levels. | 1.5 | |
 
 ## Phase 2: Soft tissue
 
 | Step | Objective | Done when | Depends on | Status |
 |---|---|---|---|---|
-| **2.1 Discs** | Generate each intervertebral disc between its posed endplates, with annulus and nucleus. | Endplate rims detected on every level (areas within published ranges); disc filling the space between the two endplates and conforming to both; nucleus as a fraction of the disc (knob, default 40-50 % of the area); annulus lamellae with fibre directions (+-30 deg alternating) available for FE; disc height (anterior, posterior, mean) and wedge angle measured live; discs follow every slider; GPU check covers them; frame time within the budget of the scene without discs + 30 %. | 1.4 | |
+| **2.1 Discs** | Generate each intervertebral disc between its posed endplates, with annulus and nucleus. | Endplate rims detected on every level (areas within published ranges); disc filling the space between the two endplates and conforming to both; nucleus as a fraction of the disc (knob, default 40-50 % of the area); annulus lamellae with fibre directions (+-30 deg alternating) available for FE; disc height (anterior, posterior, mean) and wedge angle measured live; discs follow every slider; GPU check covers them; frame time within the budget of the scene without discs + 30 %. | 1.5 | |
 | **2.2 Disc degeneration** | Represent disc degeneration as clinical grades. | Pfirrmann-style grade per disc controlling height loss and nucleus size; osteophytes at endplate rims as a size knob; grade measured back (height ratio) matches the grade definition. | 2.1 | |
-| **2.3 Robust soft-tissue field** | Make the soft-tissue field fold-free everywhere soft tissue can be. | No folding (Jacobian > 0) within 60 mm of the spine curve at every feasible slider setting (sampled test); inverse accurate to 0.01 mm there; cost per sample not above the current polyrigid field; TPS and polyrigid kept as options. | 1.4 | |
+| **2.3 Robust soft-tissue field** | Make the soft-tissue field fold-free everywhere soft tissue can be. | No folding (Jacobian > 0) within 60 mm of the spine curve at every feasible slider setting (sampled test); inverse accurate to 0.01 mm there; cost per sample not above the current polyrigid field; TPS and polyrigid kept as options. | 1.5 | |
 | **2.4 Posterior element landmarks** | Detect the posterior bony landmarks every ligament and joint needs. | Spinous process tips, laminae, transverse process tips, pedicles and superior/inferior facet surfaces found on every level from the bone fields; stored in landmarks.json; shown as markers; checked against the VIVA+ mesh parts where they exist (error reported in the PR). | none | |
-| **2.5 Facet joints** | Model the facet joints as cartilage layers with a joint gap. | Cartilage layers (thickness knob) on the detected facet surfaces, following the posture; joint gap measured live; facet orientation (tropism) measured per level. | 2.4, 1.4 | |
+| **2.5 Facet joints** | Model the facet joints as cartilage layers with a joint gap. | Cartilage layers (thickness knob) on the detected facet surfaces, following the posture; joint gap measured live; facet orientation (tropism) measured per level. | 2.4, 1.5 | |
 | **2.6 Ligaments** | Generate the spinal ligaments between their attachment sites. | ALL, PLL, ligamentum flavum, interspinous, supraspinous, intertransverse and capsular ligaments per level, from the 2.4 landmarks, carried by the soft-tissue field; as volumes for display and as 1-D elements (with rest length and prestrain) for FE; lengths measured live, outside physiological ranges flagged. | 2.3, 2.4 | |
-| **2.7 Rib cage** | Add the ribs, sternum and costal cartilages, moving with the thoracic spine. | Ribs, sternum and costal cartilages imported from VIVA+ 50F with costovertebral and costotransverse joint landmarks; ribs follow their vertebra, with pump-handle and bucket-handle motion as knobs; no rib collisions at feasible slider settings (1.1 machinery). | 1.4, 2.4 | |
+| **2.7 Rib cage** | Add the ribs, sternum and costal cartilages, moving with the thoracic spine. | Ribs, sternum and costal cartilages imported from VIVA+ 50F with costovertebral and costotransverse joint landmarks; ribs follow their vertebra, with pump-handle and bucket-handle motion as knobs; no rib collisions at feasible slider settings (1.1 machinery). | 1.5, 2.4 | |
 | **2.8 Muscles** | Add the main trunk muscles. | Erector spinae, multifidus, psoas, quadratus lumborum and the abdominal wall as volumes and lines of action, attached to landmarks and carried by the posture; source of geometry stated and licence-checked. | 2.6, 2.7 | |
 
 ## Phase 3: Morphology
@@ -72,9 +73,9 @@ The alignment sliders must only produce postures a real spine can have.
 
 | Step | Objective | Done when | Depends on | Status |
 |---|---|---|---|---|
-| **4.1 Correlated sampling** | Sample whole patients from population distributions instead of independent sliders. | Distributions and correlations (PI-LL, age effects on kyphosis, disc height and bone density, sex differences) from cited cohorts; a "sample patient" action with a seed; generated cohorts reproduce the input statistics within stated tolerances. | 1.5, 3.1 | |
+| **4.1 Correlated sampling** | Sample whole patients from population distributions instead of independent sliders. | Distributions and correlations (PI-LL, age effects on kyphosis, disc height and bone density, sex differences) from cited cohorts; a "sample patient" action with a seed; generated cohorts reproduce the input statistics within stated tolerances. | 1.6, 3.1 | |
 | **4.2 Presets** | Provide clinically recognisable patient types. | Presets for normal spines by Roussouly type, adolescent idiopathic scoliosis by Lenke type, adult degenerative scoliosis, hyperkyphosis, osteoporotic fractures and spondylolisthesis; each preset measured back against its definition. | 4.1, 3.2 | |
-| **4.3 Validity report** | Certify every generated patient. | One report per patient: clearances, disc heights, ligament lengths, balance, parameter values; invalid patients flagged or rejected by the generator. | 1.4, 2.6 | |
+| **4.3 Validity report** | Certify every generated patient. | One report per patient: clearances, disc heights, ligament lengths, balance, parameter values; invalid patients flagged or rejected by the generator. | 1.5, 2.6 | |
 | **4.4 Export** | Hand a patient to other tools. | Surfaces (STL) per structure, label volume (NIfTI), landmarks, parameter record (JSON), all in one folder with a manifest; re-importing the record regenerates the same patient. | 4.3 | |
 
 ## Phase 5: Realism against radiographs and CT
@@ -100,23 +101,23 @@ The alignment sliders must only produce postures a real spine can have.
 ## Critical path
 
 ```
-1.1 -> 1.2 -> 1.3 -> 1.4 -> 2.1 -> 2.2
-                      |      `-> 3.2 -> 3.3            3.4 -> 5.1, 5.2
-                      |-> 2.3 -> 2.6 <- 2.4 -> 2.5
-                      |-> 1.5 -> 4.1 -> 4.2, 4.3 -> 4.4 -> 5.3, 5.4
-                      `-> 1.6, 2.7 -> 2.8              3.1 -> 3.5
+1.1 -> 1.2 -> 1.3 -> 1.4 -> 1.5 -> 2.1 -> 2.2
+                             |      `-> 3.2 -> 3.3            3.4 -> 5.1, 5.2
+                             |-> 2.3 -> 2.6 <- 2.4 -> 2.5
+                             |-> 1.6 -> 4.1 -> 4.2, 4.3 -> 4.4 -> 5.3, 5.4
+                             `-> 1.7, 2.7 -> 2.8              3.1 -> 3.5
 2.1 + 2.6 -> 6.1 -> 6.2 -> 6.3 -> 6.4
 ```
 
-Milestones: **M1 valid posture** (1.1-1.4), **M2 discs** (2.1-2.2), **M3 first
+Milestones: **M1 valid posture** (1.1-1.5), **M2 discs** (2.1-2.2), **M3 first
 realistic virtual patients** (3.2-3.4, 5.1), **M4 posterior elements and
-ligaments** (2.3-2.6), **M5 generator** (1.5, 1.6, 3.1, 4.x), **M6 shape model**
+ligaments** (2.3-2.6), **M5 generator** (1.6, 1.7, 3.1, 4.x), **M6 shape model**
 (3.5), **M7 rib cage and muscles** (2.7, 2.8), **M8 FE** (6.x).
 
 ## Open questions (resolved in the step that needs them)
 
 - Thoracic rotation centres and motion limits are less documented than lumbar ones
-  (1.2, 1.3): sources to be chosen and cited.
+  (1.2, 1.4): sources to be chosen and cited.
 - The fold-free field (2.3): a stationary velocity field integrated in the shader is
   the likely route; its cost has to stay within the budget.
 - VerSe's CC BY-SA terms against the intended distribution of derived models (3.5).

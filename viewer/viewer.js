@@ -70,6 +70,8 @@ async function loadScene(scene, key) {
   clear.key = null;
   $("#clearHead").hidden = true;
   $("#clearance").replaceChildren();
+  $("#discHead").hidden = true;
+  $("#discs").replaceChildren();
   if (scene.graph && !window.SCENES) return loadGraphScene(scene, key);
   state.g = null;
   state.key = key;
@@ -561,10 +563,27 @@ function updateClearance(s) {
     if (d >= Clearance.COLLIDE) continue;
     for (const n of [a, b]) { const i = index[n]; if (i !== undefined && i < 256) state.col[i >> 5] |= 1 << (i & 31); }
   }
+  updateDiscs(bodies);
   $("#clearHead").hidden = !res.length;
   $("#clearance").replaceChildren(...res.map(([a, b, d]) => el("div", { className: `clr${d < Clearance.COLLIDE ? " hit" : ""}` },
     el("span", { textContent: `${a} – ${b}` }), el("span", { textContent: `${d.toFixed(1)} mm` }))));
   state.dirty = true;
+}
+
+// Disc space heights (viewer/discs.js): A / M / P per disc, red where the posture
+// deforms the disc beyond the in vivo limits, * where the rest height is outside the
+// population range (the reasons in the row's tooltip).
+function updateDiscs(bodies) {
+  const now = Discs.heights(bodies), rest = Discs.restHeights(bodies);
+  const bad = Discs.postureFlags(now, rest), norm = Discs.normFlags(rest);
+  $("#discHead").hidden = !now.length;
+  $("#discs").replaceChildren(...now.map(([u, l, a, m, p, le, ri]) => {
+    const k = `${u}|${l}`, why = [...(bad[k] || []), ...(norm[k] ? ["rest outside population: " + norm[k].join("; ")] : [])];
+    return el("div", { className: `clr${bad[k] ? " hit" : ""}`, title: why.join("\n") + (why.length ? "\n" : "")
+        + `left ${le.toFixed(1)}, right ${ri.toFixed(1)} mm` },
+      el("span", { textContent: `${Discs.label(u, l)}${norm[k] ? " *" : ""}` }),
+      el("span", { textContent: `${a.toFixed(1)} / ${m.toFixed(1)} / ${p.toFixed(1)}` }));
+  }));
 }
 
 // Colour scale of a visible field-coloured body (Field view arrows / slice).

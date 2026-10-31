@@ -311,6 +311,15 @@ def detect(bone_dir, log=print):
         log(f"  C2: inferior endplate rms {marks['C2']['inf']['rms']:.2f} mm (from C3)")
     from .rotation import add_centres
     add_centres(marks)  # physiological rotation centres of each disc
+    from .discs import endplate_corners
+    for lv, e in marks.items():  # endplate corners and centres (disc space heights)
+        f = fields["sacrum" if lv == "S1" else lv]
+        for ep in ("sup", "inf"):
+            if ep in e:
+                try:
+                    e[ep]["corners"] = endplate_corners(f, e, ep)
+                except RuntimeError as err:
+                    log(f"  {lv}: {err}")
     out = {lv: _jsonable({k: v for k, v in e.items() if k != "footprint_uv"})
            for lv, e in marks.items()}
     doc = {"frame": "scanner RAS, mm", "landmarks": out}

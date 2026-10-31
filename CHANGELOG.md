@@ -5,6 +5,36 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.14.0] - 2026-10-31
+
+### Added
+- **Disc space heights** (roadmap step 1.3, new): anterior, middle, posterior,
+  left and right heights of every disc space along the disc axis, from endplate
+  corners and centres detected on the bone fields (stored in `landmarks.json`;
+  endplates fitted worse than 1.5 mm rms, T1 of VIVA+ 50F, are skipped). Computed
+  in Python (`implicit.anatomy.discs`, with a slider sweep) and the viewer
+  (`viewer/discs.js`, same to 0.01 mm, checked by the GPU check); a Discs table in
+  the viewer.
+- Posture rules from in vivo data (Xi et al. 2025): middle height within +-10 % of
+  rest, anterior/posterior/left/right within +-40 %; discs beyond them are red.
+- Rest heights against population values, mean +- 2 SD (lumbar: Shin et al. 2024,
+  CT, 350 women; thoracic: Kunkel et al. 2011): outliers marked *.
+
+### Changed
+- Roadmap: disc space heights inserted as step 1.3; motion limits, constrained
+  distribution, global balance and cervical spine renumbered 1.4-1.7; the
+  constrained distribution (1.5) takes the disc rules as constraints.
+
+### Notes
+- Average spine at rest: L1-L2 and L2-L3 are about twice the population height
+  (middle 11.8 and 11.1 mm against 6.4 and 7.6 mm); L3-L4 to L5-S1 middle heights
+  are within the population range, their anterior heights above it.
+- TK 60 compresses T4-T5 and T5-T6 anteriorly by 46-48 %; LL 80 raises the L5-S1
+  middle height by 10 %. Over the 243-setting sweep (LL, TK, PT, MT, TL), 237
+  settings deform a disc beyond the rules (L5-S1 198, T7-T8 162, T12-L1 162,
+  L4-L5 138, T4-T5 81, T5-T6 81, T8-T9 27); the coronal curves of +-40 deg compress
+  the ends of their curves laterally.
+
 ## [0.13.0] - 2026-10-31
 
 ### Changed
