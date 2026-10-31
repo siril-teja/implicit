@@ -63,18 +63,27 @@ class TestDiscs(unittest.TestCase):
             np.testing.assert_allclose(h[(u, l)], h0, atol=1e-6)
         self.assertEqual(discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest), {})
 
-    def test_hyperkyphosis_compresses_upper_thoracic_discs(self):
-        h, rest = self.heights(spp_TK=60)
+    def test_hyperkyphosis_compresses_thoracic_discs(self):
+        h, rest = self.heights(spp_TK=70)
         flags = discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest)
-        self.assertEqual(set(flags), {("T4", "T5"), ("T5", "T6")})
+        self.assertEqual(set(flags), {("T4", "T5"), ("T5", "T6"), ("T8", "T9")})
         self.assertTrue(all(w.startswith("anterior -") for v in flags.values() for w in v))
 
-    def test_template_upper_lumbar_discs_outside_norms(self):
-        """VIVA+ 50F: L1-L2 and L2-L3 are about twice the population middle height."""
+    def test_template_middle_heights_at_population_means(self):
+        """implicit.anatomy.template: middle heights at the population means (to 0.25 mm),
+        except where the facets stopped the shift (noted in template.json): there between
+        the mean and the original height."""
+        rec = json.loads((SUBJECT / "template.json").read_text())["discs"]
+        limited = {k for k, v in rec.items() if "note" in v}
+        self.assertEqual(limited, {"L1-L2", "L2-L3"})
         _, rest = self.heights()
-        norms = discs.norm_flags(rest)
-        for k in (("L1", "L2"), ("L2", "L3")):
-            self.assertTrue(any(w.startswith("M ") for w in norms[k]), norms.get(k))
+        for u, l, a, m, p, *_ in rest:
+            k = discs.label(u, l)
+            mu = discs.NORMS[k][1][0]
+            if k in limited:
+                self.assertTrue(mu < m < rec[k]["before_AMP_mm"][1], k)
+            else:
+                self.assertAlmostEqual(m, mu, delta=0.25, msg=k)
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_viewer_matches(self):

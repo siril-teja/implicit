@@ -103,7 +103,9 @@ tooltip). A disc is red when the posture deforms it beyond what healthy discs do
 vivo (middle height +-10 %, anterior/posterior/left/right +-40 % of rest; Xi et al.
 2025), and marked * when its rest height is outside the population mean +- 2 SD
 (lumbar: Shin et al. 2024, CT, women; thoracic: Kunkel et al. 2011). Definitions and
-references: `implicit/anatomy/discs.py`.
+references: `implicit/anatomy/discs.py`. The VIVA+ 50F template's vertebrae are translated
+so that its rest disc spaces have the population middle heights
+(`implicit/anatomy/template.py`; orientations and alignment unchanged).
 
 ```bash
 python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60

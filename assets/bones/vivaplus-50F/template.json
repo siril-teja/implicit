@@ -1,0 +1,223 @@
+{
+ "method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the rest middle disc heights take the population means (implicit.anatomy.discs.NORMS), no pair closer than the template's closest pair at rest",
+ "clearance_floor_mm": 0.3085,
+ "discs": {
+  "T2-T3": {
+   "shift_mm": 1.536,
+   "before_AMP_mm": [
+    2.57,
+    4.26,
+    3.45
+   ]
+  },
+  "T3-T4": {
+   "shift_mm": 0.17,
+   "before_AMP_mm": [
+    4.54,
+    4.23,
+    2.72
+   ]
+  },
+  "T4-T5": {
+   "shift_mm": 1.062,
+   "before_AMP_mm": [
+    2.97,
+    3.94,
+    4.14
+   ]
+  },
+  "T5-T6": {
+   "shift_mm": 1.285,
+   "before_AMP_mm": [
+    2.34,
+    3.42,
+    4.13
+   ]
+  },
+  "T6-T7": {
+   "shift_mm": 1.453,
+   "before_AMP_mm": [
+    3.49,
+    4.05,
+    3.72
+   ]
+  },
+  "T7-T8": {
+   "shift_mm": 1.812,
+   "before_AMP_mm": [
+    4.68,
+    3.49,
+    3.31
+   ]
+  },
+  "T8-T9": {
+   "shift_mm": 0.8,
+   "before_AMP_mm": [
+    4.24,
+    5.3,
+    7.07
+   ]
+  },
+  "T9-T10": {
+   "shift_mm": 1.328,
+   "before_AMP_mm": [
+    4.2,
+    4.17,
+    5.91
+   ]
+  },
+  "T10-T11": {
+   "shift_mm": 2.116,
+   "before_AMP_mm": [
+    3.56,
+    4.58,
+    3.73
+   ]
+  },
+  "T11-T12": {
+   "shift_mm": 0.504,
+   "before_AMP_mm": [
+    5.33,
+    6.0,
+    7.11
+   ]
+  },
+  "T12-L1": {
+   "shift_mm": 0.168,
+   "before_AMP_mm": [
+    6.74,
+    6.33,
+    6.72
+   ]
+  },
+  "L1-L2": {
+   "shift_mm": -5.096,
+   "before_AMP_mm": [
+    13.49,
+    11.81,
+    8.95
+   ],
+   "note": "limited by clearance (floor 0.31 mm): -5.45 -> -5.10 mm"
+  },
+  "L2-L3": {
+   "shift_mm": -0.418,
+   "before_AMP_mm": [
+    13.94,
+    11.1,
+    9.66
+   ],
+   "note": "limited by clearance (floor 0.31 mm): -3.49 -> -0.42 mm"
+  },
+  "L3-L4": {
+   "shift_mm": 0.305,
+   "before_AMP_mm": [
+    11.99,
+    8.22,
+    7.66
+   ]
+  },
+  "L4-L5": {
+   "shift_mm": 1.075,
+   "before_AMP_mm": [
+    13.96,
+    7.91,
+    7.46
+   ]
+  },
+  "L5-S1": {
+   "shift_mm": -0.447,
+   "before_AMP_mm": [
+    15.07,
+    8.52,
+    9.26
+   ]
+  }
+ },
+ "vertebrae_mm": {
+  "L5": [
+   -0.0,
+   -0.253,
+   -0.369
+  ],
+  "L4": [
+   -0.0,
+   -0.007,
+   0.678
+  ],
+  "L3": [
+   -0.0,
+   0.015,
+   0.983
+  ],
+  "L2": [
+   -0.0,
+   0.041,
+   0.566
+  ],
+  "L1": [
+   0.002,
+   0.6,
+   -4.5
+  ],
+  "T12": [
+   0.002,
+   0.577,
+   -4.334
+  ],
+  "T11": [
+   0.002,
+   0.51,
+   -3.834
+  ],
+  "T10": [
+   0.001,
+   0.271,
+   -1.732
+  ],
+  "T9": [
+   -0.002,
+   0.168,
+   -0.408
+  ],
+  "T8": [
+   -0.002,
+   0.178,
+   0.392
+  ],
+  "T7": [
+   -0.001,
+   0.327,
+   2.198
+  ],
+  "T6": [
+   -0.002,
+   0.5,
+   3.641
+  ],
+  "T5": [
+   -0.001,
+   0.754,
+   4.9
+  ],
+  "T4": [
+   -0.003,
+   1.16,
+   5.882
+  ],
+  "T3": [
+   -0.003,
+   1.23,
+   6.037
+  ],
+  "T2": [
+   -0.005,
+   1.831,
+   7.45
+  ],
+  "T1": [
+   -0.005,
+   1.831,
+   7.45
+  ]
+ }
+}

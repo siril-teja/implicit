@@ -15,6 +15,12 @@ Coordinates are right-anterior-superior (mm): the CT scanner frame for `s0751`, 
 `vivaplus-50F` is written by `python -m implicit.anatomy.vivaplus --model 50F-standing --out assets/bones/vivaplus-50F`
 (downloads the release from Zenodo once).
 
+The vertebrae of `vivaplus-50F` are translated (not rotated) from the model's positions so
+that the rest disc spaces have population middle heights (`python -m implicit.anatomy.template`,
+run by the converter; the shifts are in `template.json` and in each bone file's metadata,
+`template_shift_mm`). L1-L2 and L2-L3 stop where their facets come as close as the model's
+closest pair already was (0.31 mm).
+
 Source: Wasserthal J. et al., *TotalSegmentator: robust segmentation of 104 anatomical
 structures in CT images*, Radiology: Artificial Intelligence 2023;
 dataset doi:10.5281/zenodo.8367088, CC BY 4.0. The files here are derived works

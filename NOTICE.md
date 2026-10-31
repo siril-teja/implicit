@@ -46,5 +46,7 @@ model*, IRCOBI 2023.
 
 Licensed under the [GNU LGPL v3.0 or later](https://www.gnu.org/licenses/lgpl-3.0.html).
 The files in `assets/bones/vivaplus-50F/` are derived works (bone surfaces of
-the model converted to signed distance fields) and stay under the LGPL-3.0-or-later;
+the model converted to signed distance fields; the thoracic and lumbar vertebrae
+translated so that the disc spaces take population heights, recorded in
+`template.json`) and stay under the LGPL-3.0-or-later;
 the MIT License covers the code only. See [docs/LICENSING.md](docs/LICENSING.md).

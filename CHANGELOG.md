@@ -5,6 +5,30 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.15.0] - 2026-10-31
+
+### Changed
+- **VIVA+ 50F template: disc space heights at population values**
+  (`implicit.anatomy.template`, run by the VIVA+ converter): the thoracic and lumbar
+  vertebrae are translated along their disc axes so that every measured disc
+  space takes the population mean middle height (Shin et al. 2024; Kunkel et al.
+  2011). Translations only: orientations, endplate angles, Cobb angles and the
+  pelvic parameters are unchanged (alignment within 0.05 deg, the endplate refit).
+  A disc is not closed further than where its vertebrae come as close as the
+  model's closest pair already was (0.31 mm, the facets): L1-L2 stops at 6.7 mm
+  (mean 6.4), L2-L3 at 10.7 mm (mean 7.6), the facets of VIVA+ being made for its
+  own taller discs. Shifts recorded in `template.json` and each bone file.
+- Middle heights before -> after (mm): L1-L2 11.8 -> 6.7, L2-L3 11.1 -> 10.7, L3-L4
+  8.2 -> 8.5, L4-L5 7.9 -> 9.0, L5-S1 8.5 -> 8.1; thoracic discs opened by 0.2-2.1 mm
+  to the Kunkel means. The anterior and posterior heights keep the model's wedge,
+  so some stay outside the (supine CT) population range.
+
+### Notes
+- LL 80 / TK 60: L4-L5 overlap 0.86 -> 0.07 mm, L3-L4 0.10 -> 0.01 mm. TK 60 no longer
+  compresses a thoracic disc beyond the rules (TK 70 does: T4-T5, T5-T6, T8-T9).
+- Sweep (243 settings): discs deformed beyond the rules in 216 (was 237; L5-S1
+  198, T12-L1 162, L4-L5 117); collisions in 225 (the coronal curves of +-40 deg).
+
 ## [0.14.0] - 2026-10-31
 
 ### Added
