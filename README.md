@@ -88,7 +88,7 @@ neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with eac
 hip bone, hip bone and femur) at the current sliders: a table under Clearance,
 smallest first, and colliding bones tinted red. A bone's field is evaluated at the
 other bone's surface points (2 mm apart), both ways; negative is the depth of the
-overlap. The sliders do not yet avoid collisions (roadmap steps 1.4, 1.5).
+overlap. The sliders do not yet avoid collisions (roadmap steps 1.5, 1.6).
 
 ```bash
 python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60

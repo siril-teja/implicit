@@ -55,11 +55,23 @@ BONES.update({
     "femur_right": ("femur", r"^LX-Bone-Femur-(head|neck|greater-trochanter|lesser-trochanter|shaft-proximal)-"
                              r"(Cortical|Trabecular)-R$"),
 })
+# Rib cage: ribs (cortical shell and its posterior end), sternum, costal cartilages
+# (one exterior shell per side, all ribs, with the costochondral junctions).
+for _n in range(1, 13):
+    for _s, _c in (("left", "L"), ("right", "R")):
+        BONES[f"rib{_n}_{_s}"] = ("rib", rf"^TX-Ribcage-R{_n}-Cortical(-Posterior-End)?-{_c}$")
+BONES["sternum"] = ("sternum", r"^TX-Ribcage-Sternum-Cortical-M$")
+for _s, _c in (("left", "L"), ("right", "R")):
+    BONES[f"costal_cartilage_{_s}"] = ("cartilage", rf"^TX-Ribcage-(Cartilage|Costochondral_Junction)-Exterior-{_c}$")
+RIBCAGE = [f"rib{n}_{s}" for n in range(1, 13) for s in ("left", "right")] + [
+    "sternum", "costal_cartilage_left", "costal_cartilage_right"]
 PRESETS = {"spine": [f"T{n}" for n in range(1, 13)] + [f"L{n}" for n in range(1, 6)]
            + ["sacrum", "hip_left", "hip_right", "femur_left", "femur_right"],
            "lumbar": [f"L{n}" for n in range(1, 6)] + ["sacrum", "hip_left", "hip_right",
-                                                      "femur_left", "femur_right"]}
-MASK_H = {"vertebra": 0.25, "sacrum": 0.4, "hip": 0.6, "femur": 0.4}  # mm, inside/outside grid
+                                                      "femur_left", "femur_right"],
+           "ribcage": RIBCAGE}
+PRESETS["full"] = PRESETS["spine"] + RIBCAGE
+MASK_H = {"vertebra": 0.25, "sacrum": 0.4, "hip": 0.6, "femur": 0.4, "rib": 0.3, "sternum": 0.3, "cartilage": 0.4}  # mm, inside/outside grid
 
 # Solid faces (LS-DYNA node order): hexahedron; tetrahedra repeat the 4th node.
 HEX_FACES = [(0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]

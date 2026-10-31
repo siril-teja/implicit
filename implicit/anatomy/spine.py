@@ -23,9 +23,11 @@ COLORS = {
     "C": (0.95, 0.86, 0.70), "T": (0.93, 0.83, 0.68), "L": (0.91, 0.80, 0.66),
     "sacrum": (0.88, 0.76, 0.62), "hip": (0.86, 0.78, 0.70), "femur": (0.84, 0.80, 0.74),
     "reference": (0.95, 0.85, 0.35), "marker": (0.2, 0.85, 0.5), "curve": (0.3, 0.82, 0.88),
+    "rib": (0.92, 0.84, 0.70), "sternum": (0.90, 0.82, 0.68), "cartilage": (0.70, 0.82, 0.88),
 }
 GROUP = {"C": "Cervical", "T": "Thoracic", "L": "Lumbar", "sacrum": "Sacrum", "hip": "Pelvis",
-         "femur": "Femurs", "reference": "Spinal cord"}
+         "femur": "Femurs", "reference": "Spinal cord", "rib": "Rib cage", "sternum": "Rib cage",
+         "cartilage": "Rib cage"}
 
 
 class Model:
@@ -152,7 +154,9 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     Per vertebra: bone -> smooth -> pose -> align -> output, with the vertebra's
     landmarks feeding the pose (so it moves in its own frame) and a hidden marker
     output. Other bones: bone -> smooth -> align -> output (hip bones move with the
-    pelvis, femurs as the legs, the sacrum as itself; the spinal cord stays). One
+    pelvis, femurs as the legs, the sacrum as itself, each rib with its vertebra; the
+    spinal cord stays); the sternum and costal cartilages are carried by the soft-
+    tissue field (bone -> smooth -> Field warp -> output). One
     Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
     CB) set to the subject's own values, feeds the Align blocks, the Field warp of
     the spine curve and four hidden Field views (flow lines, lattice, arrows, slice); it is left
@@ -181,6 +185,9 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         segments = {lv: lv for lv in spine["levels"]}
         segments.update(sacrum="sacrum", hip_left="pelvis", hip_right="pelvis", femur_left="legs",
                         femur_right="legs")
+        for n in range(1, 13):  # each rib moves with its vertebra (costovertebral joints)
+            if f"T{n}" in spine["levels"]:
+                segments.update({f"rib{n}_left": f"T{n}", f"rib{n}_right": f"T{n}"})
         knobs = {}
         start = {"PO": 0.0, **({"AR": 0.3} if spine["curves"] else {})}
         for i, (k, (lo, hi)) in enumerate(KNOBS.items()):
@@ -239,6 +246,11 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                               **({"vertebra": vert} if vert else {})}}
             src = f"@{bname}_align"
             vert = f"@{bname}_align.vertebra" if vert else None
+        if spine and kind in ("sternum", "cartilage"):  # carried by the soft-tissue field
+            x += 240
+            nodes[f"{bname}_warp"] = {"block": "tps_warp", "title": f"{bname} warp", "pos": [x, y],
+                                      "in": {"body": src, "alignment": "@spp"}}
+            src = f"@{bname}_warp"
         right = x + 240
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
