@@ -63,6 +63,10 @@ Spine alignment block:
   motion between its two vertebrae (log-Euclidean blend by position between the
   endplate planes); exactly rigid at the bones, but more costly to evaluate.
 
+Each disc turns about its physiological rotation centres (lumbar: Pearcy & Bogduk
+1988; thoracic: Qiu et al. 2003; definitions and references in
+`implicit/anatomy/rotation.py`), stored with the landmarks.
+
 The **Field view** block shows the field: flow lines (the paths tissue near the
 spine travels while the sliders go from the subject's values to the current ones,
 coloured by the distance travelled), a lattice it carries, arrows of the

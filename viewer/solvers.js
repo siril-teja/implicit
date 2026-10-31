@@ -179,8 +179,8 @@ const Solvers = (() => {
       let T = sacrum;
       const out = {};
       discs.forEach((disc, j) => {
-        const c = disc.center, turn = cor[j] + (frac.includes(j) ? bal / frac.length : 0);
-        T = compose(T, compose(rot(c, X, sag[j]), rot(c, Y, turn)));
+        const turn = cor[j] + (frac.includes(j) ? bal / frac.length : 0);
+        T = compose(T, compose(rot(disc.sagittal, X, sag[j]), rot(disc.coronal, Y, turn)));
         out[disc.upper] = T;
       });
       return out;

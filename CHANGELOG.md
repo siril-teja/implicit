@@ -5,6 +5,27 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.13.0] - 2026-10-31
+
+### Changed
+- **Physiological rotation centres** (roadmap step 1.2): each disc of the alignment
+  chain turns about its instantaneous axis of rotation instead of the disc centre,
+  one point for sagittal and one for coronal turns (`implicit/anatomy/rotation.py`,
+  with references). Lumbar flexion-extension: just below the lower vertebra's
+  superior endplate, at the posterior third of the disc (Pearcy & Bogduk 1988);
+  thoracic: on the antero-posterior centre of the lower vertebra, between its
+  superior endplate and its centre (Qiu et al. 2003, 2004); lumbar lateral bending:
+  the disc centre (Dimnet et al. 1978). Targets are met exactly as before.
+- `landmarks.json` stores each disc's centres ("rotation", on the upper vertebra);
+  landmarks regenerated for both subjects (the other values are unchanged).
+
+### Notes
+- LL 80 / TK 60: L4-L5 overlap 1.70 -> 0.86 mm, L3-L4 0.27 -> 0.10 mm, L2-L3 now
+  clear. Sagittal-only sweep settings: worst overlap 1.72 -> 0.88 mm. Full sweep
+  (with coronal curves of +-40 deg): still 225 / 243 settings collide; worst
+  overlap 3.94 -> 3.05 mm, summed overlap -5 %, more at T11-T12 and L1-L2. Motion
+  limits and the constrained distribution (steps 1.3, 1.4) remain needed.
+
 ## [0.12.0] - 2026-10-31
 
 ### Added
