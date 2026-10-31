@@ -5,6 +5,24 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.12.0] - 2026-10-31
+
+### Added
+- **Clearance** between neighbouring bones (roadmap step 1.1): for each pair
+  (consecutive vertebrae, lowest vertebra and sacrum, sacrum and L5 with each hip
+  bone, hip bone and femur) the smallest value of one bone's field at the other
+  bone's surface points, both ways, at the current posture. Computed in Python
+  (`implicit.anatomy.clearance`, with a slider sweep) and in the viewer from the
+  same atlas values (same result to 0.01 mm, checked by the GPU check); shown as a
+  table in the viewer, colliding bones tinted red.
+- Library JSON: per bone its place in the atlas and its surface points.
+
+### Notes
+- The average spine is clean at its measured posture (smallest gap 0.4 mm, lumbar
+  facets). At LL 80 / TK 60, L2-L3, L3-L4 and L4-L5 overlap (L4-L5 by 1.7 mm).
+  Over a 243-setting sweep (LL, TK, PT, MT, TL), 225 settings collide; the sliders
+  will avoid this in steps 1.2-1.4.
+
 ## [0.11.1] - 2026-10-31
 
 ### Added

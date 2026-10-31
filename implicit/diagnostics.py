@@ -43,10 +43,24 @@ def probes(scene, n_random=8, seed=0):
     try:
         for values in ({}, moved):
             scene.set_params({**defaults, **values})
-            batches.append({"params": values, "units": _units(scene, n_random, seed)})
+            batches.append({"params": values, "units": _units(scene, n_random, seed),
+                            "clearance": _clearance(scene)})
     finally:
         scene.set_params(defaults)
     return {"batches": batches}
+
+
+def _clearance(scene):
+    """Clearance of neighbouring bones (graph scenes with moved bones): [[a, b, mm]]."""
+    from .anatomy.clearance import report, surface_samples, scene_bodies
+    bodies = scene_bodies(scene)
+    if not bodies:
+        return []
+    cache = scene.__dict__.setdefault("_samples", {})
+    for n, (g, _) in bodies.items():
+        if n not in cache:
+            cache[n] = surface_samples(g)
+    return [[a, b, round(c, 6)] for a, b, c, _ in report(scene, cache)]
 
 
 def _now(body):

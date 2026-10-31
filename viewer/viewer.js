@@ -18,6 +18,7 @@ const state = {
   dirty: true, interacting: 0, server: false,
   key: null, g: null,  // block-graph state: { graph, manifest, library, built, published, editor }
   hl: new Uint32Array(8),
+  col: new Uint32Array(8),  // colliding bones (clearance), one bit per body
 };
 const LS = (k) => `implicit.graph.${k}`;
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -39,8 +40,10 @@ async function uploadAtlas(scene) {
   const key = scene.atlas && (scene.atlas.url || scene.hash);
   if (!scene.atlas || state.atlasKey === key) return;
   if (state.atlas) gl.deleteTexture(state.atlas);
-  const { tex, mb } = await GPU.atlasTexture(gl, scene);
+  const { tex, mb, data } = await GPU.atlasTexture(gl, scene);
   state.atlas = tex;
+  state.atlasData = data;  // CPU copy for clearance (viewer/clearance.js)
+  state.atlasSize = scene.atlas.size;
   state.atlasKey = key;
   state.atlasMB = mb;
 }
@@ -55,6 +58,10 @@ function showDiag() {
 }
 
 async function loadScene(scene, key) {
+  state.col.fill(0);  // no clearance until the new scene's is computed
+  clear.key = null;
+  $("#clearHead").hidden = true;
+  $("#clearance").replaceChildren();
   if (scene.graph && !window.SCENES) return loadGraphScene(scene, key);
   state.g = null;
   state.key = key;
@@ -525,6 +532,32 @@ function rayBox(s) {
   return rayMemo.box;
 }
 
+// Clearance of neighbouring bones (viewer/clearance.js), computed once the sliders rest
+// (about 120 ms after the last change) so dragging stays smooth.
+const clear = { key: null, timer: null };
+function scheduleClearance(s) {
+  if (!state.g || !state.atlasData) return;
+  const key = JSON.stringify([s.hash, state.values]);
+  if (key === clear.key) return;
+  clear.key = key;
+  clearTimeout(clear.timer);
+  clear.timer = setTimeout(() => updateClearance(s), 120);
+}
+function updateClearance(s) {
+  const bodies = Graph.rigidBodies(s, state.g.library, state.values);
+  const res = Clearance.compute(state.atlasData, state.atlasSize, bodies).sort((a, b) => a[2] - b[2]);
+  state.col.fill(0);
+  const index = Object.fromEntries(s.bodies.map((b, i) => [b.name, i]));
+  for (const [a, b, d] of res) {
+    if (d >= Clearance.COLLIDE) continue;
+    for (const n of [a, b]) { const i = index[n]; if (i !== undefined && i < 256) state.col[i >> 5] |= 1 << (i & 31); }
+  }
+  $("#clearHead").hidden = !res.length;
+  $("#clearance").replaceChildren(...res.map(([a, b, d]) => el("div", { className: `clr${d < Clearance.COLLIDE ? " hit" : ""}` },
+    el("span", { textContent: `${a} – ${b}` }), el("span", { textContent: `${d.toFixed(1)} mm` }))));
+  state.dirty = true;
+}
+
 // Colour scale of a visible field-coloured body (Field view arrows / slice).
 function updateLegend(s) {
   const b = s.bodies.find((q) => q.colormap && state.vis[q.group]);
@@ -569,6 +602,8 @@ function setUniforms(w, h) {
   if (U.u_pick) gl.uniform1f(U.u_pick, 0);
   if (U.u_fast) gl.uniform1f(U.u_fast, 0);
   if (U.u_hl) gl.uniform4uiv(U.u_hl, state.hl);
+  if (U.u_col) gl.uniform4uiv(U.u_col, state.col);
+  scheduleClearance(s);
   s.groups.forEach((_, i) => { if (U["u_grp" + i]) gl.uniform1f(U["u_grp" + i], state.vis[i] ? 1 : 0); });
   const byUniform = Object.fromEntries(s.params.map((p) => [p.uniform, state.values[p.name]]));
   GPU.bindInstances(gl, state.built, (u) => (u.startsWith("u_grp") ? (state.vis[+u.slice(5)] ? 1 : 0) : byUniform[u]));
