@@ -35,6 +35,10 @@ class TestClearance(unittest.TestCase):
         names = ["sacrum", "L5", "L4", "T12", "hip_left", "femur_left", "femur_right"]
         self.assertEqual(cl.pairs(names), [("T12", "L4"), ("L4", "L5"), ("L5", "sacrum"), ("sacrum", "hip_left"),
                                            ("L5", "hip_left"), ("hip_left", "femur_left")])
+        ribs = ["T4", "T5", "rib4_left", "rib5_left", "rib5_right"]
+        self.assertEqual(cl.pairs(ribs), [("T4", "T5"), ("T4", "rib4_left"), ("rib4_left", "rib5_left"),
+                                          ("T4", "rib5_left"), ("T5", "rib5_left"), ("T4", "rib5_right"),
+                                          ("T5", "rib5_right")])
 
     def test_balls(self):
         """Gap and overlap of two balls (radius 10) to within the sample spacing."""

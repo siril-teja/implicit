@@ -56,13 +56,13 @@ BONES.update({
                              r"(Cortical|Trabecular)-R$"),
 })
 # Rib cage: ribs (cortical shell and its posterior end), sternum, costal cartilages
-# (one exterior shell per side, all ribs, with the costochondral junctions).
+# (one solid part per side, all ribs; its boundary is closed, the exterior shells are not).
 for _n in range(1, 13):
     for _s, _c in (("left", "L"), ("right", "R")):
         BONES[f"rib{_n}_{_s}"] = ("rib", rf"^TX-Ribcage-R{_n}-Cortical(-Posterior-End)?-{_c}$")
 BONES["sternum"] = ("sternum", r"^TX-Ribcage-Sternum-Cortical-M$")
 for _s, _c in (("left", "L"), ("right", "R")):
-    BONES[f"costal_cartilage_{_s}"] = ("cartilage", rf"^TX-Ribcage-(Cartilage|Costochondral_Junction)-Exterior-{_c}$")
+    BONES[f"costal_cartilage_{_s}"] = ("cartilage", rf"^TX-Ribcage-Cartilage-Solid-{_c}$")
 RIBCAGE = [f"rib{n}_{s}" for n in range(1, 13) for s in ("left", "right")] + [
     "sternum", "costal_cartilage_left", "costal_cartilage_right"]
 PRESETS = {"spine": [f"T{n}" for n in range(1, 13)] + [f"L{n}" for n in range(1, 6)]

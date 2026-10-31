@@ -114,6 +114,17 @@ python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60
 python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagged discs over a grid of sliders
 ```
 
+## Rib cage
+
+The average spine has the VIVA+ 50F ribs (1-12, both sides), sternum and costal
+cartilages. Each rib follows its vertebra with the alignment sliders (Align block,
+segment T1 ... T12); the sternum and costal cartilages are carried by the
+soft-tissue field (Field warp), like the spine curve. The clearance table lists every
+rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
+in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
+the concave side into each other, which rib motion (roadmap 2.7) and the constrained
+distribution (1.6) are to resolve.
+
 ## Patient anatomy: implicit bones
 
 TotalSegmentator provides voxel label masks (NIfTI), not CAD. They are converted

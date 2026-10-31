@@ -5,6 +5,31 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.16.0] - 2026-10-31
+
+### Added
+- **Rib cage** (roadmap step 1.4, moved before motion limits): ribs 1-12 (both
+  sides), sternum and costal cartilages of VIVA+ 50F (`--select full`; ribs and
+  cartilages on 1.5 mm grids, the sternum on 0.8 mm; cartilages from their solid
+  elements, whose boundary is closed). Each rib follows its vertebra with the
+  alignment sliders; the sternum and cartilages are carried by the soft-tissue
+  field. The template correction carries them (ribs with their vertebra's shift,
+  sternum and cartilages with the rib ends) and carves the costovertebral joints
+  to 1.3 mm (the thoracic facet joint space; assumption: the same for these
+  synovial joints). Parts added after the vertebrae were shifted take the recorded
+  shifts (`template.json`).
+- Clearance: every rib against its vertebra and the one above, and against the
+  next rib on its side (Python and viewer).
+
+### Changed
+- Roadmap: rib cage is step 1.4; motion limits, constrained distribution, global
+  balance and cervical spine are 1.5-1.8; step 2.7 is rib motion (pump- and
+  bucket-handle) with collision-free ribs.
+
+### Notes
+- At rest no rib touches a vertebra or another rib. MT 40 crowds the concave-side
+  ribs 5-8 into each other (up to 2.7 mm); TK 60, TL -40 and LL 80 leave them clear.
+
 ## [0.15.0] - 2026-10-31
 
 ### Added

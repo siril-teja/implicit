@@ -204,13 +204,28 @@ def carve_joints(grids, log=print):
     return out
 
 
+def recorded_shifts(bone_dir):
+    """{vertebra: total translation} recorded in template.json over all runs."""
+    f = Path(bone_dir) / "template.json"
+    out = {}
+    rec = json.loads(f.read_text()) if f.exists() else None
+    while rec:
+        for lv, u in rec.get("vertebrae_mm", {}).items():
+            if isinstance(u, list) and lv[0] in "TL" and lv[1:].isdigit():
+                out[lv] = out.get(lv, np.zeros(3)) + np.asarray(u, float)
+        rec = rec.get("previous")
+    return out
+
+
 def normalise(bone_dir, dry_run=False, log=print):
     """Shift the vertebrae of ``bone_dir`` and carve its joints (see the module
     docstring); returns the record."""
     from .landmarks import detect
     bone_dir = Path(bone_dir)
     lm = json.loads((bone_dir / "landmarks.json").read_text())["landmarks"]
-    grids = {n: g for n, (g, _) in load_bones(bone_dir).items()}
+    loaded = load_bones(bone_dir)
+    grids = {n: g for n, (g, _) in loaded.items()}
+    metas = {n: m for n, (_, m) in loaded.items()}
     shifts = disc_shifts(lm, grids)
     moves = vertebra_shifts(shifts, lm)
     record = {"method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the "
@@ -225,10 +240,17 @@ def normalise(bone_dir, dry_run=False, log=print):
     if dry_run:
         return record
     # Ribs move with their vertebra; the sternum and costal cartilages with the rib ends.
+    # A rib added after the vertebrae were shifted (no template_shift_mm yet) first
+    # takes the vertebra's shift so far (template.json).
+    prior = recorded_shifts(bone_dir)
     for n in range(1, 13):
         for side in ("left", "right"):
-            if f"rib{n}_{side}" in grids and f"T{n}" in moves:
-                moves[f"rib{n}_{side}"] = moves[f"T{n}"]
+            r = f"rib{n}_{side}"
+            if r in grids and f"T{n}" in lm:
+                u = moves.get(f"T{n}", np.zeros(3))
+                if "template_shift_mm" not in metas[r]:
+                    u = u + prior.get(f"T{n}", np.zeros(3))
+                moves[r] = u
     moved = {lv for lv, t in moves.items() if np.linalg.norm(t) >= TOL}
     tips = []
     for n in RIB_TIPS:
@@ -241,7 +263,7 @@ def normalise(bone_dir, dry_run=False, log=print):
         g = grids[lv]
         grids[lv] = type(g).from_quantized(g.q, g.origin + moves[lv], g.spacing, g.name)
     carried = [n for n in ("sternum", "costal_cartilage_left", "costal_cartilage_right") if n in grids]
-    if tips and moved:
+    if tips and any(np.linalg.norm(u) >= TOL for _, u in tips):
         for n in carried:
             grids[n] = _carried(grids[n], tips)
             moved.add(n)

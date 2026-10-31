@@ -59,7 +59,7 @@ BONES.update({
 # Not bone: mask only (no CT refinement), cropped to the selected bones' extent.
 REFERENCE = {"spinal_cord": ("reference", ["spinal_cord"])}
 SPACING = {"vertebra": 0.6, "sacrum": 0.8, "hip": 1.5, "femur": 1.0, "reference": 1.5,
-           "rib": 1.0, "sternum": 0.8, "cartilage": 1.0}
+           "rib": 1.5, "sternum": 0.8, "cartilage": 1.5}
 PRESETS = {
     "lumbar": [f"L{i}" for i in range(1, 6)] + ["sacrum", "hip_left", "hip_right",
                                                  "femur_left", "femur_right", "spinal_cord"],

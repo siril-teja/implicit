@@ -215,14 +215,14 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
             nodes[f"field_{mode}_out"] = {"block": "output", "title": title, "pos": [1680, -225 + 115 * i],
                                           "in": {"body": f"@field_{mode}", "name": title, "color": "#8fb3ff",
                                                  "group": title, "visible": False}}
-    ys = {"vertebra": 0, "other": 0}
+    ys = {"vertebra": 0, "other": 0, "ribcage": 0}
     for bname, (_, meta) in loaded.items():
         kind = meta["kind"]
         key = bname[0] if kind == "vertebra" else kind
         has_lm = ("S1" if bname == "sacrum" else bname) in levels
         seg = segments.get(bname)
-        col = "vertebra" if kind == "vertebra" else "other"
-        x0, y = (0, ys[col]) if col == "vertebra" else (1200, ys[col])
+        col = "vertebra" if kind == "vertebra" else "ribcage" if kind in ("rib", "sternum", "cartilage") else "other"
+        x0, y = {"vertebra": 0, "other": 1200, "ribcage": 2400}[col], ys[col]
         ys[col] += 240 if has_lm else 110
         nodes[bname] = {"block": "bone", "title": bname, "pos": [x0, y], "in": {"file": rel(bname)}}
         src, vert, x = f"@{bname}", None, x0 + 240

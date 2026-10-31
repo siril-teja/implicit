@@ -58,6 +58,23 @@ class TestTemplate(unittest.TestCase):
                 np.testing.assert_allclose(meta["template_shift_mm"], t, atol=1e-3)
         self.assertNotIn("template_shift_mm", load_bone(SUBJECT / "sacrum.npz")[1])
 
+    def test_rib_cage_follows(self):
+        """Ribs carry their vertebra's total template shift; the sternum and cartilages are
+        carried by the rib ends; the costovertebral joints are open."""
+        total = template.recorded_shifts(SUBJECT)
+        for n in (1, 6, 12):
+            for side in ("left", "right"):
+                meta = load_bone(SUBJECT / f"rib{n}_{side}.npz")[1]
+                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=1e-3)
+        for part in ("sternum", "costal_cartilage_left", "costal_cartilage_right"):
+            self.assertIn("template_carried", load_bone(SUBJECT / f"{part}.npz")[1])
+        grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
+        for v, rib in template.rib_joints(set(grids)):
+            f = grids[rib].values
+            g = grids[v].eval(template._points(grids[rib])).reshape(f.shape)
+            near = np.abs(f) < 0.5 * grids[rib].spacing
+            self.assertGreaterEqual(float((f + g)[near].min()), template.joint_space(v, rib) - 0.1, f"{v}-{rib}")
+
     def test_vertebra_shifts_add_up(self):
         ax = np.array([0.0, 0.0, 1.0])
         shifts = [("L5", "S1", -1.0, ax, None, ""), ("L4", "L5", 2.0, ax, None, ""), ("L3", "L4", 0.5, ax, None, "")]
