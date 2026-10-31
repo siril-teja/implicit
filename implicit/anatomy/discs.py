@@ -32,6 +32,15 @@ The thresholds are rounded up from the measured values (assumption), so a flag
 means "beyond what was measured in healthy discs". Xi et al. measured lumbar discs;
 the same limits are used for the thoracic discs (assumption).
 
+Thickness over the whole disc (``thickness``): the A/M/P/L/R heights sample five
+points; between them a disc can be thinner (a wedged or curved endplate). The
+smallest distance from any surface point of either endplate (``endplate_indices``)
+to the other vertebra's bone is its smallest thickness, live like the heights. It
+must not fall below the disc's floor (``thickness_floor``): the population's lower
+bound of its anterior and posterior heights (mean - 2 SD, below), at least
+MIN_THICKNESS (1.5 mm, the thinnest such bound of any level: Kunkel T4-T5 anterior),
+at rest (template) and in every posture.
+
 Rest heights against population values (``norm_flags``), mean +- 2 SD:
   lumbar  L1-L2 ... L5-S1: Shin et al. 2024 (CT, 350 women aged 18-35, Table 4,
           female values adjusted for weight, height, BMI and ethnicity);
@@ -71,6 +80,7 @@ CORNER_SLOPE = 1.0    # endplate ends where the surface turns steeper than 45 de
 COLUMN_STEP = 0.25    # mm, spacing of the sample columns along the endplate
 RMS_MAX = 1.5         # mm: endplates fitted worse than this get no corners (T1 of VIVA+ 50F)
 MIN_REST = 0.5        # mm: a rest height below this is not judged by relative change
+MIN_THICKNESS = 1.5   # mm: no disc thinner anywhere (the thinnest population bound, Kunkel T4-T5 A)
 
 # (A, M, P) population heights per disc: (mean, SD) in mm (see the module docstring).
 NORMS = {
@@ -196,10 +206,69 @@ def rest_heights(bodies):
     return heights({k: (c, IDENTITY) for k, (c, _) in bodies.items()})
 
 
-def posture_flags(now, rest):
-    """{(upper, lower): reasons} where the posture deforms a disc beyond the rules."""
-    rest = {(u, l): h for u, l, *h in rest}
+# ---------------------------------------------------------------- thickness map
+
+def endplate_indices(samples, corners):
+    """Indices of a bone's surface samples (implicit.anatomy.clearance.surface_samples,
+    bone frame) on one endplate: inside the ellipse through its four corners (in the
+    endplate plane) and from 4 mm below to 3 mm above the plane (rim included)."""
+    P = np.asarray(samples, float).reshape(-1, 3)
+    c = {k: np.asarray(v, float) for k, v in corners.items()}
+    a, r = c["anterior"] - c["posterior"], c["right"] - c["left"]
+    ha, hr = 0.5 * np.linalg.norm(a), 0.5 * np.linalg.norm(r)
+    u = (P - 0.5 * (c["anterior"] + c["posterior"])) @ (a / (2 * ha)) / ha
+    v = (P - 0.5 * (c["right"] + c["left"])) @ (r / (2 * hr)) / hr
+    w = (P - c["centre"]) @ c["normal"]
+    return np.flatnonzero((u * u + v * v <= 1.0) & (w > -4.0) & (w < 3.0))
+
+
+def thickness(bodies):
+    """{(upper, lower): smallest disc thickness (mm)} over the whole disc: the distance
+    from every surface point of each endplate to the other vertebra's bone (its field),
+    the smaller of both ways, on the surface samples (about 2 mm apart, so the exact
+    thinnest spot can be missed by a few tenths of a mm). ``bodies``: {name: (grid,
+    samples, corners, (R, t))}.
+    viewer/discs.js is the same computation on the same points and grid values."""
     out = {}
+    for up, lo in pairs([k for k, b in bodies.items() if b[2]]):
+        gu, su, cu, Mu = bodies[up]
+        gl, sl, cl, Ml = bodies[lo]
+        if "inf" not in cu or "sup" not in cl:
+            continue
+        best = np.inf
+        for (gs, ss, cs, Ms, ep), (go, Mo) in (((gl, sl, cl, Ml, "sup"), (gu, Mu)), ((gu, su, cu, Mu, "inf"), (gl, Ml))):
+            P = np.asarray(ss, float).reshape(-1, 3)[endplate_indices(ss, cs[ep])]
+            if not len(P):
+                continue
+            Rs, ts = (np.asarray(x, float) for x in Ms)
+            Ro, to = (np.asarray(x, float) for x in Mo)
+            W = P @ Rs.T + ts
+            best = min(best, float(go.eval((W - to) @ Ro).min()))
+        out[(up, lo)] = best
+    return out
+
+
+def thickness_floor(up, lo):
+    """Smallest plausible local disc thickness (mm): the population's lower bound of the
+    anterior and posterior heights (mean - 2 SD), not below MIN_THICKNESS."""
+    ref = NORMS.get(label(up, lo))
+    if ref is None:
+        return MIN_THICKNESS
+    (ma, sa), _, (mp, sp) = ref
+    return max(MIN_THICKNESS, min(ma - 2 * sa, mp - 2 * sp))
+
+
+def thin_flags(thick):
+    """{(upper, lower): reason} where the disc is thinner somewhere than its floor."""
+    return {k: f"thinnest {x:.1f} mm < {thickness_floor(*k):.1f} mm" for k, x in thick.items()
+            if x < thickness_floor(*k)}
+
+
+def posture_flags(now, rest, thick=None):
+    """{(upper, lower): reasons} where the posture deforms a disc beyond the rules
+    (``thick``: thickness() now, adds the floor rule)."""
+    out = {k: [v] for k, v in thin_flags(thick).items()} if thick else {}
+    rest = {(u, l): h for u, l, *h in rest}
     for u, l, *h in now:
         (a, m, p, le, ri), (a0, m0, p0, le0, ri0) = h, rest[(u, l)]
         why = []
@@ -209,7 +278,7 @@ def posture_flags(now, rest):
             if x0 > MIN_REST and abs(x - x0) > LOCAL_STRAIN * x0:
                 why.append(f"{name} {100 * (x / x0 - 1):+.0f} %")
         if why:
-            out[(u, l)] = why
+            out[(u, l)] = out.get((u, l), []) + why
     return out
 
 
@@ -229,13 +298,22 @@ def norm_flags(hs):
 
 # ---------------------------------------------------------------- scenes
 
-def scene_bodies(scene):
-    """{name: (corners, (R, t))} of the scene's moved bones (graph scenes)."""
+def scene_bodies(scene, grids=False):
+    """{name: (corners, (R, t))} of the scene's moved bones (graph scenes); with
+    ``grids``: {name: (grid, surface samples, corners, (R, t))} (for thickness())."""
+    from .clearance import surface_samples
     out = {}
     for b in scene.bodies:
         rig = getattr(b, "rigid", None)
-        if rig is not None:
-            out[b.name] = (getattr(rig[0], "corners", None), rig[1]())
+        if rig is None:
+            continue
+        g, c, M = rig[0], getattr(rig[0], "corners", None), rig[1]()
+        if grids:
+            if getattr(g, "_samples", None) is None:
+                g._samples = surface_samples(g)
+            out[b.name] = (g, g._samples, c, M)
+        else:
+            out[b.name] = (c, M)
     return out
 
 
@@ -243,6 +321,12 @@ def report(scene):
     """(heights now, heights at rest) of a graph scene at its current values."""
     b = scene_bodies(scene)
     return heights(b), rest_heights(b)
+
+
+def report_thickness(scene):
+    """(thickness now, thickness at rest) of a graph scene at its current values."""
+    b = scene_bodies(scene, grids=True)
+    return thickness(b), thickness({k: (g, s, c, IDENTITY) for k, (g, s, c, _) in b.items()})
 
 
 def main(argv=None):
@@ -256,13 +340,17 @@ def main(argv=None):
     defaults = {p.name: p.value() for p in scene.params()}
     scene.set_params({k: float(v) for k, v in (s.split("=") for s in a.set)})
     now, rest = report(scene)
+    thick, thick0 = report_thickness(scene)
     norms = norm_flags(rest)
-    flags = posture_flags(now, rest)
-    print(f"{'disc':>8} {'A':>6} {'M':>6} {'P':>6} {'L':>6} {'R':>6}   (rest A, M, P, L, R)")
+    for k, v in thin_flags(thick0).items():
+        norms[k] = norms.get(k, []) + [v]
+    flags = posture_flags(now, rest, thick)
+    print(f"{'disc':>8} {'A':>6} {'M':>6} {'P':>6} {'L':>6} {'R':>6} {'min':>6}   (rest A, M, P, L, R, min)")
     for (u, l, *h), (_, _, *h0) in zip(now, rest):
         k = (u, l)
         note = "; ".join(flags.get(k, []))
-        print(f"{label(u, l):>8} " + " ".join(f"{x:6.1f}" for x in h) + "   (" + ", ".join(f"{x:.1f}" for x in h0) + ")"
+        print(f"{label(u, l):>8} " + " ".join(f"{x:6.1f}" for x in h) + f" {thick[k]:6.1f}   ("
+              + ", ".join(f"{x:.1f}" for x in h0) + f", {thick0[k]:.1f})"
               f"{'  POSTURE: ' + note if note else ''}{'  vs norm: ' + '; '.join(norms[k]) if k in norms else ''}")
     if a.sweep:
         names = {p.name for p in scene.params()}
@@ -271,7 +359,7 @@ def main(argv=None):
         counts, bad = {}, 0
         for combo in itertools.product(*grid.values()):
             scene.set_params({**defaults, **dict(zip(grid, combo))})
-            f = posture_flags(report(scene)[0], rest)
+            f = posture_flags(report(scene)[0], rest, report_thickness(scene)[0])
             bad += bool(f)
             for k in f:
                 counts[k] = counts.get(k, 0) + 1

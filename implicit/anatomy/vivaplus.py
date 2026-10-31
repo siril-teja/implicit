@@ -14,6 +14,9 @@ implicit bone file as implicit.anatomy.convert:
   2. signed distance to that mask (implicit.anatomy.convert.bone_sdf);
   3. coordinates: the model frame (x forward, y left, z up, mm) becomes the
      viewer's right-anterior-superior frame (x right, y anterior, z up).
+Then landmarks are detected (implicit.anatomy.landmarks) and the vertebrae are
+translated so that the rest disc heights take population values
+(implicit.anatomy.template; --keep-disc-heights keeps the model's).
 
 The bone files are derived from VIVA+ and stay under LGPL-3.0-or-later; see NOTICE.md.
 Requires scipy (this step only).
@@ -283,8 +286,15 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--select", default="spine", help="spine, lumbar or a list (L3,L4,sacrum)")
     ap.add_argument("--cache", default="data/vivaplus", help="download folder")
+    ap.add_argument("--keep-disc-heights", action="store_true",
+                    help="keep the model's disc space heights (default: implicit.anatomy.template)")
     a = ap.parse_args(argv)
     convert(fetch(a.cache), a.out, a.model, a.select)
+    from .landmarks import detect
+    detect(a.out)
+    if not a.keep_disc_heights:
+        from .template import normalise
+        normalise(a.out)  # rest disc heights to population values; detects landmarks again
     print(f"wrote {a.out}")
 
 

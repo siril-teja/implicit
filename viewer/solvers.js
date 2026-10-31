@@ -32,8 +32,42 @@ const Solvers = (() => {
     const [pt, ss] = ptSs([m[1], m[2]], [n[1], n[2]], [d.hip[1], d.hip[2]]);
     return [pt + ss, pt];
   }
+  // As alignment.py _branch_solve: root on the monotonic branch of f around 0.
+  function branchSolve(f, target, lim, n = 34) {
+    const h = lim / n, f0 = f(0), s = f(h) >= f0 ? 1 : -1, ends = [];
+    for (const sgn of [1, -1]) {
+      let prev = f0, end = sgn * lim;
+      for (let i = 1; i <= n; i++) {
+        const x = sgn * i * h, fx = f(x);
+        if (Math.abs(fx - prev) > Math.PI) { end = sgn * (i - 1) * h; break; }  // an angle wrapped
+        if ((fx - prev) * sgn * s < 0) {
+          const a = sgn * Math.max(i - 2, 0) * h, b = x, g = (y) => sgn * s * f(y), r = (Math.sqrt(5) - 1) / 2;
+          let lo = Math.min(a, b), hi = Math.max(a, b);
+          let c = hi - r * (hi - lo), d = lo + r * (hi - lo), gc = g(c), gd = g(d);
+          for (let k = 0; k < 40; k++) {
+            if (gc >= gd) { hi = d; d = c; gd = gc; c = hi - r * (hi - lo); gc = g(c); }
+            else { lo = c; c = d; gc = gd; d = lo + r * (hi - lo); gd = g(d); }
+          }
+          end = 0.5 * (lo + hi);
+          break;
+        }
+        prev = fx;
+      }
+      ends.push(end);
+    }
+    return bisect(f, ends[1], ends[0], target);
+  }
+  // As alignment.py _soft_limit: unchanged up to the knee, then easing to the limit.
+  const BAL_KNEE = 20, BAL_MAX = 30, BAL_SEARCH = 85;  // deg (alignment.py)
+  function softLimit(x) {
+    const k = BAL_KNEE * Math.PI / 180, l = BAL_MAX * Math.PI / 180, a = Math.abs(x);
+    return a <= k ? x : Math.sign(x) * (k + (l - k) * Math.tanh((a - k) / (l - k)));
+  }
+  // As alignment.py _bisect: a target outside [f(lo), f(hi)] gives the nearer end.
   function bisect(f, lo, hi, target) {
     let fLo = f(lo) - target;
+    const fHi = f(hi) - target;
+    if ((fLo > 0) === (fHi > 0)) return Math.abs(fLo) <= Math.abs(fHi) ? lo : hi;
     for (let i = 0; i < 60; i++) {
       const mid = 0.5 * (lo + hi), fMid = f(mid) - target;
       if ((fMid > 0) === (fLo > 0)) { lo = mid; fLo = fMid; } else hi = mid;
@@ -186,11 +220,16 @@ const Solvers = (() => {
       return out;
     };
     const top = levels[levels.length - 1];
-    const offset = (bal) => apply(build(bal)[top], d.frames[top].center)[0] - apply(sacrum, d.s1_point)[0];
+    const s1 = apply(sacrum, d.s1_point);
+    const lean = (bal) => {  // as alignment.py: angle from the S1 -> target line to the S1 -> top line
+      const p = apply(build(bal)[top], d.frames[top].center), dx = p[0] - s1[0], dz = p[2] - s1[2];
+      const r = Math.hypot(dx, dz), cx = Math.max(-r, Math.min(r, CB)), cz = Math.sqrt(Math.max(r * r - cx * cx, 0));
+      return Math.atan2(dx * cz - dz * cx, dx * cx + dz * cz);
+    };
     const moved = cor.some((x) => Math.abs(x) > 0) || Math.abs(PO) > 0 || Math.abs(alpha) > 0 || Math.abs(beta) > 0
       || sag.some((x) => x !== 0);
     let bal = 0;
-    if (frac.length && (moved || Math.abs(CB - meas.CB) > 1e-9)) bal = bisect(offset, -rad(30), rad(30), CB);
+    if (frac.length && (moved || Math.abs(CB - meas.CB) > 1e-9)) bal = softLimit(branchSolve(lean, 0, rad(BAL_SEARCH)));
     const out = build(bal);
     levels.forEach((lv, i) => { const f = d.frames[lv]; out[lv] = compose(out[lv], rot(f.center, f.axes[2], axial[i])); });
     Object.assign(out, { legs, pelvis, sacrum });

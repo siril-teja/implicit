@@ -176,6 +176,37 @@ class TestAlignment(unittest.TestCase):
         targets = self.targets(PI=66.0, PT=25.0, LL=62.0, TK=45.0, MT=35.0, TL=-25.0, AR=0.3, PO=5.0, CB=8.0)
         for field in ("tps", "polyrigid"):
             self._compare_js({**self.data, "field": field}, targets)
+        # Extreme curves: the coronal balance saturates (soft limit, branch ends).
+        self._compare_js(self.data, self.targets(MT=71.0, TL=77.0, CB=46.0, TK=14.0, AR=0.3))
+        self._compare_js(self.data, self.targets(MT=-85.0, TL=-75.0, CB=-9.0))
+
+    def _positions(self, targets):
+        m = al.solve(self.data, **targets, light=True)
+        pts = {lv: self.data["frames"][lv]["center"] for lv in self.data["levels"]}
+        pts["sacrum"] = self.data["s1_point"]
+        out = []
+        for k, p in pts.items():
+            R, t = motion(m[k])
+            out.append(R @ np.asarray(p) + t)
+        return np.array(out)
+
+    def _assert_smooth(self, path, label):
+        P = np.array([self._positions(v) for v in path])
+        step = np.linalg.norm(np.diff(P, axis=0), axis=2).max(1)  # largest vertebra move per step
+        self.assertLess(step.max(), 4.0 * max(np.median(step), 1e-3) + 1e-6, f"{label}: jump of {step.max():.1f} mm")
+
+    def test_sliders_smooth(self):
+        """Every knob over its whole range, and straight paths through random settings of
+        all knobs: no vertebra jumps (the largest move per step stays within 4x the
+        median; a jump was 400 mm in a 0.45 deg step of TL before the balance fix)."""
+        for k, (lo, hi) in al.KNOBS.items():
+            if k == "AR":
+                continue  # moves nothing without curves
+            self._assert_smooth([self.targets(**{k: x}) for x in np.linspace(lo, hi, 81)], k)
+        rng = np.random.default_rng(1)
+        for i in range(8):
+            a, b = ({k: rng.uniform(lo, hi) for k, (lo, hi) in al.KNOBS.items()} for _ in range(2))
+            self._assert_smooth([{k: a[k] + s * (b[k] - a[k]) for k in a} for s in np.linspace(0, 1, 41)], f"path {i}")
 
     def _compare_js(self, data, targets):
         js = ("const S = require(process.argv[1]); const d = JSON.parse(require('fs').readFileSync(0));"

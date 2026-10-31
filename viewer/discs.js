@@ -7,7 +7,7 @@ const Discs = (() => {
   const VERTEBRAE = [..."1234567"].map((i) => `C${i}`)
     .concat(Array.from({ length: 12 }, (_, i) => `T${i + 1}`), Array.from({ length: 5 }, (_, i) => `L${i + 1}`));
   const KEYS = ["anterior", "centre", "posterior", "left", "right"];
-  const MEAN_CHANGE = 0.10, LOCAL_STRAIN = 0.40, MIN_REST = 0.5;
+  const MEAN_CHANGE = 0.10, LOCAL_STRAIN = 0.40, MIN_REST = 0.5, MIN_THICKNESS = 1.5;
   // (A, M, P) population heights per disc: [mean, SD] mm (sources in discs.py).
   const NORMS = {
     "T1-T2": [[4.5, 0.77], [5.7, 0.66], [4.3, 0.62]], "T2-T3": [[3.4, 0.97], [5.8, 0.79], [3.5, 0.99]],
@@ -53,16 +53,54 @@ const Discs = (() => {
   const restHeights = (bodies) => heights(Object.fromEntries(Object.entries(bodies)
     .map(([k, b]) => [k, { corners: b.corners, motion: IDENTITY }])));
 
-  // { "upper|lower": [reasons] } where the posture deforms a disc beyond the rules.
-  function postureFlags(now, rest) {
-    const r = Object.fromEntries(rest.map(([u, l, ...h]) => [`${u}|${l}`, h])), out = {};
+  // Smallest thickness over the whole disc (discs.py thickness): the other vertebra's
+  // field (Clearance.gridEval on the atlas) at each endplate's surface points.
+  // { "upper|lower": mm }; bodies from Graph.rigidBodies (grid, samples, endplates, motion).
+  function thickness(atlas, size, bodies) {
+    const out = {};
+    for (const [up, lo] of pairs(Object.keys(bodies).filter((k) => bodies[k].corners && bodies[k].endplates))) {
+      if (!bodies[up].endplates.inf || !bodies[lo].endplates.sup) continue;
+      let best = Infinity;
+      for (const [s, o, ep] of [[lo, up, "sup"], [up, lo, "inf"]]) {
+        const S = bodies[s], O = bodies[o], [Rs, ts] = S.motion, [Ro, to] = O.motion, P = S.samples;
+        for (const i of S.endplates[ep]) {
+          const q = [P[3 * i], P[3 * i + 1], P[3 * i + 2]];
+          const w = [0, 1, 2].map((r) => Rs[r][0] * q[0] + Rs[r][1] * q[1] + Rs[r][2] * q[2] + ts[r]);
+          const d0 = [w[0] - to[0], w[1] - to[1], w[2] - to[2]];
+          const l = [0, 1, 2].map((c) => Ro[0][c] * d0[0] + Ro[1][c] * d0[1] + Ro[2][c] * d0[2]);
+          best = Math.min(best, Clearance.gridEval(atlas, size, O.grid, l[0], l[1], l[2]));
+        }
+      }
+      out[`${up}|${lo}`] = best;
+    }
+    return out;
+  }
+  function thicknessFloor(u, l) {
+    const ref = NORMS[label(u, l)];
+    if (!ref) return MIN_THICKNESS;
+    return Math.max(MIN_THICKNESS, Math.min(ref[0][0] - 2 * ref[0][1], ref[2][0] - 2 * ref[2][1]));
+  }
+  function thinFlags(thick) {
+    const out = {};
+    for (const [k, x] of Object.entries(thick)) {
+      const [u, l] = k.split("|"), f = thicknessFloor(u, l);
+      if (x < f) out[k] = `thinnest ${x.toFixed(1)} mm < ${f.toFixed(1)} mm`;
+    }
+    return out;
+  }
+
+  // { "upper|lower": [reasons] } where the posture deforms a disc beyond the rules
+  // (thick: thickness() now, adds the floor rule).
+  function postureFlags(now, rest, thick = null) {
+    const r = Object.fromEntries(rest.map(([u, l, ...h]) => [`${u}|${l}`, h]));
+    const out = Object.fromEntries(Object.entries(thick ? thinFlags(thick) : {}).map(([k, v]) => [k, [v]]));
     for (const [u, l, ...h] of now) {
       const h0 = r[`${u}|${l}`], why = [], pc = (x, x0) => `${(100 * (x / x0 - 1)) >= 0 ? "+" : ""}${(100 * (x / x0 - 1)).toFixed(0)} %`;
       if (h0[1] > MIN_REST && Math.abs(h[1] - h0[1]) > MEAN_CHANGE * h0[1]) why.push(`middle ${pc(h[1], h0[1])}`);
       for (const [name, i] of [["anterior", 0], ["posterior", 2], ["left", 3], ["right", 4]]) {
         if (h0[i] > MIN_REST && Math.abs(h[i] - h0[i]) > LOCAL_STRAIN * h0[i]) why.push(`${name} ${pc(h[i], h0[i])}`);
       }
-      if (why.length) out[`${u}|${l}`] = why;
+      if (why.length) out[`${u}|${l}`] = [...(out[`${u}|${l}`] || []), ...why];
     }
     return out;
   }
@@ -83,7 +121,8 @@ const Discs = (() => {
     return out;
   }
 
-  return { pairs, label, heights, restHeights, postureFlags, normFlags, KEYS, NORMS, MEAN_CHANGE, LOCAL_STRAIN, MIN_REST };
+  return { pairs, label, heights, restHeights, thickness, thicknessFloor, thinFlags, postureFlags, normFlags, KEYS, NORMS,
+    MEAN_CHANGE, LOCAL_STRAIN, MIN_REST, MIN_THICKNESS };
 })();
 
 if (typeof module !== "undefined") module.exports = Discs;

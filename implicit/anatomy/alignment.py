@@ -48,7 +48,14 @@ vertebra above it and everything higher turn with it.
     farthest from the line through the end vertebrae is the apex, or a neighbour
     when the two halves have very different numbers of discs;
   - CB: the discs below the lowest curve (the lumbosacral fractional curve) bend
-    so that T1 sits at the target offset (bisection);
+    so that T1 sits at the target offset, solved on the lean of the S1-T1 line (which
+    grows steadily with the bend, unlike the offset) on its monotonic branch around no
+    bend (_branch_solve, else the closest the bend can bring it); the bend, in all,
+    is exact up to
+    BAL_KNEE (20 deg) and eases to at most BAL_MAX (30 deg) beyond (_soft_limit), so
+    a balance that needs more is not reached and the posture still changes smoothly
+    with the sliders (e.g. TL below about -35 deg on VIVA+ 50F, whose TL curve ends
+    at L4, leaving two discs to balance it);
   - AR: each curve vertebra also turns about its own axial axis, locally (the turn
     does not carry the vertebrae above).
 Sagittal Cobb angles change exactly by the sagittal turns of the discs between
@@ -101,6 +108,8 @@ LORDOSIS = [f"L{i}" for i in range(1, 6)]          # upper vertebrae of the LL d
 KYPHOSIS = [f"T{i}" for i in range(4, 12)]         # upper vertebrae of the TK discs
 KNOBS = {"PI": (30.0, 90.0), "PT": (-10.0, 45.0), "LL": (0.0, 90.0), "TK": (0.0, 80.0),
          "MT": (-90.0, 90.0), "TL": (-90.0, 90.0), "AR": (0.0, 1.0), "PO": (-20.0, 20.0), "CB": (-80.0, 80.0)}
+BAL_KNEE, BAL_MAX = 20.0, 30.0   # deg: coronal balance bend of the fractional discs, exact up to the knee
+BAL_SEARCH = 85.0                 # deg: interval searched for the balance before the limit
 CURVES = {"MT": ("T5", "T8", "T12"), "TL": ("T12", "L1", "L4")}  # default (upper end, apex, lower end)
 TPS_ARM = 15.0                                     # mm, control point offsets from a body centre
 GRID_STEP, GRID_PAD = 15.0, (60.0, 60.0, 20.0)     # mm, field display grid around the spine curve
@@ -328,8 +337,13 @@ def _pi_after(data, beta):
 
 
 def _bisect(f, lo, hi, target):
-    """x in [lo, hi] with f(x) = target, f monotonic (60 halvings)."""
+    """x in [lo, hi] with f(x) = target, f monotonic (60 halvings). A target outside
+    [f(lo), f(hi)] gives the nearer end of the interval (saturation): the result stays
+    continuous in the target (it used to jump to the far end)."""
     f_lo = f(lo) - target
+    f_hi = f(hi) - target
+    if (f_lo > 0) == (f_hi > 0):
+        return lo if abs(f_lo) <= abs(f_hi) else hi
     for _ in range(60):
         mid = 0.5 * (lo + hi)
         f_mid = f(mid) - target
@@ -338,6 +352,60 @@ def _bisect(f, lo, hi, target):
         else:
             hi = mid
     return 0.5 * (lo + hi)
+
+
+def _branch_solve(f, target, lim, n=34):
+    """x with f(x) = target on the monotonic branch of f around 0 within [-lim, lim]
+    (scanned in n steps each way; a turning point is located by golden-section search;
+    a jump of more than pi, an angle wrapping, also ends the branch).
+    A target outside the branch's range gives the nearer end of the branch: the
+    turning point (the closest f can come) or +-lim. Continuous in the target and in f,
+    where a plain bisection over [-lim, lim] would flip between ends when f is not
+    monotonic there."""
+    h = lim / n
+    f0 = f(0.0)
+    s = 1.0 if f(h) >= f0 else -1.0  # f increases in direction s
+    ends = []
+    for sgn in (1.0, -1.0):
+        prev, end = f0, sgn * lim
+        for i in range(1, n + 1):
+            x = sgn * i * h
+            fx = f(x)
+            if abs(fx - prev) > math.pi:  # an angle wrapped: the branch ends before it
+                end = sgn * (i - 1) * h
+                break
+            if (fx - prev) * sgn * s < 0:  # turned between steps i-2 and i
+                a, b = sgn * max(i - 2, 0) * h, x
+                g = lambda y: sgn * s * f(y)  # maximised at the turning point
+                lo, hi = min(a, b), max(a, b)
+                r = (math.sqrt(5.0) - 1.0) / 2.0
+                c, d = hi - r * (hi - lo), lo + r * (hi - lo)
+                gc, gd = g(c), g(d)
+                for _ in range(40):
+                    if gc >= gd:
+                        hi, d, gd = d, c, gc
+                        c = hi - r * (hi - lo)
+                        gc = g(c)
+                    else:
+                        lo, c, gc = c, d, gd
+                        d = lo + r * (hi - lo)
+                        gd = g(d)
+                end = 0.5 * (lo + hi)
+                break
+            prev = fx
+        ends.append(end)
+    return _bisect(f, ends[1], ends[0], target)
+
+
+def _soft_limit(x, knee=None, limit=None):
+    """x unchanged up to ``knee`` (rad), then easing to ``limit`` (tanh, same slope at the
+    knee): continuous with a continuous derivative."""
+    knee = math.radians(BAL_KNEE) if knee is None else knee
+    limit = math.radians(BAL_MAX) if limit is None else limit
+    a = abs(x)
+    if a <= knee:
+        return x
+    return math.copysign(knee + (limit - knee) * math.tanh((a - knee) / (limit - knee)), x)
 
 
 def _weights(discs, uppers, sign):
@@ -437,14 +505,24 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
             out[d["upper"]] = T
         return out
 
-    def offset(bal):
-        out = build(bal)
-        return _apply(out[levels[-1]], data["frames"][levels[-1]]["center"])[0] - _apply(sacrum, data["s1_point"])[0]
+    s1 = _apply(sacrum, data["s1_point"])
+
+    def lean(bal):
+        """Coronal angle from the S1 -> target line to the S1 -> top line (the target
+        at the top's distance from S1, CB to the side, above S1): zero exactly when the
+        balance is met, and growing steadily with the bend up to a half turn (the
+        lateral offset itself turns back once the column leans past 90 deg)."""
+        top = _apply(build(bal)[levels[-1]], data["frames"][levels[-1]]["center"])
+        dx, dz = top[0] - s1[0], top[2] - s1[2]
+        r = math.hypot(dx, dz)
+        cx = max(-r, min(r, CB))  # the target point at the same distance from S1, above it
+        cz = math.sqrt(max(r * r - cx * cx, 0.0))
+        return math.atan2(dx * cz - dz * cx, dx * cx + dz * cz)  # signed angle target -> current
 
     moved_cor = any(abs(v) > 0 for v in cor) or abs(PO) > 0 or abs(alpha) > 0 or abs(beta) > 0 or any(sag)
     bal = 0.0
     if frac and (moved_cor or abs(CB - meas["CB"]) > 1e-9):
-        bal = _bisect(offset, -math.radians(30), math.radians(30), CB)
+        bal = _soft_limit(_branch_solve(lean, 0.0, math.radians(BAL_SEARCH)))
     out = build(bal)
     for i, lv in enumerate(levels):  # axial rotation about the vertebra's own axis
         f = data["frames"][lv]

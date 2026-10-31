@@ -1389,6 +1389,10 @@ class Library:
                          "offset": list(g.atlas_offset), "margin": g.margin},
                 "samples": [float(v) for v in surface_samples(g).ravel()],
             }
+            if getattr(g, "corners", None):  # disc thickness (implicit.anatomy.discs.thickness)
+                from .anatomy.discs import endplate_indices
+                bones[self.keys[path]]["endplates"] = {
+                    ep: endplate_indices(surface_samples(g), c).tolist() for ep, c in g.corners.items()}
             lm = self.ctx.landmarks(path)
             if lm:
                 sdf, (blo, bhi) = landmark_markers(lm)
