@@ -7,27 +7,42 @@ publishes that section as the GitHub release notes. Versions follow
 
 ## [0.15.0] - 2026-10-31
 
+### Added
+- **Disc thickness over the whole disc** (`implicit.anatomy.discs.thickness`, and
+  `viewer/discs.js` from the atlas, same to 0.01 mm): the smallest distance from any
+  surface point of either endplate to the other vertebra's bone, live with the
+  sliders (Discs table: A / M / P · thinnest). Each disc has a floor: the population
+  lower bound of its anterior and posterior heights (mean - 2 SD), at least 1.5 mm
+  (the thinnest such bound of any level, Kunkel T4-T5 anterior). A disc thinner
+  than its floor is red; e.g. TK 70 thins T4-T5, T5-T6 and T8-T9 to 1.3-1.5 mm.
+
 ### Changed
-- **VIVA+ 50F template: disc space heights at population values**
+- **VIVA+ 50F template: disc spaces at population values**
   (`implicit.anatomy.template`, run by the VIVA+ converter): the thoracic and lumbar
-  vertebrae are translated along their disc axes so that every measured disc
-  space takes the population mean middle height (Shin et al. 2024; Kunkel et al.
-  2011). Translations only: orientations, endplate angles, Cobb angles and the
-  pelvic parameters are unchanged (alignment within 0.05 deg, the endplate refit).
-  A disc is not closed further than where its vertebrae come as close as the
-  model's closest pair already was (0.31 mm, the facets): L1-L2 stops at 6.7 mm
-  (mean 6.4), L2-L3 at 10.7 mm (mean 7.6), the facets of VIVA+ being made for its
-  own taller discs. Shifts recorded in `template.json` and each bone file.
-- Middle heights before -> after (mm): L1-L2 11.8 -> 6.7, L2-L3 11.1 -> 10.7, L3-L4
-  8.2 -> 8.5, L4-L5 7.9 -> 9.0, L5-S1 8.5 -> 8.1; thoracic discs opened by 0.2-2.1 mm
-  to the Kunkel means. The anterior and posterior heights keep the model's wedge,
-  so some stay outside the (supine CT) population range.
+  vertebrae are translated along their disc axes so that every measured disc space
+  takes the population mean middle height (Shin et al. 2024; Kunkel et al. 2011),
+  and no disc is thinner anywhere than its floor at rest. Translations only:
+  orientations, Cobb angles and pelvic parameters unchanged (within 0.05 deg, the
+  endplate refit). A disc is not closed further than where its vertebrae come as
+  close as the model's closest pair already was (0.31 mm, the facets). Shifts in
+  `template.json` and each bone file.
+  - Middle heights before -> after (mm): L1-L2 11.8 -> 6.7 (facet-limited; mean
+    6.4), L2-L3 11.1 -> 10.7 (facet-limited; mean 7.6), L3-L4 8.2 -> 8.5, L4-L5
+    7.9 -> 9.0, L5-S1 8.5 -> 8.1; thoracic discs opened 0.2-2.1 mm to the Kunkel
+    means; T5-T6 and T8-T9 0.24 and 0.13 mm further, to their thickness floors.
+  - Thinnest point of any disc at rest: 2.4 mm (T3-T4, floor 2.2).
+- **Smooth sliders**: the coronal balance (CB) jumped by up to 400 mm in one slider
+  step (TL below -42 deg, MT beyond -80 deg, and extreme combinations): with only the
+  discs below the TL curve (L4-L5, L5-S1) to balance, the solve ran out of its +-30
+  deg interval and the bisection flipped to the opposite end. Now the balance is
+  solved on the lean of the S1-T1 line (monotonic in the bend up to a half turn), on
+  its monotonic branch around no bend, and the bend is exact up to 20 deg, easing
+  to at most 30 deg beyond (tanh): every vertebra moves continuously and without
+  kinks for every slider (largest second difference 0.06 mm per 0.45 deg step).
+  Same in `viewer/solvers.js`; a test sweeps every knob and random paths.
 
 ### Notes
-- LL 80 / TK 60: L4-L5 overlap 0.86 -> 0.07 mm, L3-L4 0.10 -> 0.01 mm. TK 60 no longer
-  compresses a thoracic disc beyond the rules (TK 70 does: T4-T5, T5-T6, T8-T9).
-- Sweep (243 settings): discs deformed beyond the rules in 216 (was 237; L5-S1
-  198, T12-L1 162, L4-L5 117); collisions in 225 (the coronal curves of +-40 deg).
+- LL 80 / TK 60: L4-L5 overlap 0.86 -> 0.07 mm, L3-L4 0.10 -> 0.01 mm.
 
 ## [0.14.0] - 2026-10-31
 

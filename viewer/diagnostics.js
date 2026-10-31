@@ -177,8 +177,9 @@ function checkClearance(key, scene, library, probes, atlasData, size) {
   for (const [b, batch] of probes.batches.entries()) {
     if (!batch.discs || !batch.discs.length) continue;
     const values = Solvers.apply(scene, { ...batch.params });
-    const got = Discs.heights(Graph.rigidBodies(scene, library, values));
-    const byPair = Object.fromEntries(got.map(([u, l, ...h]) => [`${u}|${l}`, h]));
+    const bodies = Graph.rigidBodies(scene, library, values), thick = Discs.thickness(atlasData, size, bodies);
+    const got = Discs.heights(bodies);
+    const byPair = Object.fromEntries(got.map(([u, l, ...h]) => [`${u}|${l}`, [...h, thick[`${u}|${l}`]]]));
     let bad = 0;
     for (const [u, l, ...ref] of batch.discs) {
       window.DIAG.checks++;

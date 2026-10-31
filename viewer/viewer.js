@@ -575,14 +575,20 @@ function updateClearance(s) {
 // population range (the reasons in the row's tooltip).
 function updateDiscs(bodies) {
   const now = Discs.heights(bodies), rest = Discs.restHeights(bodies);
-  const bad = Discs.postureFlags(now, rest), norm = Discs.normFlags(rest);
+  const idle = Object.fromEntries(Object.entries(bodies).map(([k, b]) => [k, { ...b, motion: [[[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0]] }]));
+  const thick = Discs.thickness(state.atlasData, state.atlasSize, bodies);
+  const thin0 = Discs.thinFlags(Discs.thickness(state.atlasData, state.atlasSize, idle));
+  const bad = Discs.postureFlags(now, rest, thick), norm = Discs.normFlags(rest);
+  for (const [k, v] of Object.entries(thin0)) norm[k] = [...(norm[k] || []), v];
   $("#discHead").hidden = !now.length;
   $("#discs").replaceChildren(...now.map(([u, l, a, m, p, le, ri]) => {
     const k = `${u}|${l}`, why = [...(bad[k] || []), ...(norm[k] ? ["rest outside population: " + norm[k].join("; ")] : [])];
+    const t = thick[k];
     return el("div", { className: `clr${bad[k] ? " hit" : ""}`, title: why.join("\n") + (why.length ? "\n" : "")
-        + `left ${le.toFixed(1)}, right ${ri.toFixed(1)} mm` },
+        + `left ${le.toFixed(1)}, right ${ri.toFixed(1)} mm; thinnest ${t === undefined ? "?" : t.toFixed(1)} mm `
+        + `(floor ${Discs.thicknessFloor(u, l).toFixed(1)} mm)` },
       el("span", { textContent: `${Discs.label(u, l)}${norm[k] ? " *" : ""}` }),
-      el("span", { textContent: `${a.toFixed(1)} / ${m.toFixed(1)} / ${p.toFixed(1)}` }));
+      el("span", { textContent: `${a.toFixed(1)} / ${m.toFixed(1)} / ${p.toFixed(1)}${t === undefined ? "" : ` · ${t.toFixed(1)}`}` }));
   }));
 }
 

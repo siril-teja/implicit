@@ -374,7 +374,7 @@ const Graph = (() => {
       const r = b.body.rigid, lib = r && library && library.bones[r.lib];
       if (lib && lib.grid) {
         out[b.name] = { grid: lib.grid, samples: lib.samples, motion: r.motion(iv),
-          corners: (lib.landmarks && lib.landmarks.corners) || null };  // disc heights (discs.js)
+          corners: (lib.landmarks && lib.landmarks.corners) || null, endplates: lib.endplates || null };  // discs.js
       }
     }
     return out;

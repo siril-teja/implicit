@@ -64,9 +64,10 @@ def _clearance(scene):
 
 
 def _discs(scene):
-    """Disc space heights of neighbouring vertebrae: [[upper, lower, A, M, P, L, R]] (mm)."""
-    from .anatomy.discs import report
-    return [[u, l, *(round(x, 6) for x in h)] for u, l, *h in report(scene)[0]]
+    """Disc space heights of neighbouring vertebrae: [[upper, lower, A, M, P, L, R, thinnest]] (mm)."""
+    from .anatomy.discs import report, report_thickness
+    thick = report_thickness(scene)[0]
+    return [[u, l, *(round(x, 6) for x in h), round(thick[(u, l)], 6)] for u, l, *h in report(scene)[0]]
 
 
 def _now(body):

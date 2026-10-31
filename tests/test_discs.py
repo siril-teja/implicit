@@ -65,23 +65,44 @@ class TestDiscs(unittest.TestCase):
 
     def test_hyperkyphosis_compresses_thoracic_discs(self):
         h, rest = self.heights(spp_TK=70)
-        flags = discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest)
+        thick = discs.report_thickness(self.scene)[0]
+        flags = discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest, thick)
         self.assertEqual(set(flags), {("T4", "T5"), ("T5", "T6"), ("T8", "T9")})
-        self.assertTrue(all(w.startswith("anterior -") for v in flags.values() for w in v))
+        self.assertTrue(all(any(w.startswith("thinnest") for w in v) for v in flags.values()))
+
+    def test_thickness(self):
+        """Whole-disc thickness: at rest every disc at least its floor; TK 70 thins the
+        anterior thoracic discs below 1.5 mm somewhere (flagged); the smallest thickness
+        is not above the smallest of the five heights (to within the 2 mm sampling of
+        the endplate surface)."""
+        self.scene.set_params(self.defaults)
+        thick, thick0 = discs.report_thickness(self.scene)
+        self.assertEqual(discs.thin_flags(thick0), {})
+        now, _ = discs.report(self.scene)
+        for u, l, *h in now:
+            self.assertLessEqual(thick[(u, l)], min(h) + 0.3, discs.label(u, l))
+        self.scene.set_params({**self.defaults, "spp_TK": 70})
+        thick = discs.report_thickness(self.scene)[0]
+        self.assertLess(thick[("T4", "T5")], discs.MIN_THICKNESS)
+        self.assertIn(("T4", "T5"), discs.thin_flags(thick))
 
     def test_template_middle_heights_at_population_means(self):
         """implicit.anatomy.template: middle heights at the population means (to 0.25 mm),
-        except where the facets stopped the shift (noted in template.json): there between
-        the mean and the original height."""
+        except where the facets stopped the shift (between the mean and the original
+        height) or the disc was opened to its thickness floor (just above the mean)."""
         rec = json.loads((SUBJECT / "template.json").read_text())["discs"]
-        limited = {k for k, v in rec.items() if "note" in v}
+        limited = {k for k, v in rec.items() if "limited by clearance" in v.get("note", "")}
+        opened = {k for k, v in rec.items() if "thickness floor" in v.get("note", "")}
         self.assertEqual(limited, {"L1-L2", "L2-L3"})
+        self.assertEqual(opened, {"T5-T6", "T8-T9"})
         _, rest = self.heights()
         for u, l, a, m, p, *_ in rest:
             k = discs.label(u, l)
             mu = discs.NORMS[k][1][0]
             if k in limited:
                 self.assertTrue(mu < m < rec[k]["before_AMP_mm"][1], k)
+            elif k in opened:  # opened past the mean to the thickness floor
+                self.assertTrue(mu < m < mu + 0.5, k)
             else:
                 self.assertAlmostEqual(m, mu, delta=0.25, msg=k)
 

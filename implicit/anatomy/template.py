@@ -16,6 +16,8 @@ orientation:
     fit its own disc heights, and closing a disc further would push its articular
     processes into the vertebra below. The shift stops there (bisection), so such
     a disc ends between its old height and the population mean;
+  - a disc whose thinnest point (discs.thickness, over the whole endplates) would
+    be below its floor (discs.thickness_floor) is opened until it is not;
   - the upper vertebra of the disc and everything above it move by d along that
     axis; the shifts add up the spine (the sacrum, hips and femurs stay).
 
@@ -47,6 +49,7 @@ from .convert import VERTEBRAE, load_bone, load_bones, save_bone
 TOL = 0.2    # mm: shifts below this are not applied: corner detection repeats to ~0.05 mm, and
              # near the floor the clearance changes by only ~0.04 mm per mm of shift (L1-L2)
 SCAN = 0.05  # mm: step of the search for the first contact when a disc is closed
+FLOOR_MARGIN = 0.05  # mm: discs are opened this far past their thickness floor (sample rounding)
 
 
 def _bodies(landmarks):
@@ -96,6 +99,19 @@ def disc_shifts(landmarks, grids, floor=None):
                     d = hi
                     break
                 prev = s
+        # Thinnest point over the whole disc at least the disc's floor (discs.thickness).
+        fl = discs.thickness_floor(u, l) + FLOOR_MARGIN
+        th = lambda s: discs.thickness({u: (grids[u], samples[u], bodies[u][0], (np.eye(3), s * axis)),
+                                        l: (grids[l], samples[l], bodies[l][0], discs.IDENTITY)})[(u, l)]
+        if th(d) < fl:
+            lo, s = d, d
+            while th(s) < fl:
+                lo, s = s, s + SCAN
+            for _ in range(12):  # th(lo) < fl <= th(s)
+                mid = 0.5 * (lo + s)
+                lo, s = (mid, s) if th(mid) < fl else (lo, mid)
+            note = (note + "; " if note else "") + f"opened to the thickness floor {fl:.2f} mm: {d:+.2f} -> {s:+.2f} mm"
+            d = s
         out.append((u, l, d, axis, tuple(h[:3]), note))
     return out, floor
 
