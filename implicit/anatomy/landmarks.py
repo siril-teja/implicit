@@ -309,6 +309,8 @@ def detect(bone_dir, log=print):
         marks["C2"]["inf"] = opposing_endplate(fields["C2"], marks["C3"], "sup", 1)
         marks["C2"]["inf_from"] = "C3"
         log(f"  C2: inferior endplate rms {marks['C2']['inf']['rms']:.2f} mm (from C3)")
+    from .rotation import add_centres
+    add_centres(marks)  # physiological rotation centres of each disc
     out = {lv: _jsonable({k: v for k, v in e.items() if k != "footprint_uv"})
            for lv, e in marks.items()}
     doc = {"frame": "scanner RAS, mm", "landmarks": out}

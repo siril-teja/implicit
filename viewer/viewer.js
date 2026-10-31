@@ -24,8 +24,16 @@ const LS = (k) => `implicit.graph.${k}`;
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private mode */ } }
 
-function buildProgram(sceneGlsl) {
-  return GPU.sceneProgram(gl, sceneGlsl);
+function buildProgram(sceneGlsl, vis) {
+  return GPU.sceneProgram(gl, sceneGlsl, new Set(vis.flatMap((v, i) => (v ? [] : [i]))));
+}
+
+// Show or hide a group; a group left out of the shader (hidden when it was compiled)
+// is compiled in when shown.
+function setVisible(i, on) {
+  state.vis[i] = on;
+  if (on && state.built && state.built.skip.has(i)) useScene(state.scene, true);
+  state.dirty = true;
 }
 
 function setStatus(msg, err = false) {
@@ -79,9 +87,14 @@ async function loadScene(scene, key) {
 
 // Compile and show a scene; keeps slider values (by name) and visibility when ``keep``.
 function useScene(scene, keep) {
+  const oldGroups = state.scene ? state.scene.groups.map((g) => g.name) : [];
+  const vis = scene.groups.map((g, i) => {
+    const j = oldGroups.indexOf(g.name);
+    return keep && j >= 0 && state.vis[j] !== undefined ? state.vis[j] : g.visible !== false;
+  });
   let built;
   try {
-    built = buildProgram(scene.glsl);
+    built = buildProgram(scene.glsl, vis);
   } catch (e) {
     setStatus("Shader error:\n" + e.message, true);
     console.error(e);
@@ -96,11 +109,7 @@ function useScene(scene, keep) {
   const oldVals = state.values;
   state.values = {};
   for (const p of scene.params) state.values[p.name] = keep && p.name in oldVals ? oldVals[p.name] : p.value;
-  const oldGroups = state.scene ? state.scene.groups.map((g) => g.name) : [];
-  state.vis = scene.groups.map((g, i) => {
-    const j = oldGroups.indexOf(g.name);
-    return keep && j >= 0 && state.vis[j] !== undefined ? state.vis[j] : g.visible !== false;
-  });
+  state.vis = vis;
   state.scene = scene;
   if (first) fitView();
   buildPanel();
@@ -342,7 +351,7 @@ function buildPanel() {
     sw.style.background = `rgb(${b.color.map((c) => Math.round(c * 255)).join(",")})`;
     const cb = el("input", {
       type: "checkbox", checked: state.vis[i],
-      onchange: (e) => { state.vis[i] = e.target.checked; state.dirty = true; },
+      onchange: (e) => setVisible(i, e.target.checked),
     });
     bodies.append(el("label", { className: "body" }, cb, sw, b.name));
   });

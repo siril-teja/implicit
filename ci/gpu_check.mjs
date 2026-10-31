@@ -74,6 +74,18 @@ try {
     // shader that compiles slower than this on a CI machine fails here, not for users.
     const ms = +(status.match(/compiled in (\d+) ms/) || [0, 0])[1];
     if (ms > COMPILE_LIMIT_MS) viewerErrors.push(`${key}: shader compile ${ms} ms > ${COMPILE_LIMIT_MS} ms`);
+    // Groups hidden at load are left out of the shader and compiled in when shown:
+    // show them all once, so the full shader is compiled here too (its time is logged).
+    const hidden = await v.evaluate(() => {
+      const n = state.vis.filter((x) => !x).length;
+      if (n) { state.vis = state.vis.map(() => true); useScene(state.scene, true); }
+      return n;
+    });
+    if (hidden) {
+      const all = await v.textContent("#status");
+      console.log(`viewer ${key}, all ${hidden} hidden groups shown: ${all.split("\n")[0]}`);
+      if (!/compiled/.test(all)) viewerErrors.push(`${key} (all groups): ${all}`);
+    }
     await v.close();
   }
   console.log(report);

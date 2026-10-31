@@ -30,8 +30,10 @@ an upward normal n is atan2(n_y, n_z) (+ anterior), its coronal tilt atan2(n_x, 
       Cobb change (toward the convexity), tapering linearly to 0 at the end vertebrae
 
 Chain model (``solve``): every segment ("legs", "pelvis", "sacrum", the vertebrae)
-moves rigidly. Above the sacrum each disc is a hinge at its centre (midpoint of the
-two endplate centres); the vertebra above it and everything higher turn with it.
+moves rigidly. Above the sacrum each disc is a joint turning about its physiological
+rotation centres (implicit.anatomy.rotation: one point for sagittal turns, one for
+coronal turns, stored as "rotation" with the upper vertebra's landmarks); the
+vertebra above it and everything higher turn with it.
   - PO: everything, femurs included, turns about the antero-posterior axis through H;
   - PT: pelvis, sacrum and spine turn about the hip axis (femurs stay);
   - PI: the sacrum and spine turn about the sacroiliac axis relative to the hip
@@ -91,6 +93,7 @@ import numpy as np
 
 from ..expr import SOLVERS
 from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_ITERS, POLY_RELAX
+from . import rotation
 from .convert import VERTEBRAE, load_bone
 
 CURVE_STEPS = 4                                    # spine curve samples per span between centres
@@ -202,12 +205,17 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0)):
     pt = lambda p: (np.asarray(p, float) - off).tolist()
     levels = [lv for lv in reversed(VERTEBRAE) if lv in landmarks and "sup" in landmarks[lv] and "inf" in landmarks[lv]]
     s1 = landmarks["S1"]
-    discs, below = [], s1
+    discs, below, below_name = [], s1, "S1"
     for lv in levels:
         e = landmarks[lv]
         c = 0.5 * (np.asarray(e["inf"]["point"], float) + np.asarray(below["sup"]["point"], float))
-        discs.append({"upper": lv, "center": pt(c), "angle": tilt(_up(below, "sup")) - tilt(_up(e, "inf"))})
-        below = e
+        rc = e.get("rotation")
+        if rc is None:  # landmarks written before rotation centres were stored
+            src = landmarks["L5"] if below_name == "S1" else below
+            rc = rotation.centres(e, below, below_name, (src["depth"], src["height"]))
+        discs.append({"upper": lv, "center": pt(c), "angle": tilt(_up(below, "sup")) - tilt(_up(e, "inf")),
+                      "sagittal": pt(rc["sagittal"]), "coronal": pt(rc["coronal"])})
+        below, below_name = e, lv
     frames = {lv: {"center": pt(landmarks[lv]["body_center"]), "axes": _axes(landmarks[lv])} for lv in levels}
     frames["sacrum"] = {"center": pt(s1["sup"]["point"]), "axes": _axes(s1)}
     hips = {k: pt(pelvis[k]) for k in ("hip_left", "hip_right", "si_left", "si_right")}
@@ -424,9 +432,8 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
     def build(bal):
         T, out = sacrum, {}
         for j, d in enumerate(discs):
-            c = d["center"]
             turn = cor[j] + (bal / len(frac) if j in frac else 0.0)
-            T = _compose(T, _compose(_rot(c, X_AXIS, sag[j]), _rot(c, Y_AXIS, turn)))
+            T = _compose(T, _compose(_rot(d["sagittal"], X_AXIS, sag[j]), _rot(d["coronal"], Y_AXIS, turn)))
             out[d["upper"]] = T
         return out
 
