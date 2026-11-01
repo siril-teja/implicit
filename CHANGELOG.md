@@ -5,6 +5,40 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.19.0] - 2026-11-01
+
+### Added
+- **Constrained distribution** (roadmap step 1.7): every disc's feasible range per
+  plane and direction (`implicit/anatomy/ranges.py`, stored with the landmarks as
+  "range"): how far it may turn about its rotation centres before a pair of bones
+  across it (vertebrae, facets, ribs) comes closer than min(1 mm, its rest gap) or a
+  disc rule fails (height change, thickness floor), within half its range of motion.
+  Each constraint involves one disc only, so the spine's feasible set is the product
+  of the discs'; the distribution (water-filling: the weighted least-squares solution
+  closest to the subject's own distribution) now uses the tighter bound in each
+  direction, and the planes of a disc share its range (|FE|/cap + |LB|/cap +
+  |AR|/cap <= 1).
+- PI kept where the sacrum stays clear of the hip bones (the sacrum's turn in the
+  pelvis, about +-12 deg on VIVA+ 50F; "pi_range" with the pelvis landmarks); PI
+  shortfall reported.
+- Viewer: each disc at a limit says what stops it (range of motion, clearance pair,
+  disc rule) in the Motion limits tooltip.
+- `tests/test_constrained.py`: no collision and no flagged disc on a grid and at
+  random settings of every slider (limits on).
+
+### Changed
+- Roadmap 1.7 criteria as built: a target that cannot be met is drawn at the nearest
+  feasible posture and reported (it was "not drawn").
+
+### Notes
+- On VIVA+ 50F the facets bound L2-L3 and L4-L5 extension-side turns and lumbar axial
+  rotation (10-20 % inside the range of motion), L5-S1 lateral bending and rotation,
+  and T3-T4 lateral bending; the thickness floors bound T5-T6 and T8-T9 to about 0.2
+  deg one way (the template opened them to their floors).
+- The distribution takes 6.8 ms per slider move in the browser solver (Node); the
+  full solver result with the field tables and flow lines takes about 170 ms, as
+  before this step.
+
 ## [0.18.0] - 2026-11-01
 
 ### Added

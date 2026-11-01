@@ -14,10 +14,10 @@ the disc (the upper vertebra and its ribs) is turned about its rotation centres
 antero-posterior axis, axial about the upper vertebra's own axis) away from rest,
 until
   - the clearance of a pair across the disc (implicit.anatomy.clearance) falls below
-    min(CLEARANCE, its rest clearance): about 1 mm at the facets (the roadmap's
-    figure; the joint spaces are 1.3-2.0 mm at rest), or
+    min(CLEARANCE + MARGIN, its rest clearance): about 1 mm at the facets (the
+    roadmap's figure; the joint spaces are 1.3-2.0 mm at rest), or
   - a disc posture rule fails (implicit.anatomy.discs: middle height +-10 %, local
-    +-40 %, thinnest point above its floor),
+    +-40 %, thinnest point at least MARGIN above its floor),
 or it reaches half its range of motion (implicit.anatomy.motion; beyond that the
 limit is the range itself). The angle is found by a scan of SCAN_STEPS steps, then
 BISECT_STEPS bisections of the first failing step (to about 0.002 deg).
@@ -44,6 +44,8 @@ from . import discs
 from .convert import load_bone
 
 CLEARANCE = 1.0     # mm: smallest gap across a disc (or the rest gap, when smaller)
+MARGIN = 0.02       # mm: kept from each clearance and thickness bound (numerical ties)
+PI_SEARCH = 30.0    # deg: largest turn of the sacrum in the pelvis searched
 SCAN_STEPS = 8
 BISECT_STEPS = 10
 PLANES = ("FE", "LB", "AR")
@@ -96,14 +98,17 @@ def disc_ranges(bone_dir, doc, log=print):
 
         def fails(M):
             for a, b, c in across(M):
-                if c < min(CLEARANCE, rest[(a, b)]) - 1e-6:
+                if c < min(CLEARANCE + MARGIN, rest[(a, b)]):
                     return f"clearance {a}-{b}"
             if h0:
                 now = discs.heights({up: (cu, M), lo: (cd, IDENTITY)})
-                th = discs.thickness({up: (grids[up], samples[up], cu, M), lo: (grids[lo], samples[lo], cd, IDENTITY)})
-                flags = discs.posture_flags(now, h0, th)
+                flags = discs.posture_flags(now, h0)
                 if flags:
                     return "disc " + "; ".join(sum(flags.values(), []))
+                th = discs.thickness({up: (grids[up], samples[up], cu, M), lo: (grids[lo], samples[lo], cd, IDENTITY)})
+                x = th.get((up, lo), math.inf)
+                if x < discs.thickness_floor(up, lo) + MARGIN:
+                    return f"disc thinnest {x:.2f} mm < {discs.thickness_floor(up, lo):.2f} mm"
             return None
 
         axes = [(disc["sagittal"], al.X_AXIS), (disc["coronal"], al.Y_AXIS),
@@ -114,21 +119,9 @@ def disc_ranges(bone_dir, doc, log=print):
             ends = []
             for sgn in (-1, 1):
                 turn = lambda a: tuple(np.asarray(x, float) for x in al._rot(c, ax, sgn * a))
-                end, reason, prev = half, "range of motion", 0.0
-                for k in range(1, SCAN_STEPS + 1):
-                    a = half * k / SCAN_STEPS
-                    r = fails(turn(a))
-                    if r:
-                        lo_a, hi_a = prev, a
-                        for _ in range(BISECT_STEPS):
-                            mid = 0.5 * (lo_a + hi_a)
-                            if fails(turn(mid)):
-                                hi_a = mid
-                            else:
-                                lo_a = mid
-                        end, reason = lo_a, r
-                        break
-                    prev = a
+                end, reason = _search(lambda a: fails(turn(a)), half)
+                if reason == "search limit":
+                    reason = "range of motion"
                 ends.append(round(sgn * math.degrees(end), 3))
                 why[f"{PLANES[p]}{'+' if sgn > 0 else '-'}"] = reason
             entry[PLANES[p]] = ends
@@ -140,12 +133,66 @@ def disc_ranges(bone_dir, doc, log=print):
     return out
 
 
+def _search(fails, limit):
+    """Largest turn in [0, limit] before ``fails`` (scan, then bisection): (turn, why)."""
+    prev = 0.0
+    for k in range(1, SCAN_STEPS + 1):
+        a = limit * k / SCAN_STEPS
+        r = fails(a)
+        if r:
+            lo_a, hi_a = prev, a
+            for _ in range(BISECT_STEPS):
+                mid = 0.5 * (lo_a + hi_a)
+                if fails(mid):
+                    hi_a = mid
+                else:
+                    lo_a = mid
+            return lo_a, r
+        prev = a
+    return limit, "search limit"
+
+
+def pi_range(bone_dir, doc, log=print):
+    """[most negative, most positive] turn (deg) of the sacrum (and the spine on it)
+    about the sacroiliac axis in the pelvis (the PI morph, implicit.anatomy.alignment)
+    before the sacrum comes closer to a hip bone than min(CLEARANCE, its rest gap), or
+    None without hip bones."""
+    from . import alignment as al
+    bone_dir = Path(bone_dir)
+    data = al.chain(doc["landmarks"], doc.get("pelvis"))
+    names = ["sacrum", "hip_left", "hip_right"]
+    if data is None or not all((bone_dir / f"{n}.npz").exists() for n in names):
+        return None
+    grids = {n: load_bone(bone_dir / f"{n}.npz")[0] for n in names}
+    samples = {n: cl.surface_samples(g) for n, g in grids.items()}
+
+    def gaps(M):
+        bodies = {n: (grids[n], M if n == "sacrum" else IDENTITY) for n in names}
+        return {(a, b): c for a, b, c, _ in cl.clearance(bodies, samples) if "sacrum" in (a, b)}
+
+    rest = gaps(IDENTITY)
+    ends = []
+    for sgn in (-1, 1):
+        def fails(a):
+            M = tuple(np.asarray(x, float) for x in al._rot(data["si"], al.X_AXIS, sgn * math.radians(a)))
+            bad = [f"clearance {k[0]}-{k[1]}" for k, c in gaps(M).items() if c < min(CLEARANCE + MARGIN, rest[k])]
+            return bad[0] if bad else None
+        a, why = _search(fails, PI_SEARCH)
+        ends.append(round(sgn * a, 3))
+        log(f"  sacrum turn {'+' if sgn > 0 else '-'}: {a:.2f} deg ({why})")
+    return ends
+
+
 def add_ranges(bone_dir, log=print):
-    """Compute the disc ranges of ``bone_dir`` and store them in its landmarks.json."""
+    """Compute the disc ranges and the sacrum's range of ``bone_dir`` and store them in
+    its landmarks.json ("range" per vertebra, "pi_range" with the pelvis)."""
     f = Path(bone_dir) / "landmarks.json"
     doc = json.loads(f.read_text())
     for lv, entry in disc_ranges(bone_dir, doc, log).items():
         doc["landmarks"][lv]["range"] = entry
+    pr = pi_range(bone_dir, doc, log)
+    if pr and "pelvis" in doc:
+        doc["pelvis"]["pi_range"] = pr
     f.write_text(json.dumps(doc, indent=1))
     log(f"wrote {f}")
 

@@ -127,6 +127,17 @@ const Solvers = (() => {
       return c;
     });
   }
+  // As alignment.py _used / _shrink: the part of each disc's cap in use; caps left.
+  function used(x, C) {
+    return x.map((v, j) => {
+      const c = v >= 0 ? C[0][j] : C[1][j];
+      return c === Infinity || Math.abs(v) < 1e-15 ? 0 : (c <= 0 ? 1 : Math.min(1, Math.abs(v) / c));
+    });
+  }
+  function shrink(C, u) {
+    const f = (c, x) => (c === Infinity ? c : c * Math.max(0, 1 - x));
+    return [C[0].map((c, j) => f(c, u[j])), C[1].map((c, j) => f(c, u[j]))];
+  }
   function why(d, p, sign) {
     const r = d.range;
     if (r) {
@@ -257,9 +268,11 @@ const Solvers = (() => {
     const PI = rel("PI", v.PI), PT = rel("PT", v.PT), CB = rel("CB", v.CB ?? 0);
     const delta = (k, x) => rad(x - (k in base ? base[k] : x));
     const PO = v.PO ?? 0, AR = v.AR ?? 0, CP = v.CP ?? 0, on = (v.ML ?? 0) >= 0.5, levels = d.levels, discs = d.discs;
-    const [cfe, clb, car] = [0, 1, 2].map((p) => [caps(discs, p, on, 1), caps(discs, p, on, -1)]), short = {};
+    let [cfe, clb, car] = [0, 1, 2].map((p) => [caps(discs, p, on, 1), caps(discs, p, on, -1)]), short = {};
     const side = (C, x) => (x >= 0 ? C[0] : C[1]);
-    const beta = Math.abs(PI - meas.PI) < 1e-9 ? 0 : bisect((b) => piAfter(d, b)[0], -rad(60), rad(60), PI);
+    let beta = Math.abs(PI - meas.PI) < 1e-9 ? 0 : bisect((b) => piAfter(d, b)[0], -rad(60), rad(60), PI);
+    if (on && d.pi_range) beta = Math.max(rad(d.pi_range[0]), Math.min(rad(d.pi_range[1]), beta));
+    short.PI = rad(PI - piAfter(d, beta)[0]);
     const alpha = rad(PT - piAfter(d, beta)[1]);
     const legs = rot(d.hip, Y, -rad(PO)), pelvis = compose(legs, rot(d.hip, X, alpha));
     const sacrum = compose(pelvis, rot(d.si, X, beta));
@@ -268,10 +281,11 @@ const Solvers = (() => {
     [sl, short.LL] = fill(dLL, weights(discs, LORDOSIS, 1), side(cfe, dLL));
     [sk, short.TK] = fill(dTK, weights(discs, KYPHOSIS, -1), side(cfe, -dTK));
     const sag = sl.map((a, i) => a - sk[i]);
+    const usedS = used(sag, cfe), clbFree = shrink(clb, usedS);  // planes share a disc's range
     const plans = curvePlan(levels, d.curves), cor = discs.map(() => 0), tents = {};
     const targets = { MT: v.MT ?? 0, TL: v.TL ?? 0 };
     for (const [k, [share, shape]] of Object.entries(plans)) {
-      const dk = delta(k, targets[k]), [x, miss] = fill(dk, share, side(clb, -dk));
+      const dk = delta(k, targets[k]), [x, miss] = fill(dk, share, side(clbFree, -dk));
       short[k] = miss;
       for (let j = 0; j < discs.length; j++) cor[j] -= x[j];
       tents[k] = levels.map((_, i) => -AR * (dk - miss) * shape[i]);
@@ -279,7 +293,7 @@ const Solvers = (() => {
     const lows = Object.values(plans).map((p) => p[2]);
     const lowest = lows.length ? Math.min(...lows) : -1;
     const wfrac = discs.map((_, j) => (j <= lowest ? 1 : 0)), nfrac = lowest + 1;
-    const bend = (bal) => fill(bal, wfrac, side(clb, bal))[0];
+    const bend = (bal) => fill(bal, wfrac, side(clbFree, bal))[0];
     const build = (bal) => {
       let T = sacrum;
       const out = {}, b = bend(bal);
@@ -303,6 +317,8 @@ const Solvers = (() => {
     const out = build(bal);
     short.CB = solved ? CB - (apply(out[top], d.frames[top].center)[0] - s1[0]) : 0;
     const bb = bend(bal), lat = cor.map((c, j) => c + bb[j]);
+    const usedC = used(lat, clb);
+    car = shrink(car, usedS.map((u, j) => u + usedC[j]));
     const relAx = discs.map((disc, j) => Math.max(-car[1][j], Math.min(car[0][j], -CP * (disc.coupling ?? 0) * lat[j])));
     for (const [k, tent] of Object.entries(tents)) {
       const steps = discs.map((_, j) => tent[j] - (j ? tent[j - 1] : 0));
@@ -334,7 +350,7 @@ const Solvers = (() => {
       report.at_limit = [];
       discs.forEach((disc, j) => {
         if (!disc.label) return;
-        [[sag[j], cfe], [lat[j], clb], [relAx[j], car]].forEach(([x, C], p) => {
+        [[sag[j], cfe], [lat[j], clbFree], [relAx[j], car]].forEach(([x, C], p) => {
           const c = side(C, x)[j];
           if (c < Infinity && Math.abs(x) >= c - 1e-9) report.at_limit.push([disc.label, PLANES[p], why(disc, p, x >= 0 ? 1 : -1)]);
         });
@@ -446,7 +462,7 @@ const Solvers = (() => {
 
   // Targets the motion limits keep from being reached, at the current values:
   // [[target, text, discs at a limit]] per spinopelvic solver (report of motions()).
-  const SHORT_NAMES = { LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
+  const SHORT_NAMES = { PI: "PI", LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
   // Rib cage at the current values: [[label, text, tooltip]]: the sternum's motion and
   // each true rib's cartilage length change (rib end to sternum) beyond 0.5 mm.
   function ribcageReport(scene, values) {
