@@ -30,6 +30,9 @@ publishes that section as the GitHub release notes. Versions follow
   rib and sternum surfaces, so they share the junction surface. VIVA+ 50F had gaps
   of 0.3-1.5 mm (left) and 1.7-2.7 mm (right), and rib 1 left overlapped its
   cartilage by 4 mm.
+- Template: a rib takes only the shifts its vertebra takes. Earlier runs had given
+  ribs 1-10 a 0.05 mm shift their vertebrae did not take (below the 0.1 mm
+  threshold); they are moved back, and shifts not applied are no longer recorded.
 - Every PR checks all `.md` files before merging (PR template, CONTRIBUTING);
   LICENSING lists Playwright (CI) and how literature values are used; the VIVA+
   derived files' modifications are listed in LICENSING, NOTICE and the bones README.
