@@ -101,10 +101,13 @@ class TestSpineClearance(unittest.TestCase):
         self.assertTrue(all(v > cl.COLLIDE for v in c.values()), {k: v for k, v in c.items() if v <= cl.COLLIDE})
 
     def test_hyperlordosis_collides(self):
-        c = self.clearances(spp_LL=80, spp_TK=60)
+        c = self.clearances(spp_LL=80, spp_TK=60, spp_ML=0)  # beyond the motion limits
         hits = {k for k, v in c.items() if v < cl.COLLIDE}
         self.assertEqual(hits, {("L4", "L5")})
         self.assertLess(c[("L4", "L5")], -0.03)
+        # With the limits on the same targets stop short of the collision.
+        c = self.clearances(spp_LL=80, spp_TK=60)
+        self.assertTrue(all(v > cl.COLLIDE for v in c.values()), {k: v for k, v in c.items() if v <= cl.COLLIDE})
 
 
 if __name__ == "__main__":

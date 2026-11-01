@@ -26,8 +26,15 @@ publishes that section as the GitHub release notes. Versions follow
   reached and by how much (deg; CB in mm), with the discs at a limit in the
   tooltip. The solver result has a `limits` entry (`short`, `at_limit`), the same
   in Python and the browser.
+- `docs/LITERATURE.md`: every source read so far (26 rows): what it reports, what
+  we concluded or assumed, where it is used, and whether it is used, considered or
+  superseded. Updated in every step (CONTRIBUTING.md).
 
 ### Changed
+- Roadmap: new step 1.6 **Connected rib cage** (ribs, costal cartilages and
+  sternum stay joined in every posture: rigid sternum fitted to the rib ends,
+  cartilages deformed between rib and sternum); constrained distribution, global
+  balance and cervical spine move to 1.7-1.9.
 - `alignment.solve` takes `ML` and `CP` (both off by default there; the graph
   block defaults to on). The slider smoothness test runs with the limits off and
   on, and accepts a steeper stretch that splits into proportionally smaller steps.

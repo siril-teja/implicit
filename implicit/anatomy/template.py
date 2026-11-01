@@ -28,8 +28,8 @@ This step makes the template representative of the average population:
    least g apart, each losing only what that needs): g = 2.0 mm for the joints of the
    lumbar spine (T12-L1 to L5-S1: the lower normal limit of the lumbar facet joint
    space on CT, grade 0 of the Weishaupt et al. 1999 classification, as used by
-   Tiwari et al. 2021) and 1.3 mm in the thoracic spine (mean thoracic facet joint
-   space on CT, 1.27 +- 0.34 mm, 1512 joints, Tiwari et al. 2021). That space holds
+   Tiwari et al. 2020) and 1.3 mm in the thoracic spine (mean thoracic facet joint
+   space on CT, 1.27 +- 0.34 mm, 1512 joints, Tiwari et al. 2020). That space holds
    the articular cartilage (mean 0.57 mm a side in the lumbar spine, Woldtvedt et
    al. 2011) and the joint gap. Only bone where the two are less than g apart
    changes (the facets, where they touch); every disc space is thicker than its g.
@@ -66,8 +66,8 @@ from .convert import VERTEBRAE, load_bone, load_bones, save_bone
 TOL = 0.1    # mm: shifts below this are not applied (corner detection repeats to ~0.05 mm)
 SCAN = 0.05  # mm: step of the search when a disc is opened to its thickness floor
 FLOOR_MARGIN = 0.05  # mm: discs are opened this far past their thickness floor (sample rounding)
-JOINT_SPACE_LUMBAR = 2.0    # mm (Weishaupt 1999 grade 0 lower limit, via Tiwari 2021)
-JOINT_SPACE_THORACIC = 1.3  # mm (Tiwari 2021 mean, 1.27 mm)
+JOINT_SPACE_LUMBAR = 2.0    # mm (Weishaupt 1999 grade 0 lower limit, via Tiwari 2020)
+JOINT_SPACE_THORACIC = 1.3  # mm (Tiwari 2020 mean, 1.27 mm)
 JOINT_MARGIN = 0.1  # mm: carved this much wider (0.1 mm value quantisation, surface sampling)
 LUMBAR = {"L1", "L2", "L3", "L4", "L5", "sacrum"}  # lower bones of the lumbar joints
 

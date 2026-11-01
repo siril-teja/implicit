@@ -108,7 +108,7 @@ other bone's surface points (2 mm apart), both ways; negative is the depth of th
 overlap. The sliders do not yet avoid collisions (roadmap steps 1.5, 1.6).
 
 ```bash
-python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60
+python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60 --set spp_ML=0
 python -m implicit.anatomy.clearance examples/average_spine.json --sweep    # collisions over a grid of sliders
 ```
 
@@ -127,7 +127,7 @@ orientations and alignment unchanged). The Discs table also shows each disc's
 thinnest point over the whole endplates, red below its floor (at least 1.5 mm).
 
 ```bash
-python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60
+python -m implicit.anatomy.discs examples/average_spine.json --set spp_TK=60 --set spp_ML=0
 python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagged discs over a grid of sliders
 ```
 
