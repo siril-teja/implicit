@@ -46,7 +46,7 @@ The alignment sliders must only produce postures a real spine can have.
 | **1.6 Connected rib cage** | Keep the rib cage one connected structure in every posture: ribs, costal cartilages and sternum stay joined, the cartilages bend instead of separating. | Ribs stay rigid with their vertebra; the sternum moves rigidly, fitted (least squares) to the moved anterior rib ends of ribs 1-7; each costal cartilage is deformed by a field that is rigid with its rib at the costochondral end and with the sternum at the sternocostal end (blend along the cartilage), so both junctions stay closed (gap < 0.5 mm at every slider setting of a test grid within the motion limits); the template's rest gaps between cartilages and ribs closed and no cartilage overlaps a rib or the sternum; cartilage length change and sternum motion reported; cited data on costal cartilage and sternum motion in trunk flexion, extension, bending and rotation decide which deformations are physiological; Python and browser identical, GPU check covers it. | 1.5 | Done (0.18.0) |
 | **1.7 Constrained distribution** | Distribute every target over the levels so that targets are met, limits respected and no bones collide. | A small optimisation (levels x 3 angles; targets as equalities, limits as bounds, minimum clearance, ~1 mm at facets, and the 1.3 disc height rules as inequalities, closest to the subject's own distribution) solved identically in Python and the browser at interactive speed (< 50 ms per slider move); no collisions and no flagged disc on a grid of slider settings that is feasible; infeasible settings reported, not drawn. | 1.5 | |
 | **1.8 Global balance** | Express and control whole-body sagittal and coronal balance. | SVA, T1 pelvic angle (TPA), C7/T1 plumb line measured and shown; compensation modes (pelvic retroversion, thoracic flattening) selectable; Roussouly type presets; measured values match targets within 1 mm / 0.5 deg. | 1.7 | |
-| **1.9 Cervical spine and head** | Complete the spine up to the skull. | C1-C7 and the skull imported from VIVA+ 50F with landmarks; cervical lordosis (C2-C7) and T1 slope sliders; the 1.1-1.7 machinery covers the cervical levels. | 1.7 | |
+| **1.9 Cervical spine and head** | Complete the spine up to the skull. | C1-C7 and the skull imported from VIVA+ 50F with landmarks; cervical lordosis (C2-C7) and T1 slope sliders; the 1.1-1.7 machinery covers the cervical levels. | 1.7 | Paused: the cervical spine and head have far more complex biomechanics than the trunk; taken up after the trunk (phases 2-6) |
 
 ## Phase 2: Soft tissue
 
@@ -114,7 +114,8 @@ The alignment sliders must only produce postures a real spine can have.
 Milestones: **M1 valid posture** (1.1-1.7), **M2 discs** (2.1-2.2), **M3 first
 realistic virtual patients** (3.2-3.4, 5.1), **M4 posterior elements and
 ligaments** (2.3-2.6), **M5 generator** (1.8, 1.9, 3.1, 4.x), **M6 shape model**
-(3.5), **M7 rib cage and muscles** (2.7, 2.8), **M8 FE** (6.x).
+(3.5), **M7 rib cage and muscles** (2.7, 2.8), **M8 FE** (6.x). Step 1.9 (cervical
+spine and head) is paused and not part of M5 until it is resumed.
 
 ## Open questions (resolved in the step that needs them)
 

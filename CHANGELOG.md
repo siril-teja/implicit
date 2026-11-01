@@ -30,6 +30,7 @@ publishes that section as the GitHub release notes. Versions follow
   rib and sternum surfaces, so they share the junction surface. VIVA+ 50F had gaps
   of 0.3-1.5 mm (left) and 1.7-2.7 mm (right), and rib 1 left overlapped its
   cartilage by 4 mm.
+- Roadmap: step 1.9 (cervical spine and head) paused; the trunk comes first.
 - Template: a rib takes only the shifts its vertebra takes. Earlier runs had given
   ribs 1-10 a 0.05 mm shift their vertebrae did not take (below the 0.1 mm
   threshold); they are moved back, and shifts not applied are no longer recorded.
