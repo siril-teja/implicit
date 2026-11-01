@@ -327,6 +327,10 @@ def detect(bone_dir, log=print):
     pelvis = pelvis_landmarks(bone_dir, log)
     if pelvis:
         doc["pelvis"] = _jsonable({k: np.asarray(v) for k, v in pelvis.items()})
+    from .ribcage import detect as ribcage_detect
+    rc = ribcage_detect(bone_dir, log)
+    if rc:
+        doc["ribcage"] = rc
     (bone_dir / "landmarks.json").write_text(json.dumps(doc, indent=1))
     log(f"wrote {bone_dir / 'landmarks.json'}")
     return marks

@@ -34,6 +34,16 @@ This step makes the template representative of the average population:
    al. 2011) and the joint gap. Only bone where the two are less than g apart
    changes (the facets, where they touch); every disc space is thicker than its g.
 
+3. Costal junctions (``close_junctions``). Each costal cartilage must meet its rib
+   (costochondral junction: the cartilage continues the rib) and the sternum. Where a
+   cartilage end stops short of rib n (1-10), the end is moved to the rib by a local
+   morph, f(x - w(x) v) with w = (1 - (r / R)^2)^2 around the end (R = 25 mm) and v
+   along the gap, the gap plus 2.5 mm long; the cartilage is then cut at the surfaces
+   of the ribs and the sternum (f = max(f, -f_bone)), so cartilage and bone share
+   the junction surface instead of overlapping. The morphed field is divided by
+   1 + max |v| |grad w| to stay 1-Lipschitz (the surface is unchanged by that). VIVA+
+   50F as converted had gaps of 0.3-1.5 mm (left) and 1.7-2.7 mm (right).
+
 The bone files are rewritten (shifted origins; carved values), landmarks are
 detected again, and everything is recorded in ``template.json`` next to the bones.
 Running it again changes nothing (shifts below TOL, joints already open).
@@ -127,6 +137,9 @@ def vertebra_shifts(shifts, names):
 
 
 RIB_TIPS = range(1, 11)  # ribs whose cartilages reach the sternum or the costal margin
+JUNCTION_REACH = 25.0     # mm: radius of the morph that brings a cartilage end to its rib
+JUNCTION_OVERSHOOT = 2.5  # mm: the end is moved this far into the rib, then cut at its surface
+JUNCTION_CONTACT = 0.2    # mm: a cartilage closer than this to its rib is already joined
 
 
 def joint_space(upper, lower):
@@ -204,6 +217,71 @@ def carve_joints(grids, log=print):
     return out
 
 
+def _pad(g, k=3):
+    """``g`` on a grid k samples larger on every side (room for a morph)."""
+    from ..sdf import Grid
+    o = g.origin - k * g.spacing
+    shape = tuple(np.array(g.shape) + 2 * k)
+    X = np.stack(np.meshgrid(*[o[i] + g.spacing * np.arange(shape[i]) for i in range(3)], indexing="ij"),
+                 -1).reshape(-1, 3)
+    return Grid(g.eval(X).reshape(shape), o, g.spacing, g.name)
+
+
+def _surface(g):
+    """Every grid sample within half a cell of the surface (denser than clearance's)."""
+    return g.origin + g.spacing * np.argwhere(np.abs(g.values) < 0.5 * g.spacing)
+
+
+def _grad(g, P, h=0.5):
+    return np.stack([(g.eval(P + h * e) - g.eval(P - h * e)) / (2 * h) for e in np.eye(3)], 1)
+
+
+def close_junctions(grids, log=print):
+    """Join each costal cartilage to its ribs (1-10) and the sternum (see the module
+    docstring, 3.) in place: {rib: (gap before, gap after, end moved, mm)}."""
+    from ..sdf import Grid
+    out = {}
+    for side in ("left", "right"):
+        c = f"costal_cartilage_{side}"
+        ribs = {n: f"rib{n}_{side}" for n in RIB_TIPS if f"rib{n}_{side}" in grids}
+        if c not in grids or not ribs:
+            continue
+        cc = grids[c]
+        gaps = {r: float(cc.eval(_surface(grids[r])).min()) for r in ribs.values()}
+        cutters = list(ribs.values()) + (["sternum"] if "sternum" in grids else [])
+        overlap = any(float(grids[o].eval(_surface(cc)).min()) < -0.1 for o in cutters)
+        if all(g <= JUNCTION_CONTACT for g in gaps.values()) and not overlap:
+            continue
+        cc = _pad(cc)
+        X = _points(cc)
+        disp, lip, moved = np.zeros_like(X), 0.0, {}
+        for r in ribs.values():
+            if gaps[r] <= JUNCTION_CONTACT:
+                moved[r] = 0.0
+                continue
+            P = _surface(grids[r])
+            d = cc.eval(P)
+            J = P[d < gaps[r] + 1.0]  # the rib's face nearest the cartilage
+            G = _grad(cc, J)
+            u = G.mean(0)
+            u /= np.linalg.norm(u)  # from the cartilage end towards the rib
+            end = (J - cc.eval(J)[:, None] * G).mean(0)  # nearest cartilage points
+            v = u * (gaps[r] + JUNCTION_OVERSHOOT)
+            s = np.linalg.norm(X - end, axis=1) / JUNCTION_REACH
+            disp += np.where(s < 1, (1 - s ** 2) ** 2, 0.0)[:, None] * v
+            lip = max(lip, float(np.linalg.norm(v)) * 1.54 / JUNCTION_REACH)  # max |grad w| = 1.54 / R
+            moved[r] = float(np.linalg.norm(v))
+        f = cc.eval(X - disp) / (1.0 + lip)  # stays 1-Lipschitz
+        for o in cutters:
+            f = np.maximum(f, -grids[o].eval(X))
+        grids[c] = Grid(f.reshape(cc.shape), cc.origin, cc.spacing, cc.name)
+        for r in ribs.values():
+            after = float(grids[c].eval(_surface(grids[r])).min())
+            out[r] = (gaps[r], after, moved[r])
+            log(f"  junction {r}-{c}: gap {gaps[r]:+.2f} -> {after:+.2f} mm (end moved {moved[r]:.1f} mm)")
+    return out
+
+
 def recorded_shifts(bone_dir):
     """{vertebra: total translation} recorded in template.json over all runs."""
     f = Path(bone_dir) / "template.json"
@@ -230,7 +308,8 @@ def normalise(bone_dir, dry_run=False, log=print):
     moves = vertebra_shifts(shifts, lm)
     record = {"method": "implicit.anatomy.template: vertebrae translated along the disc axes so that the "
                         "rest middle disc heights take the population means (implicit.anatomy.discs.NORMS); "
-                        "neighbouring bones carved to the facet joint space",
+                        "neighbouring bones carved to the facet joint space; costal cartilages joined to the "
+                        "ribs and the sternum",
               "discs": {discs.label(u, l): {"shift_mm": round(d, 3), "before_AMP_mm": [round(x, 2) for x in h],
                                             **({"note": n} if n else {})}
                         for u, l, d, _, h, n in shifts},
@@ -276,7 +355,11 @@ def normalise(bone_dir, dry_run=False, log=print):
     record["joints"] = {f"{u}-{l}": {"space_mm": joint_space(u, l), "clearance_before_mm": round(c0, 3),
                                      "clearance_after_mm": round(c, 3), "removed_mm3": round(v, 1)}
                         for (u, l), (c0, c, v) in carved.items()}
+    joined = close_junctions(grids, log)
+    record["junctions"] = {r: {"gap_before_mm": round(a, 2), "gap_after_mm": round(b, 2), "end_moved_mm": round(m, 2)}
+                           for r, (a, b, m) in joined.items()}
     changed = moved | {n for pair in carved for n in pair}
+    changed |= {f"costal_cartilage_{r.split('_')[1]}" for r in joined}
     if not changed:
         return record
     for lv in sorted(changed):
@@ -287,6 +370,8 @@ def normalise(bone_dir, dry_run=False, log=print):
         elif lv in moved:
             prev = meta.get("template_shift_mm", [0.0, 0.0, 0.0])
             meta["template_shift_mm"] = [round(float(a + b), 4) for a, b in zip(prev, moves[lv])]
+        if lv.startswith("costal_cartilage") and any(r.endswith(lv.split("_")[-1]) for r in joined):
+            meta["template_junctions_closed"] = "ends morphed to the ribs and cut at the rib and sternum surfaces"
         cut = [f"{a}-{b}" for a, b in carved if lv in (a, b)]
         if cut:
             meta["template_joints_carved"] = sorted(set(meta.get("template_joints_carved", []) + cut))

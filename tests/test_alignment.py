@@ -38,7 +38,7 @@ class TestAlignment(unittest.TestCase):
     def setUpClass(cls):
         d = json.loads((SUBJECT / "landmarks.json").read_text())
         cls.lm, cls.pelvis = d["landmarks"], d["pelvis"]
-        cls.data = al.chain(cls.lm, cls.pelvis)
+        cls.data = al.chain(cls.lm, cls.pelvis, ribcage=d["ribcage"])
         cls.b = cls.data["base"]
 
     def targets(self, **kw):
@@ -298,6 +298,13 @@ class TestAlignment(unittest.TestCase):
         self.assertEqual(set(lim["short"]), set(ref_lim["short"]))
         for k, v in ref_lim["short"].items():
             self.assertAlmostEqual(lim["short"][k], v, delta=1e-6, msg=k)
+        if "ribcage" in ref_lim:
+            rc, ref_rc = lim["ribcage"], ref_lim["ribcage"]
+            for k in ("sternum_mm", "sternum_deg"):
+                self.assertAlmostEqual(rc[k], ref_rc[k], delta=1e-6, msg=k)
+            self.assertEqual(set(rc["cartilage_mm"]), set(ref_rc["cartilage_mm"]))
+            for k, v in ref_rc["cartilage_mm"].items():
+                self.assertAlmostEqual(rc["cartilage_mm"][k], v, delta=1e-6, msg=k)
         for k in ref:
             np.testing.assert_allclose(got[k], ref[k], atol=1e-6, err_msg=f"{data['field']} {k}")
 

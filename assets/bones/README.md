@@ -19,7 +19,8 @@ The vertebrae of `vivaplus-50F` are translated (not rotated) from the model's po
 that the rest disc spaces have population middle heights, and the facet joints are carved
 (implicit Boolean cut) to the population joint space (2.0 mm lumbar, 1.3 mm thoracic); each rib
 moves with its vertebra, the sternum and costal cartilages with the rib ends, and the
-costovertebral joints are carved to 1.3 mm:
+costovertebral joints are carved to 1.3 mm; the costal cartilages are joined to ribs 1-10 and the
+sternum (ends morphed to the ribs, then cut at the bone surfaces):
 `python -m implicit.anatomy.template`, run by the converter; recorded in `template.json`
 and in each bone file's metadata (`template_shift_mm`, `template_joints_carved`).
 

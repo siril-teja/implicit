@@ -5,6 +5,41 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.18.0] - 2026-11-01
+
+### Added
+- **Connected rib cage** (roadmap step 1.6): the sternum is a rigid segment, the
+  least-squares fit (Horn 1987, unit quaternions) to where the ribs carry the ends
+  of ribs 1-7; the costal cartilages bend between ribs and sternum by a new rib
+  cage field (Field warp, "Carried by: rib cage"): a thin-plate spline through 5
+  points of each costochondral junction (ribs 1-10) and the sternocostal contacts.
+  Within the motion limits no junction opens or overlaps by more than 0.5 mm on a
+  test grid (about 0.1 mm typically); at extreme settings with ML = 0 up to about
+  1.2 mm (TK 60). Python and browser identical.
+- Rib cage landmarks (`implicit/anatomy/ribcage.py`, "ribcage" in landmarks.json):
+  costochondral and sternocostal junction samples.
+- Viewer: a **Rib cage** list in the Scene tab: the sternum's motion and each true
+  rib's cartilage length change (rib end to sternum) of 0.5 mm or more.
+- Literature: rows 27-33 (costal cartilage properties, the rib cage's effect on
+  thoracic stiffness, Horn's method).
+
+### Changed
+- Template: the costal cartilages are joined to ribs 1-10 and the sternum at rest
+  (`template.close_junctions`): a cartilage end short of its rib is moved to it by a
+  local morph (25 mm reach, 2.5 mm into the rib), then every cartilage is cut at the
+  rib and sternum surfaces, so they share the junction surface. VIVA+ 50F had gaps
+  of 0.3-1.5 mm (left) and 1.7-2.7 mm (right), and rib 1 left overlapped its
+  cartilage by 4 mm.
+- `alignment.chain` takes the rib cage landmarks; the solver gives a "sternum"
+  segment, a "tps_ribcage" table and a rib cage report (in "limits").
+
+### Notes
+- No in vivo data on costal cartilage deformation or sternum motion with spinal
+  posture were found; the sternum following the mean motion of the true rib ends is
+  an assumption, and cartilage length changes are reported, not limited.
+- Denser junction control points made the spline worse (close points with
+  different motions condition it badly); 5 spread points per junction are used.
+
 ## [0.17.0] - 2026-11-01
 
 ### Added

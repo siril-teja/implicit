@@ -49,6 +49,7 @@ The files in `assets/bones/vivaplus-50F/` are derived works (bone surfaces of
 the model, ribs, sternum and costal cartilages included, converted to signed
 distance fields; the thoracic and lumbar vertebrae, with their ribs, translated so
 that the disc spaces take population heights, the sternum and cartilages following
-the rib ends, and the facet and costovertebral joints carved to the population
-joint space, recorded in `template.json`) and stay under the LGPL-3.0-or-later;
+the rib ends, the facet and costovertebral joints carved to the population
+joint space, and the costal cartilages joined to the ribs and the sternum, recorded
+in `template.json`) and stay under the LGPL-3.0-or-later;
 the MIT License covers the code only. See [docs/LICENSING.md](docs/LICENSING.md).

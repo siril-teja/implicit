@@ -72,6 +72,8 @@ async function loadScene(scene, key) {
   $("#clearance").replaceChildren();
   $("#limitHead").hidden = true;
   $("#limits").replaceChildren();
+  $("#ribHead").hidden = true;
+  $("#ribcage").replaceChildren();
   limitsKey = null;
   $("#discHead").hidden = true;
   $("#discs").replaceChildren();
@@ -599,9 +601,13 @@ function updateDiscs(bodies) {
 // Targets the motion limits keep from being reached (Spine alignment ML on): the part
 // not reached, per target; the discs at a limit in the tooltip.
 function updateLimits(s) {
-  const rows = Solvers.shortfalls(s, state.values), key = JSON.stringify(rows);
+  const rows = Solvers.shortfalls(s, state.values), rib = Solvers.ribcageReport(s, state.values);
+  const key = JSON.stringify([rows, rib]);
   if (key === limitsKey) return;
   limitsKey = key;
+  $("#ribHead").hidden = !rib.length;
+  $("#ribcage").replaceChildren(...rib.map(([name, text, tip]) => el("div", { className: "clr", title: tip },
+    el("span", { textContent: name }), el("span", { textContent: text }))));
   $("#limitHead").hidden = !rows.length;
   $("#limits").replaceChildren(...rows.map(([name, text, at]) => el("div", {
     className: "clr hit", title: at.length ? `At their limit: ${at.join(", ")}` : "" },

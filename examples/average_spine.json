@@ -161,11 +161,11 @@
   "L5_lm_out": {"block": "output", "title": "L5 landmarks", "pos": [960, 3965], "in": {"body": "@L5_show", "name": "L5 landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
   "costal_cartilage_left": {"block": "bone", "title": "costal_cartilage_left", "pos": [2400, 0], "in": {"file": "../assets/bones/vivaplus-50F/costal_cartilage_left.npz"}},
   "costal_cartilage_left_smooth": {"block": "smooth", "title": "costal_cartilage_left smoothing", "pos": [2640, 0], "in": {"bone": "@costal_cartilage_left", "sigma": 0, "preserve": "@smooth_preserve"}},
-  "costal_cartilage_left_warp": {"block": "tps_warp", "title": "costal_cartilage_left warp", "pos": [2880, 0], "in": {"body": "@costal_cartilage_left_smooth", "alignment": "@spp"}},
+  "costal_cartilage_left_warp": {"block": "tps_warp", "title": "costal_cartilage_left warp", "pos": [2880, 0], "in": {"body": "@costal_cartilage_left_smooth", "alignment": "@spp", "carrier": "rib cage"}},
   "costal_cartilage_left_out": {"block": "output", "title": "costal_cartilage_left", "pos": [3120, 0], "in": {"body": "@costal_cartilage_left_warp", "name": "costal_cartilage_left", "color": "#b2d1e0", "group": "Rib cage", "visible": true}},
   "costal_cartilage_right": {"block": "bone", "title": "costal_cartilage_right", "pos": [2400, 110], "in": {"file": "../assets/bones/vivaplus-50F/costal_cartilage_right.npz"}},
   "costal_cartilage_right_smooth": {"block": "smooth", "title": "costal_cartilage_right smoothing", "pos": [2640, 110], "in": {"bone": "@costal_cartilage_right", "sigma": 0, "preserve": "@smooth_preserve"}},
-  "costal_cartilage_right_warp": {"block": "tps_warp", "title": "costal_cartilage_right warp", "pos": [2880, 110], "in": {"body": "@costal_cartilage_right_smooth", "alignment": "@spp"}},
+  "costal_cartilage_right_warp": {"block": "tps_warp", "title": "costal_cartilage_right warp", "pos": [2880, 110], "in": {"body": "@costal_cartilage_right_smooth", "alignment": "@spp", "carrier": "rib cage"}},
   "costal_cartilage_right_out": {"block": "output", "title": "costal_cartilage_right", "pos": [3120, 110], "in": {"body": "@costal_cartilage_right_warp", "name": "costal_cartilage_right", "color": "#b2d1e0", "group": "Rib cage", "visible": true}},
   "femur_left": {"block": "bone", "title": "femur_left", "pos": [1200, 0], "in": {"file": "../assets/bones/vivaplus-50F/femur_left.npz"}},
   "femur_left_smooth": {"block": "smooth", "title": "femur_left smoothing", "pos": [1440, 0], "in": {"bone": "@femur_left", "sigma": 0, "preserve": "@smooth_preserve"}},
@@ -288,6 +288,6 @@
   "sacrum_lm_out": {"block": "output", "title": "sacrum landmarks", "pos": [1920, 565], "in": {"body": "@sacrum_show", "name": "sacrum landmarks", "color": "#33d980", "group": "Landmarks", "visible": false}},
   "sternum": {"block": "bone", "title": "sternum", "pos": [2400, 2860], "in": {"file": "../assets/bones/vivaplus-50F/sternum.npz"}},
   "sternum_smooth": {"block": "smooth", "title": "sternum smoothing", "pos": [2640, 2860], "in": {"bone": "@sternum", "sigma": 0, "preserve": "@smooth_preserve"}},
-  "sternum_warp": {"block": "tps_warp", "title": "sternum warp", "pos": [2880, 2860], "in": {"body": "@sternum_smooth", "alignment": "@spp"}},
-  "sternum_out": {"block": "output", "title": "sternum", "pos": [3120, 2860], "in": {"body": "@sternum_warp", "name": "sternum", "color": "#e6d1ad", "group": "Rib cage", "visible": true}}
+  "sternum_align": {"block": "align", "title": "sternum align", "pos": [2880, 2860], "in": {"body": "@sternum_smooth", "alignment": "@spp", "segment": "sternum"}},
+  "sternum_out": {"block": "output", "title": "sternum", "pos": [3120, 2860], "in": {"body": "@sternum_align", "name": "sternum", "color": "#e6d1ad", "group": "Rib cage", "visible": true}}
 }}

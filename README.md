@@ -143,11 +143,17 @@ python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagge
 ## Rib cage
 
 The average spine has the VIVA+ 50F ribs (1-12, both sides), sternum and costal
-cartilages. Each rib follows its vertebra with the alignment sliders (Align block,
-segment T1 ... T12); the sternum and costal cartilages are carried by the
-soft-tissue field (Field warp), like the spine curve. That field only follows the
-spine, so with large slider changes the sternum and cartilages drift from the rib ends
-(roadmap 1.6: a connected rib cage). The clearance table lists every
+cartilages, joined into one connected structure. Each rib follows its vertebra with
+the alignment sliders (Align block, segment T1 ... T12). The sternum moves rigidly
+(Align, segment "sternum"): the least-squares fit to where the ribs carry the ends of
+ribs 1-7. The costal cartilages bend between them (Field warp, carried by "rib
+cage": a thin-plate spline through their junctions with the ribs and the sternum),
+so both junctions stay closed: within the motion limits no junction opens or
+overlaps by more than 0.5 mm (about 0.1 mm typically; up to about 1 mm at extreme
+settings with ML = 0). The template's cartilages are joined to ribs 1-10 and the
+sternum at rest (VIVA+ 50F had gaps of up to 2.7 mm). The Scene tab's **Rib cage**
+list gives the sternum's motion and each true rib's cartilage length change
+(`implicit/anatomy/ribcage.py`). The clearance table lists every
 rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
 in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
 the concave side into each other (with ML = 0), which rib motion (roadmap 2.7) and
