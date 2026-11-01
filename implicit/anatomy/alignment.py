@@ -64,6 +64,10 @@ vertebra above it and everything higher turn with it.
     others; the part no disc can take is reported (solve: "limits"). The balance bend
     is spread over its discs the same way; the AR tent of a curve is scaled down until
     no disc exceeds its axial range;
+  - the sternum (with rib cage landmarks): rigid, the least-squares fit to where the
+    ribs carry the ends of the true ribs (implicit.anatomy.ribcage); the costal
+    cartilages bend between ribs and sternum by the rib cage field ("tps_ribcage": a
+    thin-plate spline through their junction points);
   - CP: each disc's lateral bend carries CP x motion.COUPLING axial rotation in the
     direction of the bend (thoracic 0.40, lumbar 0), carried by the vertebrae above
     (still a turn about each vertebra's own axis).
@@ -109,7 +113,7 @@ import numpy as np
 
 from ..expr import SOLVERS
 from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_ITERS, POLY_RELAX
-from . import motion, rotation
+from . import motion, ribcage, rotation
 from .convert import VERTEBRAE, load_bone
 
 CURVE_STEPS = 4                                    # spine curve samples per span between centres
@@ -214,8 +218,9 @@ def _axes(e):
     return (u @ vt).T.tolist()
 
 
-def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0)):
-    """Data of the chain model (scene frame: positions minus ``offset``), or None.
+def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0), ribcage=None):
+    """Data of the chain model (scene frame: positions minus ``offset``), or None;
+    ``ribcage``: the rib cage landmarks (implicit.anatomy.ribcage), when present.
 
     Discs run from L5-S1 upwards; disc j is below ``levels[j]``.
     """
@@ -273,11 +278,42 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0)):
             "levels": levels, "discs": discs, "frames": frames, "tps_points": tps,
             "curves": {k: list(c) for k, c in CURVES.items() if all(lv in levels for lv in c)},
             "curve": curve}
+    rc = _ribcage_data(ribcage, levels, pt)
+    if rc:
+        data["ribcage"] = rc
     data["measured"] = measure_chain(data, landmarks)
     # The knobs start at these (0.1 deg / mm); targets are taken relative to them, so
     # the starting values move nothing.
     data["base"] = {k: round(v, 1) for k, v in data["measured"].items()}
     return data
+
+
+def _ribcage_data(rc, levels, pt):
+    """Rib cage data of the chain: "tips" (rest junction centroids of the true ribs,
+    each with its rib's segment: the sternum fit), "points" (the rib cage field's
+    control points: every costochondral junction point with its rib's segment, the
+    sternocostal ones with "sternum") and "cartilage" (per true rib: its junction
+    centroid and the nearest sternocostal point of its side, for the length report)."""
+    if not rc:
+        return None
+    tips, points, cart = [], [], []
+    for name, j in rc["junctions"].items():
+        seg = f"T{j['rib']}"
+        if seg not in levels:
+            continue
+        points += [{"segment": seg, "point": pt(q)} for q in j["points"]]
+        if j["rib"] <= ribcage.STERNAL_RIBS:
+            tips.append({"segment": seg, "point": pt(j["center"])})
+            side = name.split("_")[1]
+            S = np.asarray(rc["sternal"].get(side, []), float)
+            if len(S):
+                s = S[np.argmin(np.linalg.norm(S - np.asarray(j["center"]), axis=1))]
+                cart.append({"label": name, "segment": seg, "rib": pt(j["center"]), "sternum": pt(s)})
+    if len(tips) < 3:
+        return None
+    for side, S in rc["sternal"].items():
+        points += [{"segment": "sternum", "point": pt(q)} for q in S]
+    return {"tips": tips, "points": points, "cartilage": cart}
 
 
 def _pt_ss(m, n, H):
@@ -472,6 +508,9 @@ def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, 
     pairs = [(q["point"], _apply(out[q["segment"]], q["point"])) for q in data["tps_points"]]
     res["tps"] = tps_table(pairs)
     res["chain"] = chain_table(data, out)
+    if "ribcage" in data:
+        res["tps_ribcage"] = tps_table([(q["point"], _apply(out[q["segment"]], q["point"]))
+                                        for q in data["ribcage"]["points"]])
     G = grid_points(data["grid"])
     D = _forward(data, out)(G) - G
     res["grid"] = np.column_stack([D, np.linalg.norm(D, axis=1)]).ravel().tolist()
@@ -588,6 +627,19 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
         f = data["frames"][lv]
         out[lv] = _compose(out[lv], _rot(f["center"], f["axes"][2], acc))
     out.update(legs=legs, pelvis=pelvis, sacrum=sacrum)
+    rc = data.get("ribcage")
+    if rc:  # the sternum: least-squares fit to the true rib ends (implicit.anatomy.ribcage)
+        out["sternum"] = ribcage.horn([q["point"] for q in rc["tips"]],
+                                      [_apply(out[q["segment"]], q["point"]) for q in rc["tips"]])
+    if report is not None and rc:
+        dist = lambda a, b: math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+        R, t = out["sternum"]
+        c = [sum(q["point"][i] for q in rc["tips"]) / len(rc["tips"]) for i in range(3)]
+        report["ribcage"] = {
+            "sternum_mm": dist(_apply(out["sternum"], c), c),
+            "sternum_deg": math.degrees(math.acos(max(-1.0, min(1.0, (R[0][0] + R[1][1] + R[2][2] - 1) / 2)))),
+            "cartilage_mm": {q["label"]: dist(_apply(out[q["segment"]], q["rib"]), _apply(out["sternum"], q["sternum"]))
+                             - dist(q["rib"], q["sternum"]) for q in rc["cartilage"]}}
     if report is not None:
         deg = {k: (v if k == "CB" else math.degrees(v)) for k, v in short.items()}
         report["short"] = deg

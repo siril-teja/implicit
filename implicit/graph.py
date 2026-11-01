@@ -716,7 +716,7 @@ class AlignmentV:
         if self.table is None:
             self.table = {}
         if key not in self.table:
-            width = {"tps": 3, "chain": 7, "flow_segs": 512}.get(key) or {
+            width = {"tps": 3, "tps_ribcage": 3, "chain": 7, "flow_segs": 512}.get(key) or {
                 "grid": self.solver.data["grid"]["n"][0], "flow_cells": self.solver.data["flow"]["n"][0]}[key]
             self.table[key] = ComputedTexture(f"{self.solver.id}_{key}", self.solver, key, width)
         return self.table[key]
@@ -728,10 +728,20 @@ class AlignmentV:
         n = len(self.solver.data["tps_points"]) if kind == "tps" else 1 + len(self.solver.data["levels"])
         return kind, self.texture("tps" if kind == "tps" else "chain"), n
 
-    def displacement(self, now):
+    @property
+    def ribcage_field(self):
+        """The rib cage field (costal cartilages): a thin-plate spline through the rib and
+        sternum junctions (implicit/anatomy/ribcage.py), as (kind, table, size)."""
+        rc = self.solver.data.get("ribcage")
+        if rc is None:
+            raise GraphError("no rib cage landmarks for this subject (costal cartilages and ribs; "
+                             "run python -m implicit.anatomy.landmarks on its folder)")
+        return "tps", self.texture("tps_ribcage"), len(rc["points"])
+
+    def displacement(self, now, carrier="soft tissue"):
         """Largest control point displacement (mm), now or over the slider ranges."""
         from .anatomy.alignment import _apply
-        pts = self.solver.data["tps_points"]
+        pts = self.solver.data["ribcage"]["points"] if carrier == "rib cage" else self.solver.data["tps_points"]
         out = 0.0
         for res in [self.solver.result()] if now else self.solver.samples():
             for q in pts:
@@ -811,7 +821,7 @@ def _spinopelvic(x, node):
 def _align(x, node):
     """Move a bone (and its vertebra frame) rigidly as one segment of a spine alignment."""
     a, seg, b, v = x["alignment"], x["segment"], x["body"], x["vertebra"]
-    tables = ("tps", "chain", "grid", "flow_cells", "flow_segs", "limits")
+    tables = ("tps", "tps_ribcage", "chain", "grid", "flow_cells", "flow_segs", "limits")
     if seg not in a.solver.result() or seg in tables:
         raise GraphError(f"segment {seg!r} is not in this alignment "
                          f"({', '.join(k for k in a.solver.result() if k not in tables)})")
@@ -858,18 +868,21 @@ def _spine_curve(x, node):
 
 
 @block("tps_warp", "Field warp", "Anatomy",
-       [BODY(label="Body"), Port("alignment", "alignment", label="Alignment")],
+       [BODY(label="Body"), Port("alignment", "alignment", label="Alignment"),
+        Port("carrier", "choice", "soft tissue", label="Carried by", choices=("soft tissue", "rib cage"))],
        [Port("body", "body", label="Body")])
 def _tps_warp(x, node):
     """Carry a soft structure (spine curve, discs, ligaments) with the alignment, by the
     soft-tissue field chosen on the Spine alignment block (thin-plate spline or
-    polyrigid); both move exactly with the bones."""
-    a, b = x["alignment"], x["body"]
-    kind, table, n = a.field
+    polyrigid); both move exactly with the bones. "rib cage": the costal cartilages,
+    by a thin-plate spline through their junctions with the ribs and the sternum, so
+    they stay joined to both (implicit/anatomy/ribcage.py)."""
+    a, b, carrier = x["alignment"], x["body"], x["carrier"]
+    kind, table, n = a.ribcage_field if carrier == "rib cage" else a.field
 
     def bounds(now):
         bb = _child(b, now)
-        return None if bb is None else _grow(bb, a.displacement(now) + 2.0)
+        return None if bb is None else _grow(bb, a.displacement(now, carrier) + 2.0)
     return {"body": Field(Warp(b.sdf, kind, table, n), bounds)}
 
 
@@ -1017,7 +1030,7 @@ def _spine(ctx, f):
         lj = path.parent / "landmarks.json"
         d = json.loads(lj.read_text()) if lj.exists() else {}
         cache[path.parent] = alignment.chain(d.get("landmarks", {}), d.get("pelvis"),
-                                             getattr(ctx, "offset", np.zeros(3)))
+                                             getattr(ctx, "offset", np.zeros(3)), d.get("ribcage"))
     return cache[path.parent]
 
 

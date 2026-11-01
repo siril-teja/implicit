@@ -417,7 +417,7 @@ const Graph = (() => {
   function align(id, x, params) {
     const a = x.alignment, seg = x.segment, s = a.solver;
     const res = Solvers.run(s, (n) => a.knobs[n].value);
-    if (!(seg in res) || ["tps", "chain", "grid", "flow_cells", "flow_segs", "limits"].includes(seg)) throw new Error(`segment "${seg}" is not in this alignment`);
+    if (!(seg in res) || ["tps", "tps_ribcage", "chain", "grid", "flow_cells", "flow_segs", "limits"].includes(seg)) throw new Error(`segment "${seg}" is not in this alignment`);
     if (!a.motions[seg]) {
       a.motions[seg] = res[seg].map((v, i) => {
         const p = computedParam(s, `${s.id}_${seg}_${i}`, seg, i, v, sampled(a).map((r) => r[seg][i]), params);
@@ -497,7 +497,7 @@ const Graph = (() => {
   function tableParam(a, key, params) {
     const s = a.solver;
     if (!a.tables[key]) {
-      const width = { tps: 3, chain: 7, flow_segs: 512 }[key] || { grid: s.data.grid.n[0], flow_cells: s.data.flow.n[0] }[key];
+      const width = { tps: 3, tps_ribcage: 3, chain: 7, flow_segs: 512 }[key] || { grid: s.data.grid.n[0], flow_cells: s.data.flow.n[0] }[key];
       a.tables[key] = { name: `${s.id}_${key}`, uniform: `u_${s.id}_${key}`, value: 0, default: 0, min: 0, max: 0, step: 0,
         label: `${s.id}_${key}`, unit: "", node: s.id, port: key, texture: { solver: s.id, key, width }, solver: s };
       params.push(a.tables[key]);
@@ -505,18 +505,25 @@ const Graph = (() => {
     return a.tables[key];
   }
   // The soft-tissue field: the GLSL of its inverse map at a point (as Warp in sdf.py).
-  function fieldInverse(a, params) {
-    const d = a.solver.data, tps = d.field !== "polyrigid";
+  function fieldInverse(a, params, carrier = "soft tissue") {
+    const d = a.solver.data;
+    if (carrier === "rib cage") {
+      if (!d.ribcage) throw new Error("no rib cage landmarks for this subject");
+      const u = tableParam(a, "tps_ribcage", params).uniform;
+      return (p) => `tpsInv(${p}, ${u}, ${d.ribcage.points.length})`;
+    }
+    const tps = d.field !== "polyrigid";
     const u = tableParam(a, tps ? "tps" : "chain", params).uniform;
     const n = tps ? d.tps_points.length : 1 + d.levels.length;
     return (p) => `${tps ? "tpsInv" : "polyInv"}(${p}, ${u}, ${n})`;
   }
   // Largest control point displacement, now or over the slider ranges.
-  function fieldDisp(a, iv) {
+  function fieldDisp(a, iv, carrier = "soft tissue") {
     const s = a.solver;
     const res = iv.now ? [Solvers.run(s, (nm) => iv({ param: a.knobs[nm] })[0])] : sampled(a);
+    const pts = carrier === "rib cage" ? s.data.ribcage.points : s.data.tps_points;
     let mx = 0;
-    for (const r of res) for (const q of s.data.tps_points) {
+    for (const r of res) for (const q of pts) {
       const y = rigNp(r[q.segment], q.point);
       mx = Math.max(mx, Math.hypot(y[0] - q.point[0], y[1] - q.point[1], y[2] - q.point[2]));
     }
@@ -524,8 +531,8 @@ const Graph = (() => {
   }
   const WARP_LIP = 0.8;
   function tpsWarp(id, x, params) {
-    const a = x.alignment, inv = fieldInverse(a, params);
-    const bf = (iv) => { const bb = child(x.body, iv); return bb ? grow(bb, fieldDisp(a, iv) + 2.0) : null; };
+    const a = x.alignment, carrier = x.carrier || "soft tissue", inv = fieldInverse(a, params, carrier);
+    const bf = (iv) => { const bb = child(x.body, iv); return bb ? grow(bb, fieldDisp(a, iv, carrier) + 2.0) : null; };
     const ops = [["var", "vec3", inv("$p")], ["sub", "body", "$0"], ["var", "float", `${glslFloat(WARP_LIP)} * $1`]];
     return { node: id, inputs: { body: x.body }, bf, tmpl: { ops, out: "$2" } };
   }

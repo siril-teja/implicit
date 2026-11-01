@@ -24,7 +24,8 @@ differs is the **obligations** they place on you, so the policy has three tiers:
 | SciPy (distance transforms, conversion only) | BSD-3 | ✅ |
 | nibabel (NIfTI reading, conversion only) | MIT | ✅ |
 | Viewer: raw WebGL2, no JS libraries | n/a (own code) | ✅ |
-| GitHub Actions (checkout, setup-python, pages actions) | MIT | ✅ (CI only, not shipped) |
+| GitHub Actions (checkout, setup-python, setup-node, pages actions) | MIT | ✅ (CI only, not shipped) |
+| Playwright with its bundled Chromium (GPU check) | Apache-2.0 (Chromium: BSD-3 and others) | ✅ (CI only, not shipped) |
 
 ## Candidates for upcoming phases
 
@@ -85,11 +86,21 @@ partners: [vivaplus.readthedocs.io](https://vivaplus.readthedocs.io),
 Licence: **LGPL-3.0-or-later** (stated in the release's `LICENSE.md` and on Zenodo).
 
 - Commercial use, modification and redistribution are allowed (⚠️ Review tier).
-- The bone files here are modified (converted) VIVA+ data, so they stay under
-  LGPL-3.0-or-later and their changes are published (this repository does that).
+- The bone files here are modified VIVA+ data (converted to distance fields, then
+  corrected by `implicit/anatomy/template.py`: vertebrae and ribs translated, joints
+  carved, costal cartilages joined to the ribs and sternum, all recorded in
+  `template.json`), so they stay under LGPL-3.0-or-later and their changes are
+  published (this repository does that).
   The code that reads them stays MIT.
 - **Open question for counsel:** whether a model built on these bones (e.g. an
   FE model shipped to a customer) is a derivative of the LGPL data that must
   also be shared under the LGPL. If that matters, use bones from CC BY data
   (e.g. TotalSegmentator, as in `assets/bones/s0751`) for proprietary work.
 - Attribution is shown in the viewer and in `assets/bones/vivaplus-50F/ATTRIBUTION.txt`.
+
+## Values from the literature
+
+Numbers taken from published papers (ranges of motion, disc heights, joint spaces,
+coupling ratios, material properties) are facts, cited in the code and in
+`docs/LITERATURE.md`; no tables or figures are copied. Supplementary data files
+(e.g. Wilke et al. 2025) are read for their values and are not redistributed.

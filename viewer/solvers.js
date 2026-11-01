@@ -93,6 +93,30 @@ const Solvers = (() => {
     for (const j of act) out[j] = sgn * Math.min(sc * weights[j], caps[j]);
     return [out, 0];
   }
+  // As ribcage.py horn: least-squares rigid motion P -> Q (unit quaternions, power iteration).
+  const POWER_STEPS = 60;
+  function horn(P, Q) {
+    const n = P.length, cp = [0, 1, 2].map((i) => P.reduce((t, p) => t + p[i], 0) / n);
+    const cq = [0, 1, 2].map((i) => Q.reduce((t, q) => t + q[i], 0) / n);
+    const S = [0, 1, 2].map((i) => [0, 1, 2].map((j) => P.reduce((t, p, k) => t + (p[i] - cp[i]) * (Q[k][j] - cq[j]), 0)));
+    const [[xx, xy, xz], [yx, yy, yz], [zx, zy, zz]] = S;
+    const N = [[xx + yy + zz, yz - zy, zx - xz, xy - yx], [yz - zy, xx - yy - zz, xy + yx, zx + xz],
+      [zx - xz, xy + yx, -xx + yy - zz, yz + zy], [xy - yx, zx + xz, yz + zy, -xx - yy + zz]];
+    const shift = P.reduce((t, p, k) => t + Math.sqrt([0, 1, 2].reduce((u, i) => u + (p[i] - cp[i]) ** 2, 0)
+      * [0, 1, 2].reduce((u, i) => u + (Q[k][i] - cq[i]) ** 2, 0)), 0) + 1e-9;
+    let v = [1, 0, 0, 0];
+    for (let it = 0; it < POWER_STEPS; it++) {
+      const w = [0, 1, 2, 3].map((i) => N[i].reduce((t, x, j) => t + x * v[j], 0) + shift * v[i]);
+      const s = Math.sqrt(w.reduce((t, x) => t + x * x, 0));
+      v = w.map((x) => x / s);
+    }
+    const [a, b, c, d] = v;
+    const R = [[a * a + b * b - c * c - d * d, 2 * (b * c - a * d), 2 * (b * d + a * c)],
+      [2 * (b * c + a * d), a * a - b * b + c * c - d * d, 2 * (c * d - a * b)],
+      [2 * (b * d - a * c), 2 * (c * d + a * b), a * a - b * b - c * c + d * d]];
+    const Rc = mv(R, cp);
+    return [R, [0, 1, 2].map((i) => cq[i] - Rc[i])];
+  }
   const PLANES = ["FE", "LB", "AR"];
   const caps = (discs, p, on) => discs.map((d) => (on && d.rom ? rad(d.rom[p]) / 2 : Infinity));
   function weights(discs, uppers, sign) {
@@ -127,6 +151,7 @@ const Solvers = (() => {
     const pairs = d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]);
     res.tps = tpsTable(pairs);
     res.chain = chainTable(d, out);
+    if (d.ribcage) res.tps_ribcage = tpsTable(d.ribcage.points.map((q) => [q.point, apply(out[q.segment], q.point)]));
     const G = gridPoints(d.grid), grid = new Array(G.length * 4), fwd = forward(d, out);
     G.forEach((g, i) => {
       const y = fwd(g), dd = [y[0] - g[0], y[1] - g[1], y[2] - g[2]];
@@ -273,6 +298,16 @@ const Solvers = (() => {
     let acc = 0;
     levels.forEach((lv, i) => { acc += relAx[i]; const f = d.frames[lv]; out[lv] = compose(out[lv], rot(f.center, f.axes[2], acc)); });
     Object.assign(out, { legs, pelvis, sacrum });
+    const rc = d.ribcage;
+    if (rc) out.sternum = horn(rc.tips.map((q) => q.point), rc.tips.map((q) => apply(out[q.segment], q.point)));
+    if (report && rc) {
+      const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      const R = out.sternum[0], c = [0, 1, 2].map((i) => rc.tips.reduce((t, q) => t + q.point[i], 0) / rc.tips.length);
+      report.ribcage = { sternum_mm: dist(apply(out.sternum, c), c),
+        sternum_deg: deg(Math.acos(Math.max(-1, Math.min(1, (R[0][0] + R[1][1] + R[2][2] - 1) / 2)))),
+        cartilage_mm: Object.fromEntries(rc.cartilage.map((q) => [q.label,
+          dist(apply(out[q.segment], q.rib), apply(out.sternum, q.sternum)) - dist(q.rib, q.sternum)])) };
+    }
     if (report) {
       report.short = Object.fromEntries(Object.entries(short).map(([k, x]) => [k, k === "CB" ? x : deg(x)]));
       report.at_limit = [];
@@ -390,6 +425,27 @@ const Solvers = (() => {
   // Targets the motion limits keep from being reached, at the current values:
   // [[target, text, discs at a limit]] per spinopelvic solver (report of motions()).
   const SHORT_NAMES = { LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
+  // Rib cage at the current values: [[label, text, tooltip]]: the sternum's motion and
+  // each true rib's cartilage length change (rib end to sternum) beyond 0.5 mm.
+  function ribcageReport(scene, values) {
+    const out = [];
+    if (!scene || !scene.solvers) return out;
+    const byName = Object.fromEntries(scene.params.map((p) => [p.name, p]));
+    const value = (n) => (n in values ? values[n] : byName[n] ? byName[n].value : NaN);
+    for (const s of Object.values(scene.solvers)) {
+      if (s.kind !== "spinopelvic") continue;
+      const rc = (run(s, value).limits || {}).ribcage;
+      if (!rc || rc.sternum_mm < 0.5) continue;
+      out.push(["sternum", `${rc.sternum_mm.toFixed(1)} mm · ${rc.sternum_deg.toFixed(1)} deg`,
+        "rigid, fitted to the ends of ribs 1-7 (least squares)"]);
+      for (const [k, x] of Object.entries(rc.cartilage_mm)) {
+        if (Math.abs(x) >= 0.5) out.push([`cartilage ${k.replace("rib", "").replace("_", " ")}`,
+          `${x > 0 ? "+" : ""}${x.toFixed(1)} mm`, "change of the rib end to sternum distance"]);
+      }
+    }
+    return out;
+  }
+
   function shortfalls(scene, values) {
     const out = [];
     if (!scene || !scene.solvers) return out;
@@ -458,7 +514,7 @@ const Solvers = (() => {
     return out;
   }
 
-  return { run, samples, apply: applyScene, tables, shortfalls, KINDS, fill };
+  return { run, samples, apply: applyScene, tables, shortfalls, ribcageReport, KINDS, fill, horn };
 })();
 
 if (typeof module !== "undefined") module.exports = Solvers;

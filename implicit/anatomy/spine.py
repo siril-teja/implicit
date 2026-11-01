@@ -178,7 +178,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     lm_file = bone_dir / "landmarks.json"
     doc = json.loads(lm_file.read_text()) if lm_file.exists() else {"landmarks": {}}
     levels = set(doc["landmarks"])
-    spine = chain(doc["landmarks"], doc.get("pelvis")) if "sacrum" in loaded else None
+    spine = chain(doc["landmarks"], doc.get("pelvis"), ribcage=doc.get("ribcage")) if "sacrum" in loaded else None
     nodes = {"smooth_preserve": {"block": "number", "title": "Keep bone volume", "pos": [0, -110],
                                  "in": {"value": 1, "min": 0, "max": 1, "step": 1,
                                         "label": "Smoothing keeps bone volume (1 = on)"}}}
@@ -190,6 +190,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         for n in range(1, 13):  # each rib moves with its vertebra (costovertebral joints)
             if f"T{n}" in spine["levels"]:
                 segments.update({f"rib{n}_left": f"T{n}", f"rib{n}_right": f"T{n}"})
+        if "ribcage" in spine:  # the sternum is rigid, fitted to the rib ends (ribcage.py)
+            segments["sternum"] = "sternum"
         knobs = {}
         start = {"PO": 0.0, "ML": 1.0, "CP": 1.0, **({"AR": 0.3} if spine["curves"] else {})}
         for i, (k, (lo, hi)) in enumerate(KNOBS.items()):
@@ -248,10 +250,12 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                               **({"vertebra": vert} if vert else {})}}
             src = f"@{bname}_align"
             vert = f"@{bname}_align.vertebra" if vert else None
-        if spine and kind in ("sternum", "cartilage"):  # carried by the soft-tissue field
+        if spine and kind in ("sternum", "cartilage") and not seg:  # carried by a field
             x += 240
+            carrier = "rib cage" if kind == "cartilage" and "ribcage" in spine else "soft tissue"
             nodes[f"{bname}_warp"] = {"block": "tps_warp", "title": f"{bname} warp", "pos": [x, y],
-                                      "in": {"body": src, "alignment": "@spp"}}
+                                      "in": {"body": src, "alignment": "@spp",
+                                             **({"carrier": carrier} if carrier != "soft tissue" else {})}}
             src = f"@{bname}_warp"
         right = x + 240
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],

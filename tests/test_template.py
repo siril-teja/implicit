@@ -27,6 +27,7 @@ class TestTemplate(unittest.TestCase):
         for u, l, d, *_ in template.disc_shifts(self.lm, grids):
             self.assertLess(abs(d), template.TOL, f"{u}-{l}")
         self.assertEqual(template.carve_joints(dict(grids), log=lambda *a: None), {})
+        self.assertEqual(template.close_junctions(dict(grids), log=lambda *a: None), {})
 
     def test_joint_spaces(self):
         """Every pair of neighbouring bones at least its joint space apart (2.0 mm lumbar,
@@ -71,7 +72,7 @@ class TestTemplate(unittest.TestCase):
         for n in (1, 6, 12):
             for side in ("left", "right"):
                 meta = load_bone(SUBJECT / f"rib{n}_{side}.npz")[1]
-                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=1e-3)
+                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=template.RIB_TOL)
         for part in ("sternum", "costal_cartilage_left", "costal_cartilage_right"):
             self.assertIn("template_carried", load_bone(SUBJECT / f"{part}.npz")[1])
         grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
@@ -80,6 +81,22 @@ class TestTemplate(unittest.TestCase):
             g = grids[v].eval(template._points(grids[rib])).reshape(f.shape)
             near = np.abs(f) < 0.5 * grids[rib].spacing
             self.assertGreaterEqual(float((f + g)[near].min()), template.joint_space(v, rib) - 0.1, f"{v}-{rib}")
+
+    def test_costal_junctions_closed(self):
+        """Every costal cartilage touches ribs 1-10 of its side and the sternum, and
+        overlaps none of them (cut at their surfaces): on each bone's surface samples
+        the cartilage's field is within a half cell, never deeper (to the 0.1 mm the
+        values are stored to)."""
+        grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
+        for side in ("left", "right"):
+            cc = grids[f"costal_cartilage_{side}"]
+            C = template._surface(cc)
+            for bone in [f"rib{n}_{side}" for n in template.RIB_TIPS] + ["sternum"]:
+                g = grids[bone]
+                d = cc.eval(template._surface(g))
+                self.assertLess(float(d.min()), 0.2, f"{bone}: gap")  # touching
+                self.assertGreater(float(g.eval(C).min()), -0.5 * cc.spacing - 0.1, f"{bone}: overlap")
+            self.assertIn("template_junctions_closed", load_bone(SUBJECT / f"costal_cartilage_{side}.npz")[1])
 
     def test_vertebra_shifts_add_up(self):
         ax = np.array([0.0, 0.0, 1.0])
