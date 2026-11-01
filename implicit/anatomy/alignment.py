@@ -24,6 +24,10 @@ an upward normal n is atan2(n_y, n_z) (+ anterior), its coronal tilt atan2(n_x, 
       (upper end vertebra superior to lower end vertebra inferior endplate; + convex
       to the right), between chosen end vertebrae, with a chosen apex
   CB  coronal balance (mm): T1 body centre right of the S1 endplate centre
+  SV  sagittal balance (mm): T1 body centre anterior of the S1 posterior superior
+      corner (the sagittal vertical axis measured from T1; no C7 in this model)
+  TPA T1 pelvic angle: angle at the hip axis centre H from the line to the S1 endplate
+      centre to the line to the T1 body centre (Protopsaltis 2014)
   PO  pelvic obliquity: the pelvis turned about the antero-posterior axis through
       H, + right side up
   AR  apical rotation gain: axial rotation of a curve's apex vertebra per degree of
@@ -124,10 +128,20 @@ LORDOSIS = [f"L{i}" for i in range(1, 6)]          # upper vertebrae of the LL d
 KYPHOSIS = [f"T{i}" for i in range(4, 12)]         # upper vertebrae of the TK discs
 KNOBS = {"PI": (30.0, 90.0), "PT": (-10.0, 45.0), "LL": (0.0, 90.0), "TK": (0.0, 80.0),
          "MT": (-90.0, 90.0), "TL": (-90.0, 90.0), "AR": (0.0, 1.0), "PO": (-20.0, 20.0), "CB": (-80.0, 80.0),
-         "ML": (0.0, 1.0), "CP": (0.0, 1.0)}
+         "ML": (0.0, 1.0), "CP": (0.0, 1.0), "SV": (-100.0, 150.0), "CM": (0.0, 2.0)}
+COMPENSATION = {1: "PT", 2: "TK"}  # CM: none (0), pelvic retroversion (1), thoracic flattening (2)
+# Roussouly sagittal types: mean PI and PT of asymptomatic adults per type (Laouissat et
+# al. 2017), LL from PI by the regression of Le Huec & Hasegawa 2016 (LL = 0.54 PI +
+# 27.6), rounded to the 0.5 deg slider step. A preset is another person's shape, not a
+# posture: it sets ML = 0 (shape changes: roadmap 3.2, 3.3).
+ROUSSOULY = {name: {"PI": pi, "PT": ptl, "LL": round(2 * (0.54 * pi + 27.6)) / 2, "ML": 0.0}
+             for name, pi, ptl in (("Roussouly type 1", 39.0, 10.0), ("Roussouly type 2", 41.0, 10.0),
+                                   ("Roussouly type 3", 53.0, 13.0), ("Roussouly type 3 AP", 48.0, 4.0),
+                                   ("Roussouly type 4", 62.0, 12.0))}
 PLANES = ("FE", "LB", "AR")                        # motion.ROM columns
 BAL_KNEE, BAL_MAX = 20.0, 30.0   # deg: coronal balance bend of the fractional discs, exact up to the knee
 BAL_SEARCH = 85.0                 # deg: interval searched for the balance before the limit
+ILLINOIS_STEPS = 40               # global balance solve (_illinois): most iterations
 CURVES = {"MT": ("T5", "T8", "T12"), "TL": ("T12", "L1", "L4")}  # default (upper end, apex, lower end)
 TPS_ARM = 15.0                                     # mm, control point offsets from a body centre
 GRID_STEP, GRID_PAD = 15.0, (60.0, 60.0, 20.0)     # mm, field display grid around the spine curve
@@ -276,7 +290,9 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0), ribcage=None):
     seeds = seeds[np.min(np.linalg.norm(seeds[:, None] - C[None], axis=2), axis=1) <= FLOW_SEED_REACH]
     flo = lo - FLOW_PAD
     fn = np.ceil((hi + FLOW_PAD - flo) / FLOW_CELL).astype(int)
+    s1c = s1["sup"].get("corners", {})
     data = {"hip": H, "si": SI, "s1_point": pt(s1["sup"]["point"]), "s1_normal": list(s1["sup"]["normal"]),
+            "s1_posterior": pt(s1c.get("posterior", s1["sup"]["point"])),
             "planes": planes, "field": "tps", "grid": {"lo": lo.tolist(), "step": GRID_STEP, "n": n.tolist()},
             "flow": {"seeds": seeds.tolist(), "lo": flo.tolist(), "cell": FLOW_CELL, "n": fn.tolist()},
             "levels": levels, "discs": discs, "frames": frames, "tps_points": tps,
@@ -291,6 +307,7 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0), ribcage=None):
     # The knobs start at these (0.1 deg / mm); targets are taken relative to them, so
     # the starting values move nothing.
     data["base"] = {k: round(v, 1) for k, v in data["measured"].items()}
+    data["presets"] = ROUSSOULY
     return data
 
 
@@ -346,7 +363,23 @@ def measure_chain(data, landmarks):
             out[k] = coronal_cobb(landmarks, u, lo)
     top = data["levels"][-1]
     out["CB"] = landmarks[top]["body_center"][0] - landmarks["S1"]["sup"]["point"][0]
+    off = np.asarray(data["s1_point"], float) - np.asarray(landmarks["S1"]["sup"]["point"], float)  # scene frame
+    t1 = (np.asarray(landmarks[top]["body_center"], float) + off).tolist()
+    out["SV"], out["TPA"] = _balance(data, t1, data["s1_posterior"], data["s1_point"])
     return out
+
+
+def _balance(data, t1, s1_post, s1_mid):
+    """(SV, TPA) from the T1 body centre, the S1 posterior superior corner and the S1
+    endplate centre (scene frame; the hip axis centre H is data["hip"]):
+      SV  sagittal offset of T1 (mm): T1 anterior of the posterior superior corner of
+          S1 (the sagittal vertical axis measured from T1: no C7 in this model);
+      TPA T1 pelvic angle (deg): angle at H from the H -> S1 endplate centre line to the
+          H -> T1 line, in the sagittal plane, + with T1 anterior (Protopsaltis 2014)."""
+    H = data["hip"]
+    a1 = math.atan2(t1[1] - H[1], t1[2] - H[2])
+    a2 = math.atan2(s1_mid[1] - H[1], s1_mid[2] - H[2])
+    return t1[1] - s1_post[1], math.degrees(a1 - a2)
 
 
 # ---------------------------------------------------------------- rigid motions
@@ -494,7 +527,8 @@ def _curve_plan(levels, curves):
     return plans
 
 
-def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, CP=0.0, light=False):
+def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, CP=0.0, SV=None, CM=0.0,
+          light=False):
     """{segment: [R columns (9), t (3)]}: the rigid motion p -> R p + t of each segment
     ("legs", "pelvis", "sacrum" and the levels), "limits" (see _motions), plus the
     tables "tps" (inverse thin-plate spline, see tps_table), "chain" (polyrigid field,
@@ -503,9 +537,10 @@ def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, 
     limits only. ML (>= 0.5: on) keeps every disc within its range of motion, CP
     scales the coupled axial rotation (1: physiological); both off by default here (the
     Spine alignment block turns them on)."""
-    knobs = dict(PI=PI, PT=PT, LL=LL, TK=TK, MT=MT, TL=TL, AR=AR, PO=PO, CB=CB, ML=ML, CP=CP)
+    knobs = dict(PI=PI, PT=PT, LL=LL, TK=TK, MT=MT, TL=TL, AR=AR, PO=PO, CB=CB, ML=ML, CP=CP,
+                 SV=data["base"]["SV"] if SV is None else SV, CM=CM)
     report = {}
-    out = _motions(data, **knobs, report=report)
+    out = _posture(data, knobs, report)
     res = {k: [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], *t]
            for k, (R, t) in out.items()}
     res["limits"] = report
@@ -522,6 +557,58 @@ def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, 
     res["grid"] = np.column_stack([D, np.linalg.norm(D, axis=1)]).ravel().tolist()
     res["flow_cells"], res["flow_segs"] = flow_tables(data, knobs)
     return res
+
+
+def _illinois(f, lo, hi, target, iters=ILLINOIS_STEPS, tol=1e-4):
+    """x in [lo, hi] with f(x) = target (regula falsi, Illinois variant); the nearer
+    end when the target is outside [f(lo), f(hi)]. Plain Python, as solvers.js."""
+    a, b = lo, hi
+    fa, fb = f(a) - target, f(b) - target
+    if (fa > 0) == (fb > 0):
+        return a if abs(fa) <= abs(fb) else b
+    c, side = a, 0
+    for _ in range(iters):
+        c = (a * fb - b * fa) / (fb - fa)
+        fc = f(c) - target
+        if abs(fc) < tol:
+            return c
+        if (fc > 0) == (fb > 0):
+            b, fb = c, fc
+            if side == -1:
+                fa /= 2
+            side = -1
+        else:
+            a, fa = c, fc
+            if side == 1:
+                fb /= 2
+            side = 1
+    return c
+
+
+def _posture(data, knobs, report=None):
+    """Segment motions for the knobs, with the global balance (CM, SV): with CM = 1
+    (pelvic retroversion) PT, with CM = 2 (thoracic flattening) TK, is solved so that T1
+    sits at the sagittal offset SV (the knob's own value is not used; Barrey et al.
+    2011: the spine and pelvis extend adjacent segments to keep the trunk balanced);
+    report "compensation" {knob: value} and the SV shortfall."""
+    k = {key: v for key, v in knobs.items() if key not in ("SV", "CM")}
+    var = COMPENSATION.get(int(round(knobs.get("CM", 0.0))))
+    if var is None:
+        return _motions(data, **k, report=report)
+    base, meas = data["base"], data["measured"]
+    target = knobs["SV"] + meas["SV"] - base["SV"]  # relative to the rounded starting value
+
+    def sv(x):
+        r = {}
+        _motions(data, **{**k, var: x}, report=r)
+        return r["balance"]["SV"]
+    lo, hi = KNOBS[var]
+    x = _illinois(sv, lo, hi, target)
+    out = _motions(data, **{**k, var: x}, report=report)
+    if report is not None:
+        report["compensation"] = {var: x}
+        report["short"]["SV"] = target - report["balance"]["SV"]
+    return out
 
 
 def _forward(data, out):
@@ -699,6 +786,9 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
             "cartilage_mm": {q["label"]: dist(_apply(out[q["segment"]], q["rib"]), _apply(out["sternum"], q["sternum"]))
                              - dist(q["rib"], q["sternum"]) for q in rc["cartilage"]}}
     if report is not None:
+        t1 = _apply(out[top], data["frames"][top]["center"])
+        sv, tpa = _balance(data, t1, _apply(sacrum, data["s1_posterior"]), s1)
+        report["balance"] = {"SV": sv, "TPA": tpa, "CB": t1[0] - s1[0]}
         deg = {k: (v if k == "CB" else math.degrees(v)) for k, v in short.items()}
         report["short"] = deg
         report["at_limit"] = [[d["label"], PLANES[p], _why(d, p, 1 if v >= 0 else -1)]
@@ -712,7 +802,7 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
 
 def flow_tables(data, knobs):
     """Flow lines: the path of each seed point while the parameters go in FLOW_STEPS
-    equal steps from the subject's own values to ``knobs`` (AR, ML, CP held), through the
+    equal steps from the subject's own values to ``knobs`` (AR, ML, CP, CM, SV held), through the
     soft-tissue field. Segments (displacement so far at both ends) are binned into a
     grid of cells for the shader (see flow_eval):
       cells: per cell (offset, count, empty layers around it (see _empty_layers), 0), x fastest;
@@ -726,7 +816,8 @@ def flow_tables(data, knobs):
     for k in range(1, FLOW_STEPS + 1):
         s = k / FLOW_STEPS
         v = {key: start[key] + s * (knobs[key] - start[key]) for key in start}
-        P.append(_forward(data, _motions(data, **v, **{k: knobs.get(k, 0.0) for k in ("AR", "ML", "CP")}))(S))
+        held = {k: knobs.get(k, 0.0) for k in ("AR", "ML", "CP", "CM")}
+        P.append(_forward(data, _posture(data, {**v, **held, "SV": knobs.get("SV", data["base"]["SV"])}))(S))
     P = np.array(P)  # (steps + 1, seeds, 3)
     lo, cs, n = np.asarray(f["lo"], float), f["cell"], np.asarray(f["n"])
     cells = [[] for _ in range(int(np.prod(n)))]

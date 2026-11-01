@@ -145,9 +145,11 @@ KNOB_LABELS = {"PI": "Pelvic incidence (PI)", "PT": "Pelvic tilt (PT)",
                "AR": "Apical rotation per degree of Cobb (AR)", "PO": "Pelvic obliquity (PO, + right up)",
                "CB": "Coronal balance: T1 right of S1 (CB)",
                "ML": "Motion limits per level (ML, 1 = on)",
-               "CP": "Coupled axial rotation of lateral bending (CP, 1 = physiological)"}
-KNOB_UNITS = {"AR": "", "CB": "mm", "ML": "", "CP": ""}
-KNOB_STEPS = {"AR": 0.05, "CB": 1.0, "ML": 1.0, "CP": 0.05}
+               "CP": "Coupled axial rotation of lateral bending (CP, 1 = physiological)",
+               "SV": "Sagittal balance target: T1 anterior of the S1 posterior corner (SV)",
+               "CM": "Compensation (CM): 0 none, 1 pelvic retroversion (PT), 2 thoracic flattening (TK)"}
+KNOB_UNITS = {"AR": "", "CB": "mm", "ML": "", "CP": "", "SV": "mm", "CM": ""}
+KNOB_STEPS = {"AR": 0.05, "CB": 1.0, "ML": 1.0, "CP": 0.05, "SV": 1.0, "CM": 1.0}
 
 
 def anatomy_graph(bone_dir, relative_to=None, name=None):
@@ -160,7 +162,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     spinal cord stays); the sternum and costal cartilages are carried by the soft-
     tissue field (bone -> smooth -> Field warp -> output). One
     Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
-    CB, ML, CP) set to the subject's own values, feeds the Align blocks, the Field warp of
+    CB, ML, CP, SV, CM) set to the subject's own values, feeds the Align blocks, the Field warp of
     the spine curve and four hidden Field views (flow lines, lattice, arrows, slice); it is left
     out when the subject has no pelvic landmarks. One shared Number keeps bone volume
     when smoothing.
@@ -193,7 +195,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         if "ribcage" in spine:  # the sternum is rigid, fitted to the rib ends (ribcage.py)
             segments["sternum"] = "sternum"
         knobs = {}
-        start = {"PO": 0.0, "ML": 1.0, "CP": 1.0, **({"AR": 0.3} if spine["curves"] else {})}
+        start = {"PO": 0.0, "ML": 1.0, "CP": 1.0, "CM": 0.0, **({"AR": 0.3} if spine["curves"] else {})}
         for i, (k, (lo, hi)) in enumerate(KNOBS.items()):
             if (k not in spine["base"] and k not in start) or (k == "CB" and not spine["curves"]):
                 knobs[k] = spine["base"].get(k, 0.0)  # no such region in this subject: has no effect

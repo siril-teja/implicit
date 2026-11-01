@@ -54,6 +54,7 @@ Sliders in the viewer's Scene tab reshape the average spine (VIVA+ 50F):
 | coronal | AR | apical axial rotation per degree of Cobb (toward the convexity) |
 | coronal | PO, CB | pelvic obliquity (+ right side up), coronal balance (T1 right of S1, mm) |
 | limits | ML, CP | motion limits per level (1 = on), coupled axial rotation of lateral bending (1 = physiological) |
+| balance | SV, CM | sagittal balance target (T1 anterior of the S1 posterior corner, mm); compensation: 0 none, 1 pelvic retroversion (PT solved), 2 thoracic flattening (TK solved) |
 
 They start at the subject's own values (VIVA+ 50F: PI 58.7, PT 17.2, SS 41.5,
 LL 51.9, TK 30.3, MT 0, TL -0.3 deg, CB 0 mm), where nothing moves. The end
@@ -95,6 +96,17 @@ disc share it. PI is kept where the sacrum stays clear of the hip bones (about +
 deg on VIVA+ 50F). On a grid and at random slider settings no bones collide and no
 disc is flagged. ML = 0 lifts all limits. Tables and assumptions:
 `implicit/anatomy/motion.py`, `implicit/anatomy/ranges.py`.
+
+**Global balance.** The Scene tab's **Balance** list shows SV (T1 anterior of the
+posterior superior corner of S1, mm: the sagittal vertical axis measured from T1, as
+the cervical spine is not modelled yet), the T1 pelvic angle (TPA, Protopsaltis et
+al. 2014), PI - LL and CB. With a compensation mode (CM) the body keeps T1 at the SV
+target the way patients do (Barrey et al. 2011): by tilting the pelvis back (PT is
+solved) or by flattening the thoracic spine (TK is solved), within the motion limits
+when they are on; what cannot be reached is listed. The **Sagittal shape** presets set
+PI, PT and LL of the Roussouly types (PI and PT: Laouissat et al. 2017; LL from PI:
+Le Huec & Hasegawa 2016) with the limits off, as a preset is another person's shape,
+not a posture.
 
 The **Field view** block shows the field: flow lines (the paths tissue near the
 spine travels while the sliders go from the subject's values to the current ones,

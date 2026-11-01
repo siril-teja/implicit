@@ -168,8 +168,40 @@ const Solvers = (() => {
     return plans;
   }
 
+  // As alignment.py _illinois / _posture / _balance.
+  const ILLINOIS_STEPS = 40, COMPENSATION = { 1: "PT", 2: "TK" }, KNOB_RANGE = { PT: [-10, 45], TK: [0, 80] };
+  function illinois(f, lo, hi, target, iters = ILLINOIS_STEPS, tol = 1e-4) {
+    let a = lo, b = hi, fa = f(a) - target, fb = f(b) - target;
+    if ((fa > 0) === (fb > 0)) return Math.abs(fa) <= Math.abs(fb) ? a : b;
+    let c = a, side = 0;
+    for (let i = 0; i < iters; i++) {
+      c = (a * fb - b * fa) / (fb - fa);
+      const fc = f(c) - target;
+      if (Math.abs(fc) < tol) return c;
+      if ((fc > 0) === (fb > 0)) { b = c; fb = fc; if (side === -1) fa /= 2; side = -1; }
+      else { a = c; fa = fc; if (side === 1) fb /= 2; side = 1; }
+    }
+    return c;
+  }
+  function posture(d, v, report = null) {
+    const k = { ...v };
+    delete k.SV; delete k.CM;
+    const key = COMPENSATION[Math.round(v.CM ?? 0)];
+    if (!key) return motions(d, k, report);
+    const target = (v.SV ?? d.base.SV) + d.measured.SV - d.base.SV;
+    const sv = (x) => { const r = {}; motions(d, { ...k, [key]: x }, r); return r.balance.SV; };
+    const x = illinois(sv, KNOB_RANGE[key][0], KNOB_RANGE[key][1], target);
+    const out = motions(d, { ...k, [key]: x }, report);
+    if (report) { report.compensation = { [key]: x }; report.short.SV = target - report.balance.SV; }
+    return out;
+  }
+  function balance(d, t1, s1Post, s1Mid) {
+    const H = d.hip, a1 = Math.atan2(t1[1] - H[1], t1[2] - H[2]), a2 = Math.atan2(s1Mid[1] - H[1], s1Mid[2] - H[2]);
+    return [t1[1] - s1Post[1], deg(a1 - a2)];
+  }
+
   function spinopelvic(d, v, light = false) {
-    const report = {}, out = motions(d, v, report), res = {};
+    const report = {}, out = posture(d, v, report), res = {};
     for (const [k, [R, t]] of Object.entries(out)) {
       res[k] = [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], ...t];
     }
@@ -206,7 +238,7 @@ const Solvers = (() => {
     for (let k = 1; k <= FLOW_STEPS; k++) {
       const s = k / FLOW_STEPS, vk = { AR: v.AR ?? 0, ML: v.ML ?? 0, CP: v.CP ?? 0 };
       for (const key of Object.keys(start)) vk[key] = start[key] + s * ((v[key] ?? 0) - start[key]);
-      const fwd = forward(d, motions(d, vk));
+      const fwd = forward(d, posture(d, { ...vk, CM: v.CM ?? 0, SV: v.SV ?? d.base.SV }));
       P.push(S.map(fwd));
     }
     const lo = f.lo, cs = f.cell, n = f.n, cells = Array.from({ length: n[0] * n[1] * n[2] }, () => []), segs = [];
@@ -346,6 +378,9 @@ const Solvers = (() => {
           dist(apply(out[q.segment], q.rib), apply(out.sternum, q.sternum)) - dist(q.rib, q.sternum)])) };
     }
     if (report) {
+      const t1 = apply(out[top], d.frames[top].center);
+      const [sv, tpa] = balance(d, t1, apply(sacrum, d.s1_posterior), s1);
+      report.balance = { SV: sv, TPA: tpa, CB: t1[0] - s1[0] };
       report.short = Object.fromEntries(Object.entries(short).map(([k, x]) => [k, k === "CB" ? x : deg(x)]));
       report.at_limit = [];
       discs.forEach((disc, j) => {
@@ -462,7 +497,7 @@ const Solvers = (() => {
 
   // Targets the motion limits keep from being reached, at the current values:
   // [[target, text, discs at a limit]] per spinopelvic solver (report of motions()).
-  const SHORT_NAMES = { PI: "PI", LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
+  const SHORT_NAMES = { SV: "SV", PI: "PI", LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
   // Rib cage at the current values: [[label, text, tooltip]]: the sternum's motion and
   // each true rib's cartilage length change (rib end to sternum) beyond 0.5 mm.
   function ribcageReport(scene, values) {
@@ -484,6 +519,29 @@ const Solvers = (() => {
     return out;
   }
 
+  // Global balance at the current values: [[name, text, tooltip]].
+  function balanceReport(scene, values) {
+    const out = [];
+    if (!scene || !scene.solvers) return out;
+    const byName = Object.fromEntries(scene.params.map((p) => [p.name, p]));
+    const value = (n) => (n in values ? values[n] : byName[n] ? byName[n].value : NaN);
+    for (const s of Object.values(scene.solvers)) {
+      if (s.kind !== "spinopelvic") continue;
+      const lim = run(s, value).limits || {}, b = lim.balance;
+      if (!b) continue;
+      const v = (k) => value(s.inputs[k]);
+      out.push(["SV", `${b.SV.toFixed(1)} mm`, "T1 anterior of the S1 posterior superior corner"]);
+      out.push(["TPA", `${b.TPA.toFixed(1)} deg`, "T1 pelvic angle (Protopsaltis 2014)"]);
+      out.push(["PI - LL", `${(v("PI") - (short(lim, "PI")) - v("LL") + short(lim, "LL")).toFixed(1)} deg`, "reached PI minus reached LL"]);
+      out.push(["CB", `${b.CB.toFixed(1)} mm`, "T1 right of the S1 endplate centre"]);
+      for (const [k, x] of Object.entries(lim.compensation || {})) {
+        out.push([`${k} (compensation)`, `${x.toFixed(1)} deg`, "solved to hold T1 at the SV target"]);
+      }
+    }
+    return out;
+  }
+  const short = (lim, k) => (lim.short && lim.short[k]) || 0;
+
   function shortfalls(scene, values) {
     const out = [];
     if (!scene || !scene.solvers) return out;
@@ -495,7 +553,7 @@ const Solvers = (() => {
       if (!lim || !lim.short) continue;
       const at = (lim.at_limit || []).map(([d, p, w]) => `${d} ${p} (${w})`);
       for (const [k, x] of Object.entries(lim.short)) {
-        const mm = k === "CB";
+        const mm = k === "CB" || k === "SV";
         if (Math.abs(x) < (mm ? 0.5 : 0.1)) continue;
         out.push([SHORT_NAMES[k] || k, `${x > 0 ? "+" : ""}${x.toFixed(1)} ${mm ? "mm" : "deg"}`, at]);
       }
@@ -552,7 +610,7 @@ const Solvers = (() => {
     return out;
   }
 
-  return { run, samples, apply: applyScene, tables, shortfalls, ribcageReport, KINDS, fill, horn };
+  return { run, samples, apply: applyScene, tables, shortfalls, ribcageReport, balanceReport, KINDS, fill, horn };
 })();
 
 if (typeof module !== "undefined") module.exports = Solvers;
