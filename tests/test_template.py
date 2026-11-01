@@ -72,7 +72,7 @@ class TestTemplate(unittest.TestCase):
         for n in (1, 6, 12):
             for side in ("left", "right"):
                 meta = load_bone(SUBJECT / f"rib{n}_{side}.npz")[1]
-                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=1e-3)
+                np.testing.assert_allclose(meta["template_shift_mm"], total[f"T{n}"], atol=template.RIB_TOL)
         for part in ("sternum", "costal_cartilage_left", "costal_cartilage_right"):
             self.assertIn("template_carried", load_bone(SUBJECT / f"{part}.npz")[1])
         grids = {n: g for n, (g, _) in load_bones(SUBJECT).items()}
