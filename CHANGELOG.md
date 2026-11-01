@@ -31,6 +31,10 @@ publishes that section as the GitHub release notes. Versions follow
   superseded. Updated in every step (CONTRIBUTING.md).
 
 ### Changed
+- Docs brought up to date: README (project status, rib cage in the template, its
+  drift from the rib ends with large slider changes, licences of both bundled
+  subjects), NOTICE (derived rib cage files), primer (architecture, Python/JS
+  parity checks), roadmap (goal, step numbers).
 - Roadmap: new step 1.6 **Connected rib cage** (ribs, costal cartilages and
   sternum stay joined in every posture: rigid sternum fitted to the rib ends,
   cartilages deformed between rib and sternum); constrained distribution, global

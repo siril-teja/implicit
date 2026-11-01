@@ -12,24 +12,30 @@ rendered live, and exported for meshing.
   shader uniforms, so sliders update the whole assembly in real time with no
   rebuild.
 - **Export:** the graph is evaluated in NumPy and meshed with narrow-band
-  marching tetrahedra to closed, manifold STL. Next: anatomy blocks (endplates,
-  discs, ligaments, osteotomies, cages), then a lightweight FE solver in the browser.
+  marching tetrahedra to closed, manifold STL.
+- **Virtual patients** (in progress): an average spine with pelvis and rib cage
+  (VIVA+ 50F) posed by clinical alignment sliders within physiological ranges of
+  motion. Next steps (roadmap): a connected rib cage, collision-free distribution,
+  discs, ligaments, then meshing and FE.
 
 Read [docs/primer.md](docs/primer.md) for the background and the math, and
 [docs/ROADMAP.md](docs/ROADMAP.md) for the roadmap: one objective and its acceptance
-criteria per step, each step one pull request. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
+criteria per step, each step one pull request, and
+[docs/LITERATURE.md](docs/LITERATURE.md) for every source used, what we took from it
+and where. Read [docs/LICENSING.md](docs/LICENSING.md) for the dependency policy
 (commercial-use-safe only).
 
 ## Average spine (VIVA+)
 
 `examples/average_spine.json`, the default scene, is an idealised spine:
-T1–T12, L1–L5, sacrum, hip bones and proximal femurs of the
+T1–T12, L1–L5, sacrum, hip bones, proximal femurs, ribs, sternum and costal
+cartilages of the
 [VIVA+](https://zenodo.org/records/18338876) average-female human body model (50F,
 standing; LGPL-3.0-or-later, see [NOTICE](NOTICE.md)). Its bone surfaces are
 converted to the same implicit bone files as the patient data:
 
 ```bash
-python -m implicit.anatomy.vivaplus --model 50F-standing --out assets/bones/vivaplus-50F   # downloads VIVA+ once
+python -m implicit.anatomy.vivaplus --model 50F-standing --select full --out assets/bones/vivaplus-50F   # downloads VIVA+ once
 python -m implicit.anatomy.landmarks assets/bones/vivaplus-50F
 ```
 
@@ -98,14 +104,17 @@ python -m implicit.anatomy.alignment assets/bones/vivaplus-50F     # print the m
 
 The femoral head centres (sphere fits) and sacroiliac joint centres it needs are
 found by `python -m implicit.anatomy.landmarks` and stored in `landmarks.json`.
-The patient scene (lumbar only) has the sagittal sliders and pelvic obliquity.
+The patient scene (lumbar only) has the sagittal sliders and pelvic obliquity, with
+the motion limits on (the block's default).
 
 **Clearance.** The viewer measures the smallest gap between every pair of
 neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with each
 hip bone, hip bone and femur) at the current sliders: a table under Clearance,
 smallest first, and colliding bones tinted red. A bone's field is evaluated at the
 other bone's surface points (2 mm apart), both ways; negative is the depth of the
-overlap. The sliders do not yet avoid collisions (roadmap steps 1.5, 1.6).
+overlap. The motion limits (ML) keep most postures clear (LL 80 with TK 60 collides
+at L4-L5 only with ML = 0); the sliders do not yet avoid collisions directly (roadmap
+step 1.7).
 
 ```bash
 python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60 --set spp_ML=0
@@ -136,11 +145,13 @@ python -m implicit.anatomy.discs examples/average_spine.json --sweep    # flagge
 The average spine has the VIVA+ 50F ribs (1-12, both sides), sternum and costal
 cartilages. Each rib follows its vertebra with the alignment sliders (Align block,
 segment T1 ... T12); the sternum and costal cartilages are carried by the
-soft-tissue field (Field warp), like the spine curve. The clearance table lists every
+soft-tissue field (Field warp), like the spine curve. That field only follows the
+spine, so with large slider changes the sternum and cartilages drift from the rib ends
+(roadmap 1.6: a connected rib cage). The clearance table lists every
 rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
 in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
-the concave side into each other, which rib motion (roadmap 2.7) and the constrained
-distribution (1.6) are to resolve.
+the concave side into each other (with ML = 0), which rib motion (roadmap 2.7) and
+the constrained distribution (1.7) are to resolve.
 
 ## Patient anatomy: implicit bones
 
@@ -243,11 +254,16 @@ The workflow and one-time repository settings are in [CONTRIBUTING.md](CONTRIBUT
 ## Status
 
 Prototype, not validated. The idealised L4–L5 example is not patient-specific.
-The anatomy is one CT subject (1.5 mm CT, bones resampled to 0.6–1.5 mm). Exported STL is a
-surface for inspection only, and FE volume meshing is not implemented yet.
+The anatomy is one CT subject (1.5 mm CT, bones resampled to 0.6–1.5 mm) and the
+VIVA+ 50F average female template (T1 to femurs with rib cage, corrected to
+population disc heights and joint spaces). Postures are rigid-body kinematics within
+in vitro ranges of motion; discs, ligaments and muscles are not modelled yet.
+Exported STL is a surface for inspection only, and FE volume meshing is not
+implemented yet.
 
 ## Licence
 
 The code is released under the [MIT License](LICENSE). The bundled anatomy in
-`assets/bones/` is derived from TotalSegmentator (CC BY 4.0); see
+`assets/bones/` is derived from TotalSegmentator (`s0751`, CC BY 4.0) and VIVA+
+(`vivaplus-50F`, LGPL-3.0-or-later); see
 [NOTICE.md](NOTICE.md) for all third-party licences and attribution.

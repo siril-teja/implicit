@@ -1,7 +1,7 @@
 # Roadmap: virtual patients
 
-**Goal.** Generate virtual patients: thoracic spine to femurs (later cervical spine,
-head and rib cage) with realistic bones, discs, ligaments and muscles, that look like
+**Goal.** Generate virtual patients: thoracic spine, rib cage and pelvis to femurs
+(later cervical spine and head) with realistic bones, discs, ligaments and muscles, that look like
 real radiographs and CT scans and are ready for finite element analysis.
 
 **How this roadmap is used.** Each step below is one pull request, taken one at a time
@@ -24,7 +24,7 @@ but never merged half-done. The Status column is updated in the PR that closes a
    browser-built shader with NumPy; third-party code and data allow commercial use;
    dependencies are pinned (CONTRIBUTING.md).
 
-**Already in place (0.1 to 0.11):** implicit bones and the block graph; viewer with
+**In place before this roadmap (0.1 to 0.11):** implicit bones and the block graph; viewer with
 the block canvas; landmarks (vertebral frames, endplates, femoral heads, sacroiliac
 joints); the average spine (VIVA+ 50F, T1 to femurs); sagittal and coronal alignment
 sliders (PI, PT, LL, TK, MT, TL, AR, PO, CB); TPS and polyrigid soft-tissue fields;
