@@ -333,7 +333,9 @@ def normalise(bone_dir, dry_run=False, log=print):
                 # this run's shift (also brings back a rib that took a shift its
                 # vertebra did not)
                 done = np.asarray(metas[r].get("template_shift_mm", [0.0, 0.0, 0.0]), float)
-                moves[r] = moves.get(f"T{n}", np.zeros(3)) + prior.get(f"T{n}", np.zeros(3)) - done
+                v = moves.get(f"T{n}", np.zeros(3))
+                v = v if np.linalg.norm(v) >= TOL else np.zeros(3)  # only a shift the vertebra takes
+                moves[r] = v + prior.get(f"T{n}", np.zeros(3)) - done
     moved = {lv for lv, t in moves.items()
              if np.linalg.norm(t) >= (RIB_TOL if lv.startswith("rib") else TOL)}
     tips = []
