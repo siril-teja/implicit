@@ -161,9 +161,9 @@ sternum at rest (VIVA+ 50F had gaps of up to 2.7 mm). The Scene tab's **Rib cage
 list gives the sternum's motion and each true rib's cartilage length change
 (`implicit/anatomy/ribcage.py`). The clearance table lists every
 rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
-in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
-the concave side into each other (with ML = 0), which rib motion (roadmap 2.7) and
-the constrained distribution (1.7) are to resolve.
+in the template) and against the next rib on its side; with the limits on these stay
+at least about 1 mm apart (the feasible ranges), with ML = 0 MT 40 crowds the ribs of
+the concave side into each other (rib motion, roadmap 2.7, will let ribs move too).
 
 ## Patient anatomy: implicit bones
 
