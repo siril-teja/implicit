@@ -74,6 +74,27 @@ const Solvers = (() => {
     }
     return 0.5 * (lo + hi);
   }
+  // As motion.py fill: spread total in proportion to weights, none beyond its cap.
+  function fill(total, weights, caps) {
+    const a = Math.abs(total), sgn = total >= 0 ? 1 : -1, out = weights.map(() => 0);
+    const act = [];
+    weights.forEach((w, j) => { if (w > 0) act.push(j); });
+    if (!act.length) return [out, total];
+    const room = act.reduce((t, j) => t + caps[j], 0);
+    if (a >= room) { for (const j of act) out[j] = sgn * caps[j]; return [out, sgn * (a - room)]; }
+    const order = act.slice().sort((i, j) => (caps[i] / weights[i] - caps[j] / weights[j]) || (i - j));
+    let rest = a, wsum = act.reduce((t, j) => t + weights[j], 0), k = 0;
+    while (k < order.length) {
+      const j = order[k];
+      if (rest / wsum * weights[j] <= caps[j]) break;
+      rest -= caps[j]; wsum -= weights[j]; k++;
+    }
+    const sc = rest / wsum;
+    for (const j of act) out[j] = sgn * Math.min(sc * weights[j], caps[j]);
+    return [out, 0];
+  }
+  const PLANES = ["FE", "LB", "AR"];
+  const caps = (discs, p, on) => discs.map((d) => (on && d.rom ? rad(d.rom[p]) / 2 : Infinity));
   function weights(discs, uppers, sign) {
     const w = discs.map((d) => (uppers.includes(d.upper) ? Math.max(sign * d.angle, 1.0) : 0.0));
     const s = w.reduce((a, b) => a + b, 0);
@@ -97,10 +118,11 @@ const Solvers = (() => {
   }
 
   function spinopelvic(d, v, light = false) {
-    const out = motions(d, v), res = {};
+    const report = {}, out = motions(d, v, report), res = {};
     for (const [k, [R, t]] of Object.entries(out)) {
       res[k] = [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], ...t];
     }
+    res.limits = report;
     if (light) return res;
     const pairs = d.tps_points.map((q) => [q.point, apply(out[q.segment], q.point)]);
     res.tps = tpsTable(pairs);
@@ -130,7 +152,7 @@ const Solvers = (() => {
     start.PO = 0;
     const P = [S];
     for (let k = 1; k <= FLOW_STEPS; k++) {
-      const s = k / FLOW_STEPS, vk = { AR: v.AR ?? 0 };
+      const s = k / FLOW_STEPS, vk = { AR: v.AR ?? 0, ML: v.ML ?? 0, CP: v.CP ?? 0 };
       for (const key of Object.keys(start)) vk[key] = start[key] + s * ((v[key] ?? 0) - start[key]);
       const fwd = forward(d, motions(d, vk));
       P.push(S.map(fwd));
@@ -187,34 +209,39 @@ const Solvers = (() => {
     return out;
   }
 
-  function motions(d, v) {
+  // As alignment.py _motions; ``report`` receives { short, at_limit }.
+  function motions(d, v, report = null) {
     const base = d.base, meas = d.measured;
     const rel = (k, x) => (k in base ? x + meas[k] - base[k] : x);
     const PI = rel("PI", v.PI), PT = rel("PT", v.PT), CB = rel("CB", v.CB ?? 0);
     const delta = (k, x) => rad(x - (k in base ? base[k] : x));
-    const PO = v.PO ?? 0, AR = v.AR ?? 0, levels = d.levels, discs = d.discs;
+    const PO = v.PO ?? 0, AR = v.AR ?? 0, CP = v.CP ?? 0, on = (v.ML ?? 0) >= 0.5, levels = d.levels, discs = d.discs;
+    const [cfe, clb, car] = [0, 1, 2].map((p) => caps(discs, p, on)), short = {};
     const beta = Math.abs(PI - meas.PI) < 1e-9 ? 0 : bisect((b) => piAfter(d, b)[0], -rad(60), rad(60), PI);
     const alpha = rad(PT - piAfter(d, beta)[1]);
     const legs = rot(d.hip, Y, -rad(PO)), pelvis = compose(legs, rot(d.hip, X, alpha));
     const sacrum = compose(pelvis, rot(d.si, X, beta));
-    const dLL = delta("LL", v.LL), dTK = delta("TK", v.TK);
-    const wl = weights(discs, LORDOSIS, 1), wk = weights(discs, KYPHOSIS, -1);
-    const sag = wl.map((a, i) => dLL * a - dTK * wk[i]);
-    const plans = curvePlan(levels, d.curves), cor = discs.map(() => 0), axial = levels.map(() => 0);
+    let sl, sk;
+    [sl, short.LL] = fill(delta("LL", v.LL), weights(discs, LORDOSIS, 1), cfe);
+    [sk, short.TK] = fill(delta("TK", v.TK), weights(discs, KYPHOSIS, -1), cfe);
+    const sag = sl.map((a, i) => a - sk[i]);
+    const plans = curvePlan(levels, d.curves), cor = discs.map(() => 0), tents = {};
     const targets = { MT: v.MT ?? 0, TL: v.TL ?? 0 };
     for (const [k, [share, shape]] of Object.entries(plans)) {
-      const dk = delta(k, targets[k]);
-      for (let j = 0; j < discs.length; j++) { cor[j] -= dk * share[j]; axial[j] -= AR * dk * shape[j]; }
+      const dk = delta(k, targets[k]), [x, miss] = fill(dk, share, clb);
+      short[k] = miss;
+      for (let j = 0; j < discs.length; j++) cor[j] -= x[j];
+      tents[k] = levels.map((_, i) => -AR * (dk - miss) * shape[i]);
     }
     const lows = Object.values(plans).map((p) => p[2]);
     const lowest = lows.length ? Math.min(...lows) : -1;
-    const frac = discs.map((_, j) => j).filter((j) => j <= lowest);
+    const wfrac = discs.map((_, j) => (j <= lowest ? 1 : 0)), nfrac = lowest + 1;
+    const bend = (bal) => fill(bal, wfrac, clb)[0];
     const build = (bal) => {
       let T = sacrum;
-      const out = {};
+      const out = {}, b = bend(bal);
       discs.forEach((disc, j) => {
-        const turn = cor[j] + (frac.includes(j) ? bal / frac.length : 0);
-        T = compose(T, compose(rot(disc.sagittal, X, sag[j]), rot(disc.coronal, Y, turn)));
+        T = compose(T, compose(rot(disc.sagittal, X, sag[j]), rot(disc.coronal, Y, cor[j] + b[j])));
         out[disc.upper] = T;
       });
       return out;
@@ -228,11 +255,34 @@ const Solvers = (() => {
     };
     const moved = cor.some((x) => Math.abs(x) > 0) || Math.abs(PO) > 0 || Math.abs(alpha) > 0 || Math.abs(beta) > 0
       || sag.some((x) => x !== 0);
-    let bal = 0;
-    if (frac.length && (moved || Math.abs(CB - meas.CB) > 1e-9)) bal = softLimit(branchSolve(lean, 0, rad(BAL_SEARCH)));
+    let bal = 0, solved = false;
+    if (nfrac > 0 && (moved || Math.abs(CB - meas.CB) > 1e-9)) { bal = softLimit(branchSolve(lean, 0, rad(BAL_SEARCH))); solved = true; }
     const out = build(bal);
-    levels.forEach((lv, i) => { const f = d.frames[lv]; out[lv] = compose(out[lv], rot(f.center, f.axes[2], axial[i])); });
+    short.CB = solved ? CB - (apply(out[top], d.frames[top].center)[0] - s1[0]) : 0;
+    const bb = bend(bal), lat = cor.map((c, j) => c + bb[j]);
+    const relAx = discs.map((disc, j) => Math.max(-car[j], Math.min(car[j], -CP * (disc.coupling ?? 0) * lat[j])));
+    for (const [k, tent] of Object.entries(tents)) {
+      const steps = discs.map((_, j) => tent[j] - (j ? tent[j - 1] : 0));
+      let lam = 1;
+      steps.forEach((b, j) => {
+        if (Math.abs(b) > 1e-12 && car[j] < Infinity) lam = Math.min(lam, Math.max(0, (car[j] - Math.sign(b) * relAx[j]) / Math.abs(b)));
+      });
+      steps.forEach((b, j) => { relAx[j] += lam * b; });
+      short[`${k}_AR`] = (1 - lam) * Math.max(0, ...tent.map(Math.abs));
+    }
+    let acc = 0;
+    levels.forEach((lv, i) => { acc += relAx[i]; const f = d.frames[lv]; out[lv] = compose(out[lv], rot(f.center, f.axes[2], acc)); });
     Object.assign(out, { legs, pelvis, sacrum });
+    if (report) {
+      report.short = Object.fromEntries(Object.entries(short).map(([k, x]) => [k, k === "CB" ? x : deg(x)]));
+      report.at_limit = [];
+      discs.forEach((disc, j) => {
+        if (!disc.label) return;
+        [[sag[j], cfe[j]], [lat[j], clb[j]], [relAx[j], car[j]]].forEach(([x, c], p) => {
+          if (c < Infinity && Math.abs(x) >= c - 1e-9) report.at_limit.push([disc.label, PLANES[p]]);
+        });
+      });
+    }
     return out;
   }
 
@@ -337,6 +387,28 @@ const Solvers = (() => {
 
   const KINDS = { spinopelvic };
 
+  // Targets the motion limits keep from being reached, at the current values:
+  // [[target, text, discs at a limit]] per spinopelvic solver (report of motions()).
+  const SHORT_NAMES = { LL: "LL", TK: "TK", MT: "MT", TL: "TL", CB: "CB", MT_AR: "MT apex rotation", TL_AR: "TL apex rotation" };
+  function shortfalls(scene, values) {
+    const out = [];
+    if (!scene || !scene.solvers) return out;
+    const byName = Object.fromEntries(scene.params.map((p) => [p.name, p]));
+    const value = (n) => (n in values ? values[n] : byName[n] ? byName[n].value : NaN);
+    for (const s of Object.values(scene.solvers)) {
+      if (s.kind !== "spinopelvic") continue;
+      const lim = run(s, value).limits;
+      if (!lim || !lim.short) continue;
+      const at = (lim.at_limit || []).map(([d, p]) => `${d} ${p}`);
+      for (const [k, x] of Object.entries(lim.short)) {
+        const mm = k === "CB";
+        if (Math.abs(x) < (mm ? 0.5 : 0.1)) continue;
+        out.push([SHORT_NAMES[k] || k, `${x > 0 ? "+" : ""}${x.toFixed(1)} ${mm ? "mm" : "deg"}`, at]);
+      }
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ plumbing
   // A solver: { kind, data, inputs: { input: param name } }; ``value(name)`` gives a
   // param's current value.
@@ -386,7 +458,7 @@ const Solvers = (() => {
     return out;
   }
 
-  return { run, samples, apply: applyScene, tables, KINDS };
+  return { run, samples, apply: applyScene, tables, shortfalls, KINDS, fill };
 })();
 
 if (typeof module !== "undefined") module.exports = Solvers;

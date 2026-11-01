@@ -62,7 +62,7 @@ class TestAlignment(unittest.TestCase):
     def test_identity_at_baseline(self):
         res = al.solve(self.data, **self.targets(AR=0.4))
         for seg, m in res.items():
-            if seg not in ("tps", "chain", "grid", "flow_cells", "flow_segs"):
+            if seg not in ("tps", "chain", "grid", "flow_cells", "flow_segs", "limits"):
                 np.testing.assert_allclose(m, [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], atol=1e-9, err_msg=seg)
         P = np.random.default_rng(0).uniform(-150, 150, (200, 3))
         np.testing.assert_allclose(al.tps_eval(res["tps"], P), P, atol=1e-6)
@@ -112,6 +112,67 @@ class TestAlignment(unittest.TestCase):
         got = self.measured(al.solve(self.data, **{**t, "AR": 0.0}))
         for k in ("MT", "TL"):
             self.assertAlmostEqual(got[k], t[k], places=6, msg=k)
+
+    def _disc_turns(self, motions):
+        """Angle (deg) of each disc's relative rotation from rest: lower^T upper."""
+        out = {}
+        below = "sacrum"
+        for d in self.data["discs"]:
+            Rl, Ru = motion(motions[below])[0], motion(motions[d["upper"]])[0]
+            c = np.clip((np.trace(Rl.T @ Ru) - 1) / 2, -1, 1)
+            out[d["label"]] = np.degrees(np.arccos(c))
+            below = d["upper"]
+        return out
+
+    def test_motion_limits_respected(self):
+        """With the limits on no disc turns beyond its range (half the total range of
+        Wilke et al. 2025 each way); sagittal-only and coronal-only turns stay within the
+        plane's own half range, any setting within the combined one."""
+        rom = {d["label"]: np.array(d["rom"]) / 2 for d in self.data["discs"]}
+        for kw, plane in ((dict(LL=90.0, TK=0.0), 0), (dict(LL=0.0, TK=80.0), 0),
+                          (dict(MT=80.0, TL=-80.0, CB=40.0, CP=0.0), 1)):
+            turns = self._disc_turns(al.solve(self.data, **self.targets(**kw, ML=1.0), light=True))
+            for lab, a in turns.items():
+                self.assertLessEqual(a, rom[lab][plane] + 1e-6, f"{kw} {lab}")
+        rng = np.random.default_rng(3)
+        for _ in range(20):
+            kw = {k: rng.uniform(lo, hi) for k, (lo, hi) in al.KNOBS.items()}
+            kw["ML"] = 1.0
+            turns = self._disc_turns(al.solve(self.data, **kw, light=True))
+            for lab, a in turns.items():
+                self.assertLessEqual(a, np.linalg.norm(rom[lab]) + 1e-6, f"{lab}")
+
+    def test_shortfall_reported(self):
+        """A target beyond the levels' ranges is met up to the reported shortfall; the
+        levels it needs are all at their limit."""
+        t = self.targets(LL=80.0, TK=50.0, ML=1.0)
+        res = al.solve(self.data, **t, light=True)
+        got, short = self.measured(res), res["limits"]["short"]
+        cap_ll = sum(d["rom"][0] / 2 for d in self.data["discs"] if d["upper"] in al.LORDOSIS)
+        cap_tk = sum(d["rom"][0] / 2 for d in self.data["discs"] if d["upper"] in al.KYPHOSIS)
+        self.assertAlmostEqual(short["LL"], 80.0 - self.b["LL"] - cap_ll, places=6)
+        self.assertAlmostEqual(short["TK"], 50.0 - self.b["TK"] - cap_tk, places=6)
+        for k in ("LL", "TK"):
+            self.assertAlmostEqual(got[k], t[k] - short[k], places=6, msg=k)
+        at = {lab for lab, p in res["limits"]["at_limit"] if p == "FE"}
+        self.assertEqual(at, {d["label"] for d in self.data["discs"] if d["upper"] in al.LORDOSIS + al.KYPHOSIS})
+        # Within the ranges: met exactly, nothing short.
+        res = al.solve(self.data, **self.targets(LL=56.0, TK=33.0, ML=1.0), light=True)
+        self.assertTrue(all(abs(v) < 1e-9 for v in res["limits"]["short"].values()))
+        got = self.measured(res)
+        self.assertAlmostEqual(got["LL"], 56.0, places=6)
+        self.assertAlmostEqual(got["TK"], 33.0, places=6)
+
+    def test_coupled_rotation_follows_the_bend(self):
+        """Thoracic lateral bending carries ipsilateral axial rotation, 0.40 deg per deg
+        (Fujimori et al. 2014); none at CP 0."""
+        kw = self.targets(MT=-20.0)  # convex left: the thoracic discs bend the spine above to the right
+        R0 = motion(al.solve(self.data, **kw, CP=0.0, light=True)["T5"])[0]
+        R1 = motion(al.solve(self.data, **kw, CP=1.0, light=True)["T5"])[0]
+        # At T5 (upper end vertebra) the bend of all MT discs (20 deg) has accumulated.
+        D = R1 @ R0.T  # the extra turn, about T5's own axis
+        turn = np.degrees(np.arccos(np.clip((np.trace(D) - 1) / 2, -1, 1))) * np.sign(D[0, 1])  # + : anterior turns right
+        self.assertAlmostEqual(turn, 20.0 * 6.2 / 15.6, delta=0.3)
 
     def test_apex_is_most_lateral_and_turned_toward_convexity(self):
         motions = al.solve(self.data, **self.targets(MT=40.0, TL=-40.0, AR=0.3))
@@ -179,6 +240,9 @@ class TestAlignment(unittest.TestCase):
         # Extreme curves: the coronal balance saturates (soft limit, branch ends).
         self._compare_js(self.data, self.targets(MT=71.0, TL=77.0, CB=46.0, TK=14.0, AR=0.3))
         self._compare_js(self.data, self.targets(MT=-85.0, TL=-75.0, CB=-9.0))
+        # Motion limits and coupling: saturated levels, shortfalls.
+        self._compare_js(self.data, {**targets, "ML": 1.0, "CP": 1.0})
+        self._compare_js(self.data, self.targets(LL=85.0, TK=10.0, MT=-20.0, TL=30.0, CB=-30.0, AR=0.6, ML=1.0, CP=0.5))
 
     def _positions(self, targets):
         m = al.solve(self.data, **targets, light=True)
@@ -193,19 +257,33 @@ class TestAlignment(unittest.TestCase):
     def _assert_smooth(self, path, label):
         P = np.array([self._positions(v) for v in path])
         step = np.linalg.norm(np.diff(P, axis=0), axis=2).max(1)  # largest vertebra move per step
-        self.assertLess(step.max(), 4.0 * max(np.median(step), 1e-3) + 1e-6, f"{label}: jump of {step.max():.1f} mm")
+        moving = step[step > 1e-6]  # (limits: nothing moves while a target is beyond the ranges)
+        ref = np.median(moving) if len(moving) else 0.0
+        if step.max() < 4.0 * max(ref, 1e-3) + 1e-6:
+            return
+        # A large step can be a steeper stretch (e.g. once a limit stops the balance
+        # from compensating): continuous if it splits into proportionally smaller steps.
+        i = int(step.argmax())
+        a, b = path[i], path[i + 1]
+        sub = [{k: a[k] + s * (b[k] - a[k]) for k in a} for s in np.linspace(0, 1, 17)]
+        fine = np.linalg.norm(np.diff(np.array([self._positions(v) for v in sub]), axis=0), axis=2).max(1)
+        self.assertLess(fine.max(), 4.0 * step.max() / 16 + 1e-6, f"{label}: jump of {fine.max():.1f} mm")
 
     def test_sliders_smooth(self):
         """Every knob over its whole range, and straight paths through random settings of
-        all knobs: no vertebra jumps (the largest move per step stays within 4x the
-        median; a jump was 400 mm in a 0.45 deg step of TL before the balance fix)."""
-        for k, (lo, hi) in al.KNOBS.items():
-            if k == "AR":
-                continue  # moves nothing without curves
-            self._assert_smooth([self.targets(**{k: x}) for x in np.linspace(lo, hi, 81)], k)
+        all knobs, with the motion limits off and on: no vertebra jumps (the largest move
+        per step stays within 4x the median of the steps that move, or splits into
+        proportionally smaller steps; a jump was 400 mm in a 0.45 deg step of TL before the balance fix)."""
+        for ml in (0.0, 1.0):
+            for k, (lo, hi) in al.KNOBS.items():
+                if k in ("AR", "ML"):
+                    continue  # AR moves nothing without curves; ML is a switch
+                self._assert_smooth([self.targets(**{"ML": ml, "CP": 1.0, k: x}) for x in np.linspace(lo, hi, 81)],
+                                    f"{k} (ML {ml:.0f})")
         rng = np.random.default_rng(1)
         for i in range(8):
             a, b = ({k: rng.uniform(lo, hi) for k, (lo, hi) in al.KNOBS.items()} for _ in range(2))
+            a["ML"] = b["ML"] = float(i % 2)  # limits off and on (held along the path)
             self._assert_smooth([{k: a[k] + s * (b[k] - a[k]) for k in a} for s in np.linspace(0, 1, 41)], f"path {i}")
 
     def _compare_js(self, data, targets):
@@ -215,6 +293,11 @@ class TestAlignment(unittest.TestCase):
                              input=json.dumps({"data": data, "targets": targets}), text=True).stdout
         got, ref = json.loads(out), al.solve(data, **targets)
         self.assertEqual(set(got), set(ref))
+        lim, ref_lim = got.pop("limits"), ref.pop("limits")
+        self.assertEqual(lim["at_limit"], ref_lim["at_limit"])
+        self.assertEqual(set(lim["short"]), set(ref_lim["short"]))
+        for k, v in ref_lim["short"].items():
+            self.assertAlmostEqual(lim["short"][k], v, delta=1e-6, msg=k)
         for k in ref:
             np.testing.assert_allclose(got[k], ref[k], atol=1e-6, err_msg=f"{data['field']} {k}")
 

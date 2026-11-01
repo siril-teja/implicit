@@ -57,7 +57,16 @@ vertebra above it and everything higher turn with it.
     with the sliders (e.g. TL below about -35 deg on VIVA+ 50F, whose TL curve ends
     at L4, leaving two discs to balance it);
   - AR: each curve vertebra also turns about its own axial axis, locally (the turn
-    does not carry the vertebrae above).
+    does not carry the vertebrae above);
+  - ML (motion limits, >= 0.5: on): no disc turns from rest beyond half its range of
+    motion in each plane (implicit.anatomy.motion.ROM). Each target above is spread
+    by motion.fill: in the shares above until a disc reaches its limit, then over the
+    others; the part no disc can take is reported (solve: "limits"). The balance bend
+    is spread over its discs the same way; the AR tent of a curve is scaled down until
+    no disc exceeds its axial range;
+  - CP: each disc's lateral bend carries CP x motion.COUPLING axial rotation in the
+    direction of the bend (thoracic 0.40, lumbar 0), carried by the vertebrae above
+    (still a turn about each vertebra's own axis).
 Sagittal Cobb angles change exactly by the sagittal turns of the discs between
 their endplates, coronal ones by the lateral turns; when both planes change, the
 projections interact slightly (second order). Knob values are taken relative to the
@@ -100,14 +109,16 @@ import numpy as np
 
 from ..expr import SOLVERS
 from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_ITERS, POLY_RELAX
-from . import rotation
+from . import motion, rotation
 from .convert import VERTEBRAE, load_bone
 
 CURVE_STEPS = 4                                    # spine curve samples per span between centres
 LORDOSIS = [f"L{i}" for i in range(1, 6)]          # upper vertebrae of the LL discs
 KYPHOSIS = [f"T{i}" for i in range(4, 12)]         # upper vertebrae of the TK discs
 KNOBS = {"PI": (30.0, 90.0), "PT": (-10.0, 45.0), "LL": (0.0, 90.0), "TK": (0.0, 80.0),
-         "MT": (-90.0, 90.0), "TL": (-90.0, 90.0), "AR": (0.0, 1.0), "PO": (-20.0, 20.0), "CB": (-80.0, 80.0)}
+         "MT": (-90.0, 90.0), "TL": (-90.0, 90.0), "AR": (0.0, 1.0), "PO": (-20.0, 20.0), "CB": (-80.0, 80.0),
+         "ML": (0.0, 1.0), "CP": (0.0, 1.0)}
+PLANES = ("FE", "LB", "AR")                        # motion.ROM columns
 BAL_KNEE, BAL_MAX = 20.0, 30.0   # deg: coronal balance bend of the fractional discs, exact up to the knee
 BAL_SEARCH = 85.0                 # deg: interval searched for the balance before the limit
 CURVES = {"MT": ("T5", "T8", "T12"), "TL": ("T12", "L1", "L4")}  # default (upper end, apex, lower end)
@@ -222,8 +233,12 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0)):
         if rc is None:  # landmarks written before rotation centres were stored
             src = landmarks["L5"] if below_name == "S1" else below
             rc = rotation.centres(e, below, below_name, (src["depth"], src["height"]))
-        discs.append({"upper": lv, "center": pt(c), "angle": tilt(_up(below, "sup")) - tilt(_up(e, "inf")),
-                      "sagittal": pt(rc["sagittal"]), "coronal": pt(rc["coronal"])})
+        label = f"{lv}-{below_name}"
+        discs.append({"upper": lv, "label": label, "center": pt(c),
+                      "angle": tilt(_up(below, "sup")) - tilt(_up(e, "inf")),
+                      "sagittal": pt(rc["sagittal"]), "coronal": pt(rc["coronal"]),
+                      **({"rom": list(motion.ROM[label]), "coupling": motion.COUPLING[label]}
+                         if label in motion.ROM else {})})
         below, below_name = e, lv
     frames = {lv: {"center": pt(landmarks[lv]["body_center"]), "axes": _axes(landmarks[lv])} for lv in levels}
     frames["sacrum"] = {"center": pt(s1["sup"]["point"]), "axes": _axes(s1)}
@@ -437,16 +452,21 @@ def _curve_plan(levels, curves):
     return plans
 
 
-def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, light=False):
+def solve(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, CP=0.0, light=False):
     """{segment: [R columns (9), t (3)]}: the rigid motion p -> R p + t of each segment
-    ("legs", "pelvis", "sacrum" and the levels), plus the tables "tps" (inverse thin-
-    plate spline, see tps_table), "chain" (polyrigid field, see chain_table), "grid"
-    (forward displacement of the display grid) and "flow_cells", "flow_segs" (flow
-    lines, see flow_tables); ``light``: motions only."""
-    knobs = dict(PI=PI, PT=PT, LL=LL, TK=TK, MT=MT, TL=TL, AR=AR, PO=PO, CB=CB)
-    out = _motions(data, **knobs)
+    ("legs", "pelvis", "sacrum" and the levels), "limits" (see _motions), plus the
+    tables "tps" (inverse thin-plate spline, see tps_table), "chain" (polyrigid field,
+    see chain_table), "grid" (forward displacement of the display grid) and
+    "flow_cells", "flow_segs" (flow lines, see flow_tables); ``light``: motions and
+    limits only. ML (>= 0.5: on) keeps every disc within its range of motion, CP
+    scales the coupled axial rotation (1: physiological); both off by default here (the
+    Spine alignment block turns them on)."""
+    knobs = dict(PI=PI, PT=PT, LL=LL, TK=TK, MT=MT, TL=TL, AR=AR, PO=PO, CB=CB, ML=ML, CP=CP)
+    report = {}
+    out = _motions(data, **knobs, report=report)
     res = {k: [R[0][0], R[1][0], R[2][0], R[0][1], R[1][1], R[2][1], R[0][2], R[1][2], R[2][2], *t]
            for k, (R, t) in out.items()}
+    res["limits"] = report
     if light:
         return res
     pairs = [(q["point"], _apply(out[q["segment"]], q["point"])) for q in data["tps_points"]]
@@ -468,13 +488,24 @@ def _forward(data, out):
     return lambda X: tps_eval(F, X)  # forward: fitted from the rest points
 
 
-def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
-    """{segment: (R, t)} for the given parameter values (see solve)."""
+def _caps(discs, plane, on):
+    """Half range of motion (rad) of each disc in a plane (index into PLANES); no cap
+    when the limits are off or the disc has no range."""
+    return [math.radians(d["rom"][plane]) / 2 if on and "rom" in d else math.inf for d in discs]
+
+
+def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, CP=0.0, report=None):
+    """{segment: (R, t)} for the given parameter values (see solve). ``report`` (a dict)
+    receives what the limits cost: "short" {target: part not reached} (LL, TK, MT, TL in
+    deg, CB in mm, MT_AR / TL_AR: apex rotation in deg) and "at_limit" [[disc, plane]]."""
     base, meas = data["base"], data["measured"]
     rel = lambda k, v: v + meas[k] - base[k] if k in base else v  # relative to the rounded starting values
     PI, PT, CB = rel("PI", PI), rel("PT", PT), rel("CB", CB)
     delta = lambda k, v: math.radians(v - base.get(k, v))
     levels, discs = data["levels"], data["discs"]
+    on = ML >= 0.5
+    cfe, clb, car = (_caps(discs, p, on) for p in range(3))
+    short = {}
     # Pelvis: obliquity and tilt about the hips; PI by the sacrum about the SI axis.
     beta = 0.0 if abs(PI - meas["PI"]) < 1e-9 else _bisect(lambda b: _pi_after(data, b)[0], -math.radians(60),
                                                           math.radians(60), PI)
@@ -482,52 +513,87 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
     legs = _rot(data["hip"], Y_AXIS, -math.radians(PO))
     pelvis = _compose(legs, _rot(data["hip"], X_AXIS, alpha))
     sacrum = _compose(pelvis, _rot(data["si"], X_AXIS, beta))
-    # Disc turns: sagittal (LL, TK) and coronal (curves, then the balance below them).
-    d_ll, d_tk = delta("LL", LL), delta("TK", TK)
-    wl, wk = _weights(discs, LORDOSIS, 1.0), _weights(discs, KYPHOSIS, -1.0)
-    sag = [d_ll * a - d_tk * b for a, b in zip(wl, wk)]
+    # Disc turns: sagittal (LL, TK) and coronal (curves, then the balance below them),
+    # each spread over its discs within their ranges (motion.fill).
+    sl, short["LL"] = motion.fill(delta("LL", LL), _weights(discs, LORDOSIS, 1.0), cfe)
+    sk, short["TK"] = motion.fill(delta("TK", TK), _weights(discs, KYPHOSIS, -1.0), cfe)
+    sag = [a - b for a, b in zip(sl, sk)]
     plans = _curve_plan(levels, data["curves"])
-    cor, axial = [0.0] * len(discs), [0.0] * len(levels)
+    cor, tents = [0.0] * len(discs), {}
     targets = {"MT": MT, "TL": TL}  # curves whose vertebrae the subject lacks are not in the plan
     for k, (share, shape, _) in plans.items():
         d = delta(k, targets[k])
+        x, miss = motion.fill(d, share, clb)
+        short[k] = miss
         for j in range(len(discs)):
-            cor[j] -= d * share[j]  # convex right: each disc bends the spine above to the left
-            axial[j] -= AR * d * shape[j]  # the body turns toward the convexity
+            cor[j] -= x[j]  # convex right: each disc bends the spine above to the left
+        tents[k] = [-AR * (d - miss) * shape[i] for i in range(len(levels))]  # toward the convexity
     lowest = min(il for _, _, il in plans.values()) if plans else -1
+    wfrac = [1.0 if j <= lowest else 0.0 for j in range(len(discs))]
     frac = [j for j in range(len(discs)) if j <= lowest]
 
+    def bend(bal):
+        return motion.fill(bal, wfrac, clb)[0]
+
     def build(bal):
-        T, out = sacrum, {}
+        T, out, b = sacrum, {}, bend(bal)
         for j, d in enumerate(discs):
-            turn = cor[j] + (bal / len(frac) if j in frac else 0.0)
-            T = _compose(T, _compose(_rot(d["sagittal"], X_AXIS, sag[j]), _rot(d["coronal"], Y_AXIS, turn)))
+            T = _compose(T, _compose(_rot(d["sagittal"], X_AXIS, sag[j]), _rot(d["coronal"], Y_AXIS, cor[j] + b[j])))
             out[d["upper"]] = T
         return out
 
     s1 = _apply(sacrum, data["s1_point"])
+    top = levels[-1]
 
     def lean(bal):
         """Coronal angle from the S1 -> target line to the S1 -> top line (the target
         at the top's distance from S1, CB to the side, above S1): zero exactly when the
         balance is met, and growing steadily with the bend up to a half turn (the
         lateral offset itself turns back once the column leans past 90 deg)."""
-        top = _apply(build(bal)[levels[-1]], data["frames"][levels[-1]]["center"])
-        dx, dz = top[0] - s1[0], top[2] - s1[2]
+        p = _apply(build(bal)[top], data["frames"][top]["center"])
+        dx, dz = p[0] - s1[0], p[2] - s1[2]
         r = math.hypot(dx, dz)
         cx = max(-r, min(r, CB))  # the target point at the same distance from S1, above it
         cz = math.sqrt(max(r * r - cx * cx, 0.0))
         return math.atan2(dx * cz - dz * cx, dx * cx + dz * cz)  # signed angle target -> current
 
     moved_cor = any(abs(v) > 0 for v in cor) or abs(PO) > 0 or abs(alpha) > 0 or abs(beta) > 0 or any(sag)
-    bal = 0.0
+    bal, solved = 0.0, False
     if frac and (moved_cor or abs(CB - meas["CB"]) > 1e-9):
-        bal = _soft_limit(_branch_solve(lean, 0.0, math.radians(BAL_SEARCH)))
+        bal, solved = _soft_limit(_branch_solve(lean, 0.0, math.radians(BAL_SEARCH))), True
     out = build(bal)
+    short["CB"] = CB - (_apply(out[top], data["frames"][top]["center"])[0] - s1[0]) if solved else 0.0
+    lat = [c + b for c, b in zip(cor, bend(bal))]
+    # Axial rotation: the coupled rotation of each disc's lateral bend (ipsilateral,
+    # motion.COUPLING), carried by the vertebrae above, plus each curve's apex rotation
+    # (AR: a tent toward the convexity), scaled down so that no disc turns beyond its
+    # range (the coupled part alone is kept within it).
+    rel_ax = []
+    for j, d in enumerate(discs):
+        a = -CP * d.get("coupling", 0.0) * lat[j]  # + about the cranial axis: anterior turns left
+        rel_ax.append(max(-car[j], min(car[j], a)))
+    axial = [0.0] * len(levels)
+    for k, tent in tents.items():
+        steps = [tent[j] - (tent[j - 1] if j else 0.0) for j in range(len(discs))]
+        lam = 1.0
+        for j, b in enumerate(steps):
+            if abs(b) > 1e-12 and car[j] < math.inf:
+                lam = min(lam, max(0.0, (car[j] - math.copysign(1.0, b) * rel_ax[j]) / abs(b)))
+        for j in range(len(discs)):
+            rel_ax[j] += lam * steps[j]
+        short[f"{k}_AR"] = (1.0 - lam) * max((abs(v) for v in tent), default=0.0)
+    acc = 0.0
     for i, lv in enumerate(levels):  # axial rotation about the vertebra's own axis
+        acc += rel_ax[i]
         f = data["frames"][lv]
-        out[lv] = _compose(out[lv], _rot(f["center"], f["axes"][2], axial[i]))
+        out[lv] = _compose(out[lv], _rot(f["center"], f["axes"][2], acc))
     out.update(legs=legs, pelvis=pelvis, sacrum=sacrum)
+    if report is not None:
+        deg = {k: (v if k == "CB" else math.degrees(v)) for k, v in short.items()}
+        report["short"] = deg
+        report["at_limit"] = [[d["label"], PLANES[p]] for j, d in enumerate(discs) if "label" in d
+                              for p, (v, c) in enumerate(((sag[j], cfe[j]), (lat[j], clb[j]), (rel_ax[j], car[j])))
+                              if c < math.inf and abs(v) >= c - 1e-9]
     return out
 
 
@@ -535,7 +601,7 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0):
 
 def flow_tables(data, knobs):
     """Flow lines: the path of each seed point while the parameters go in FLOW_STEPS
-    equal steps from the subject's own values to ``knobs`` (AR held), through the
+    equal steps from the subject's own values to ``knobs`` (AR, ML, CP held), through the
     soft-tissue field. Segments (displacement so far at both ends) are binned into a
     grid of cells for the shader (see flow_eval):
       cells: per cell (offset, count, empty layers around it (see _empty_layers), 0), x fastest;
@@ -549,7 +615,7 @@ def flow_tables(data, knobs):
     for k in range(1, FLOW_STEPS + 1):
         s = k / FLOW_STEPS
         v = {key: start[key] + s * (knobs[key] - start[key]) for key in start}
-        P.append(_forward(data, _motions(data, **v, AR=knobs["AR"]))(S))
+        P.append(_forward(data, _motions(data, **v, **{k: knobs.get(k, 0.0) for k in ("AR", "ML", "CP")}))(S))
     P = np.array(P)  # (steps + 1, seeds, 3)
     lo, cs, n = np.asarray(f["lo"], float), f["cell"], np.asarray(f["n"])
     cells = [[] for _ in range(int(np.prod(n)))]

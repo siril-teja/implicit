@@ -143,9 +143,11 @@ KNOB_LABELS = {"PI": "Pelvic incidence (PI)", "PT": "Pelvic tilt (PT)",
                "MT": "Main thoracic Cobb T5-T12 (MT, + convex right)",
                "TL": "Thoracolumbar/lumbar Cobb T12-L4 (TL, + convex right)",
                "AR": "Apical rotation per degree of Cobb (AR)", "PO": "Pelvic obliquity (PO, + right up)",
-               "CB": "Coronal balance: T1 right of S1 (CB)"}
-KNOB_UNITS = {"AR": "", "CB": "mm"}
-KNOB_STEPS = {"AR": 0.05, "CB": 1.0}
+               "CB": "Coronal balance: T1 right of S1 (CB)",
+               "ML": "Motion limits per level (ML, 1 = on)",
+               "CP": "Coupled axial rotation of lateral bending (CP, 1 = physiological)"}
+KNOB_UNITS = {"AR": "", "CB": "mm", "ML": "", "CP": ""}
+KNOB_STEPS = {"AR": 0.05, "CB": 1.0, "ML": 1.0, "CP": 0.05}
 
 
 def anatomy_graph(bone_dir, relative_to=None, name=None):
@@ -158,7 +160,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
     spinal cord stays); the sternum and costal cartilages are carried by the soft-
     tissue field (bone -> smooth -> Field warp -> output). One
     Spine alignment block, driven by Number sliders (PI, PT, LL, TK, MT, TL, AR, PO,
-    CB) set to the subject's own values, feeds the Align blocks, the Field warp of
+    CB, ML, CP) set to the subject's own values, feeds the Align blocks, the Field warp of
     the spine curve and four hidden Field views (flow lines, lattice, arrows, slice); it is left
     out when the subject has no pelvic landmarks. One shared Number keeps bone volume
     when smoothing.
@@ -189,12 +191,12 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
             if f"T{n}" in spine["levels"]:
                 segments.update({f"rib{n}_left": f"T{n}", f"rib{n}_right": f"T{n}"})
         knobs = {}
-        start = {"PO": 0.0, **({"AR": 0.3} if spine["curves"] else {})}
+        start = {"PO": 0.0, "ML": 1.0, "CP": 1.0, **({"AR": 0.3} if spine["curves"] else {})}
         for i, (k, (lo, hi)) in enumerate(KNOBS.items()):
             if (k not in spine["base"] and k not in start) or (k == "CB" and not spine["curves"]):
                 knobs[k] = spine["base"].get(k, 0.0)  # no such region in this subject: has no effect
                 continue
-            nodes[f"spp_{k}"] = {"block": "number", "title": k, "pos": [240 * (i % 5), -340 + 115 * (i // 5)],
+            nodes[f"spp_{k}"] = {"block": "number", "title": k, "pos": [240 * (i % 5), -455 + 115 * (i // 5)],
                                  "in": {"value": round(spine["base"].get(k, start.get(k, 0.0)), 1), "min": lo,
                                         "max": hi, "step": KNOB_STEPS.get(k, 0.5), "unit": KNOB_UNITS.get(k, "deg"),
                                         "label": KNOB_LABELS[k]}}

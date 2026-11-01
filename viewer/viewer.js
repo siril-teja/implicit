@@ -70,6 +70,9 @@ async function loadScene(scene, key) {
   clear.key = null;
   $("#clearHead").hidden = true;
   $("#clearance").replaceChildren();
+  $("#limitHead").hidden = true;
+  $("#limits").replaceChildren();
+  limitsKey = null;
   $("#discHead").hidden = true;
   $("#discs").replaceChildren();
   if (scene.graph && !window.SCENES) return loadGraphScene(scene, key);
@@ -162,6 +165,7 @@ function rebuild(keep = true) {
 }
 
 let saveTimer = null;
+let limitsKey = null;  // rows last shown under Motion limits
 function graphChanged(kind) {
   const g = state.g;
   if (!g) return;
@@ -592,6 +596,18 @@ function updateDiscs(bodies) {
   }));
 }
 
+// Targets the motion limits keep from being reached (Spine alignment ML on): the part
+// not reached, per target; the discs at a limit in the tooltip.
+function updateLimits(s) {
+  const rows = Solvers.shortfalls(s, state.values), key = JSON.stringify(rows);
+  if (key === limitsKey) return;
+  limitsKey = key;
+  $("#limitHead").hidden = !rows.length;
+  $("#limits").replaceChildren(...rows.map(([name, text, at]) => el("div", {
+    className: "clr hit", title: at.length ? `At their limit: ${at.join(", ")}` : "" },
+  el("span", { textContent: `${name} not reached` }), el("span", { textContent: text }))));
+}
+
 // Colour scale of a visible field-coloured body (Field view arrows / slice).
 function updateLegend(s) {
   const b = s.bodies.find((q) => q.colormap && state.vis[q.group]);
@@ -605,6 +621,7 @@ function setUniforms(w, h) {
   const U = state.uniforms, s = state.scene;
   Solvers.apply(s, state.values);  // computed values (e.g. the spinopelvic chain) follow the sliders
   updateLegend(s);
+  updateLimits(s);
   const c = camBasis();
   gl.uniform2f(U.u_res, w, h);
   gl.uniform3fv(U.u_eye, c.eye);

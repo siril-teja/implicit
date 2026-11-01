@@ -47,6 +47,7 @@ Sliders in the viewer's Scene tab reshape the average spine (VIVA+ 50F):
 | coronal | MT, TL | Cobb angles of the main thoracic (T5-T8-T12) and thoracolumbar/lumbar (T12-L1-L4) curves, + convex right |
 | coronal | AR | apical axial rotation per degree of Cobb (toward the convexity) |
 | coronal | PO, CB | pelvic obliquity (+ right side up), coronal balance (T1 right of S1, mm) |
+| limits | ML, CP | motion limits per level (1 = on), coupled axial rotation of lateral bending (1 = physiological) |
 
 They start at the subject's own values (VIVA+ 50F: PI 58.7, PT 17.2, SS 41.5,
 LL 51.9, TK 30.3, MT 0, TL -0.3 deg, CB 0 mm), where nothing moves. The end
@@ -66,6 +67,22 @@ Spine alignment block:
 Each disc turns about its physiological rotation centres (lumbar: Pearcy & Bogduk
 1988; thoracic: Qiu et al. 2003; definitions and references in
 `implicit/anatomy/rotation.py`), stored with the landmarks.
+
+**Motion limits** (ML = 1, the default): no disc turns from its rest orientation by
+more than half its in vitro range of motion in each plane (flexion-extension,
+lateral bending, axial rotation; medians of Wilke et al. 2025,
+[doi:10.1002/jsp2.70052](https://doi.org/10.1002/jsp2.70052), thoracic levels with
+the rib cage). A target is spread over its discs as before until a disc reaches
+its limit, then over the others; what no disc can take is listed under **Motion
+limits** in the Scene tab (target minus reached; the discs at a limit in the
+tooltip). Lateral bending of the thoracic discs carries 0.40 deg of axial rotation
+in the direction of the bend per degree (CP = 1; Fujimori et al. 2014,
+[doi:10.1016/j.spinee.2013.11.054](https://doi.org/10.1016/j.spinee.2013.11.054)).
+The ranges are small: T4-T12 together allow about +-7 deg of kyphosis change and
+L1-S1 about +-22 deg of lordosis change from the template, so differences in
+posture between people beyond that come from the shape of vertebrae and discs
+(roadmap 3.2, 3.3), not motion. ML = 0 lifts the limits. Tables and assumptions:
+`implicit/anatomy/motion.py`.
 
 The **Field view** block shows the field: flow lines (the paths tissue near the
 spine travels while the sliders go from the subject's values to the current ones,
