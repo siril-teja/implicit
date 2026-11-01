@@ -25,6 +25,10 @@ is updated from it.
    - add a row to `docs/LITERATURE.md` for every source read in the step (used,
      considered or rejected), and update the rows of sources the step uses again:
      what the source reports, what we concluded or assumed, and where it is used.
+   - before merging, check every `.md` file in the repository (README, CHANGELOG,
+     CONTRIBUTING, NOTICE, `assets/bones/README.md`, `docs/ROADMAP.md`,
+     `docs/LITERATURE.md`, `docs/LICENSING.md`, `docs/primer.md`) against the change
+     and bring it up to date: no stale statement, status, step number or licence.
 
    PRs that should not release (docs, CI chores) get the label `no-release`;
    `ci/check.sh --no-release` skips the version check locally.

@@ -29,6 +29,8 @@ structures in CT images*, Radiology: Artificial Intelligence 2023;
 dataset doi:10.5281/zenodo.8367088, CC BY 4.0. The files here are derived works
 (signed distance fields computed from the segmentation masks and the CT).
 
-`landmarks.json` (per subject) holds the vertebral frames and endplate planes in
-the same frame, from `python -m implicit.anatomy.landmarks <folder>`. The
+`landmarks.json` (per subject) holds the vertebral frames, endplate planes and
+corners, rotation centres, pelvic landmarks (femoral heads, sacroiliac joints) and,
+with a rib cage, the costochondral and sternocostal junctions, in the same frame,
+from `python -m implicit.anatomy.landmarks <folder>`. The
 Landmarks block of the block canvas reads it.
