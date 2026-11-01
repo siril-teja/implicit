@@ -74,6 +74,7 @@ from . import discs
 from .convert import VERTEBRAE, load_bone, load_bones, save_bone
 
 TOL = 0.1    # mm: shifts below this are not applied (corner detection repeats to ~0.05 mm)
+RIB_TOL = 0.01  # mm: a rib this far from its vertebra's position is moved (exact: origin only)
 SCAN = 0.05  # mm: step of the search when a disc is opened to its thickness floor
 FLOOR_MARGIN = 0.05  # mm: discs are opened this far past their thickness floor (sample rounding)
 JOINT_SPACE_LUMBAR = 2.0    # mm (Weishaupt 1999 grade 0 lower limit, via Tiwari 2020)
@@ -249,7 +250,8 @@ def close_junctions(grids, log=print):
         cc = grids[c]
         gaps = {r: float(cc.eval(_surface(grids[r])).min()) for r in ribs.values()}
         cutters = list(ribs.values()) + (["sternum"] if "sternum" in grids else [])
-        overlap = any(float(grids[o].eval(_surface(cc)).min()) < -0.1 for o in cutters)
+        # (the cartilage's surface samples lie up to half its cell from the surface)
+        overlap = any(float(grids[o].eval(_surface(cc)).min()) < -0.5 * cc.spacing - 0.1 for o in cutters)
         if all(g <= JUNCTION_CONTACT for g in gaps.values()) and not overlap:
             continue
         cc = _pad(cc)
@@ -288,8 +290,8 @@ def recorded_shifts(bone_dir):
     out = {}
     rec = json.loads(f.read_text()) if f.exists() else None
     while rec:
-        for lv, u in rec.get("vertebrae_mm", {}).items():
-            if isinstance(u, list) and lv[0] in "TL" and lv[1:].isdigit():
+        for lv, u in rec.get("vertebrae_mm", {}).items():  # shifts below TOL were not applied
+            if isinstance(u, list) and lv[0] in "TL" and lv[1:].isdigit() and np.linalg.norm(u) >= TOL:
                 out[lv] = out.get(lv, np.zeros(3)) + np.asarray(u, float)
         rec = rec.get("previous")
     return out
@@ -313,7 +315,8 @@ def normalise(bone_dir, dry_run=False, log=print):
               "discs": {discs.label(u, l): {"shift_mm": round(d, 3), "before_AMP_mm": [round(x, 2) for x in h],
                                             **({"note": n} if n else {})}
                         for u, l, d, _, h, n in shifts},
-              "vertebrae_mm": {lv: [round(float(x), 3) for x in t] for lv, t in moves.items()}}
+              "vertebrae_mm": {lv: [round(float(x), 3) for x in t] for lv, t in moves.items()
+                               if np.linalg.norm(t) >= TOL}}
     for u, l, d, _, h, n in shifts:
         log(f"  {discs.label(u, l):>8}: A/M/P {h[0]:5.1f} {h[1]:5.1f} {h[2]:5.1f} -> shift {d:+6.2f} mm  {n}")
     if dry_run:
@@ -326,11 +329,13 @@ def normalise(bone_dir, dry_run=False, log=print):
         for side in ("left", "right"):
             r = f"rib{n}_{side}"
             if r in grids and f"T{n}" in lm:
-                u = moves.get(f"T{n}", np.zeros(3))
-                if "template_shift_mm" not in metas[r]:
-                    u = u + prior.get(f"T{n}", np.zeros(3))
-                moves[r] = u
-    moved = {lv for lv, t in moves.items() if np.linalg.norm(t) >= TOL}
+                # to where its vertebra is: the vertebra's applied total so far, plus
+                # this run's shift (also brings back a rib that took a shift its
+                # vertebra did not)
+                done = np.asarray(metas[r].get("template_shift_mm", [0.0, 0.0, 0.0]), float)
+                moves[r] = moves.get(f"T{n}", np.zeros(3)) + prior.get(f"T{n}", np.zeros(3)) - done
+    moved = {lv for lv, t in moves.items()
+             if np.linalg.norm(t) >= (RIB_TOL if lv.startswith("rib") else TOL)}
     tips = []
     for n in RIB_TIPS:
         for side in ("left", "right"):
@@ -349,7 +354,7 @@ def normalise(bone_dir, dry_run=False, log=print):
             moves[n] = np.mean([u for _, u in tips], 0)
             record["vertebrae_mm"][n] = "carried by the rib ends (inverse distance squared)"
     for n, u in moves.items():
-        if n.startswith("rib"):
+        if n.startswith("rib") and n in moved:
             record["vertebrae_mm"][n] = [round(float(x), 3) for x in u]
     carved = carve_joints(grids, log)
     record["joints"] = {f"{u}-{l}": {"space_mm": joint_space(u, l), "clearance_before_mm": round(c0, 3),

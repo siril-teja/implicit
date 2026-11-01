@@ -62,7 +62,7 @@ class TestAlignment(unittest.TestCase):
     def test_identity_at_baseline(self):
         res = al.solve(self.data, **self.targets(AR=0.4))
         for seg, m in res.items():
-            if seg not in ("tps", "chain", "grid", "flow_cells", "flow_segs", "limits"):
+            if seg not in ("tps", "tps_ribcage", "chain", "grid", "flow_cells", "flow_segs", "limits"):
                 np.testing.assert_allclose(m, [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], atol=1e-9, err_msg=seg)
         P = np.random.default_rng(0).uniform(-150, 150, (200, 3))
         np.testing.assert_allclose(al.tps_eval(res["tps"], P), P, atol=1e-6)

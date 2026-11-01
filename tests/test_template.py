@@ -95,7 +95,7 @@ class TestTemplate(unittest.TestCase):
                 g = grids[bone]
                 d = cc.eval(template._surface(g))
                 self.assertLess(float(d.min()), 0.2, f"{bone}: gap")  # touching
-                self.assertGreater(float(g.eval(C).min()), -0.5 * g.spacing - 0.1, f"{bone}: overlap")
+                self.assertGreater(float(g.eval(C).min()), -0.5 * cc.spacing - 0.1, f"{bone}: overlap")
             self.assertIn("template_junctions_closed", load_bone(SUBJECT / f"costal_cartilage_{side}.npz")[1])
 
     def test_vertebra_shifts_add_up(self):
