@@ -126,8 +126,9 @@ class TestAlignment(unittest.TestCase):
 
     def test_motion_limits_respected(self):
         """With the limits on no disc turns beyond its range (half the total range of
-        Wilke et al. 2025 each way); sagittal-only and coronal-only turns stay within the
-        plane's own half range, any setting within the combined one."""
+        Wilke et al. 2025 each way, or less: its feasible range); sagittal-only and
+        coronal-only turns stay within the plane's own half range, any setting within
+        the combined one."""
         rom = {d["label"]: np.array(d["rom"]) / 2 for d in self.data["discs"]}
         for kw, plane in ((dict(LL=90.0, TK=0.0), 0), (dict(LL=0.0, TK=80.0), 0),
                           (dict(MT=80.0, TL=-80.0, CB=40.0, CP=0.0), 1)):
@@ -144,17 +145,20 @@ class TestAlignment(unittest.TestCase):
 
     def test_shortfall_reported(self):
         """A target beyond the levels' ranges is met up to the reported shortfall; the
-        levels it needs are all at their limit."""
+        levels it needs are all at their limit (half the range of motion, or the
+        feasible range where that is smaller: implicit.anatomy.ranges)."""
         t = self.targets(LL=80.0, TK=50.0, ML=1.0)
         res = al.solve(self.data, **t, light=True)
         got, short = self.measured(res), res["limits"]["short"]
-        cap_ll = sum(d["rom"][0] / 2 for d in self.data["discs"] if d["upper"] in al.LORDOSIS)
-        cap_tk = sum(d["rom"][0] / 2 for d in self.data["discs"] if d["upper"] in al.KYPHOSIS)
+        D = self.data["discs"]
+        pos, neg = al._caps(D, 0, True, 1), al._caps(D, 0, True, -1)  # rad
+        cap_ll = np.degrees(sum(c for d, c in zip(D, pos) if d["upper"] in al.LORDOSIS))
+        cap_tk = np.degrees(sum(c for d, c in zip(D, neg) if d["upper"] in al.KYPHOSIS))  # TK up: turns -
         self.assertAlmostEqual(short["LL"], 80.0 - self.b["LL"] - cap_ll, places=6)
         self.assertAlmostEqual(short["TK"], 50.0 - self.b["TK"] - cap_tk, places=6)
         for k in ("LL", "TK"):
             self.assertAlmostEqual(got[k], t[k] - short[k], places=6, msg=k)
-        at = {lab for lab, p in res["limits"]["at_limit"] if p == "FE"}
+        at = {lab for lab, p, _ in res["limits"]["at_limit"] if p == "FE"}
         self.assertEqual(at, {d["label"] for d in self.data["discs"] if d["upper"] in al.LORDOSIS + al.KYPHOSIS})
         # Within the ranges: met exactly, nothing short.
         res = al.solve(self.data, **self.targets(LL=56.0, TK=33.0, ML=1.0), light=True)
@@ -162,6 +166,24 @@ class TestAlignment(unittest.TestCase):
         got = self.measured(res)
         self.assertAlmostEqual(got["LL"], 56.0, places=6)
         self.assertAlmostEqual(got["TK"], 33.0, places=6)
+
+    def test_feasible_ranges_respected(self):
+        """Every disc turn within its feasible range (implicit.anatomy.ranges) in each
+        plane alone; the reason at a limit is the range's."""
+        rng = {d["label"]: d["range"] for d in self.data["discs"] if "range" in d}
+        self.assertEqual(len(rng), len(self.data["discs"]))
+        for kw in (dict(LL=90.0), dict(LL=0.0), dict(TK=80.0), dict(TK=0.0)):
+            res = al.solve(self.data, **self.targets(**kw, ML=1.0), light=True)
+            below = "sacrum"
+            for d in self.data["discs"]:
+                Rl, Ru = motion(res[below])[0], motion(res[d["upper"]])[0]
+                a = np.degrees(np.arctan2((Rl.T @ Ru)[2, 1], (Rl.T @ Ru)[2, 2]))  # turn about x
+                lo, hi = rng[d["label"]]["FE"]
+                self.assertTrue(lo - 1e-6 <= a <= hi + 1e-6, f"{kw} {d['label']} {a:.3f} not in [{lo}, {hi}]")
+                below = d["upper"]
+        res = al.solve(self.data, **self.targets(LL=90.0, ML=1.0), light=True)
+        why = {(lab, p): w for lab, p, w in res["limits"]["at_limit"]}
+        self.assertEqual(why[("L4-L5", "FE")], rng["L4-L5"]["why"]["FE+"])  # clearance L4-L5
 
     def test_coupled_rotation_follows_the_bend(self):
         """Thoracic lateral bending carries ipsilateral axial rotation, 0.40 deg per deg

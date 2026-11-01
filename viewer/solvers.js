@@ -118,7 +118,23 @@ const Solvers = (() => {
     return [R, [0, 1, 2].map((i) => cq[i] - Rc[i])];
   }
   const PLANES = ["FE", "LB", "AR"];
-  const caps = (discs, p, on) => discs.map((d) => (on && d.rom ? rad(d.rom[p]) / 2 : Infinity));
+  // As alignment.py _caps / _why: how far each disc may turn in a plane and direction.
+  function caps(discs, p, on, sign) {
+    return discs.map((d) => {
+      if (!on || !d.rom) return Infinity;
+      let c = rad(d.rom[p]) / 2;
+      if (d.range) c = Math.min(c, Math.max(0, rad(d.range[PLANES[p]][sign > 0 ? 1 : 0]) * sign));
+      return c;
+    });
+  }
+  function why(d, p, sign) {
+    const r = d.range;
+    if (r) {
+      const w = r.why[`${PLANES[p]}${sign > 0 ? "+" : "-"}`];
+      if (w && rad(Math.abs(r[PLANES[p]][sign > 0 ? 1 : 0])) < rad(d.rom[p]) / 2) return w;
+    }
+    return "range of motion";
+  }
   function weights(discs, uppers, sign) {
     const w = discs.map((d) => (uppers.includes(d.upper) ? Math.max(sign * d.angle, 1.0) : 0.0));
     const s = w.reduce((a, b) => a + b, 0);
@@ -241,19 +257,21 @@ const Solvers = (() => {
     const PI = rel("PI", v.PI), PT = rel("PT", v.PT), CB = rel("CB", v.CB ?? 0);
     const delta = (k, x) => rad(x - (k in base ? base[k] : x));
     const PO = v.PO ?? 0, AR = v.AR ?? 0, CP = v.CP ?? 0, on = (v.ML ?? 0) >= 0.5, levels = d.levels, discs = d.discs;
-    const [cfe, clb, car] = [0, 1, 2].map((p) => caps(discs, p, on)), short = {};
+    const [cfe, clb, car] = [0, 1, 2].map((p) => [caps(discs, p, on, 1), caps(discs, p, on, -1)]), short = {};
+    const side = (C, x) => (x >= 0 ? C[0] : C[1]);
     const beta = Math.abs(PI - meas.PI) < 1e-9 ? 0 : bisect((b) => piAfter(d, b)[0], -rad(60), rad(60), PI);
     const alpha = rad(PT - piAfter(d, beta)[1]);
     const legs = rot(d.hip, Y, -rad(PO)), pelvis = compose(legs, rot(d.hip, X, alpha));
     const sacrum = compose(pelvis, rot(d.si, X, beta));
     let sl, sk;
-    [sl, short.LL] = fill(delta("LL", v.LL), weights(discs, LORDOSIS, 1), cfe);
-    [sk, short.TK] = fill(delta("TK", v.TK), weights(discs, KYPHOSIS, -1), cfe);
+    const dLL = delta("LL", v.LL), dTK = delta("TK", v.TK);
+    [sl, short.LL] = fill(dLL, weights(discs, LORDOSIS, 1), side(cfe, dLL));
+    [sk, short.TK] = fill(dTK, weights(discs, KYPHOSIS, -1), side(cfe, -dTK));
     const sag = sl.map((a, i) => a - sk[i]);
     const plans = curvePlan(levels, d.curves), cor = discs.map(() => 0), tents = {};
     const targets = { MT: v.MT ?? 0, TL: v.TL ?? 0 };
     for (const [k, [share, shape]] of Object.entries(plans)) {
-      const dk = delta(k, targets[k]), [x, miss] = fill(dk, share, clb);
+      const dk = delta(k, targets[k]), [x, miss] = fill(dk, share, side(clb, -dk));
       short[k] = miss;
       for (let j = 0; j < discs.length; j++) cor[j] -= x[j];
       tents[k] = levels.map((_, i) => -AR * (dk - miss) * shape[i]);
@@ -261,7 +279,7 @@ const Solvers = (() => {
     const lows = Object.values(plans).map((p) => p[2]);
     const lowest = lows.length ? Math.min(...lows) : -1;
     const wfrac = discs.map((_, j) => (j <= lowest ? 1 : 0)), nfrac = lowest + 1;
-    const bend = (bal) => fill(bal, wfrac, clb)[0];
+    const bend = (bal) => fill(bal, wfrac, side(clb, bal))[0];
     const build = (bal) => {
       let T = sacrum;
       const out = {}, b = bend(bal);
@@ -285,12 +303,15 @@ const Solvers = (() => {
     const out = build(bal);
     short.CB = solved ? CB - (apply(out[top], d.frames[top].center)[0] - s1[0]) : 0;
     const bb = bend(bal), lat = cor.map((c, j) => c + bb[j]);
-    const relAx = discs.map((disc, j) => Math.max(-car[j], Math.min(car[j], -CP * (disc.coupling ?? 0) * lat[j])));
+    const relAx = discs.map((disc, j) => Math.max(-car[1][j], Math.min(car[0][j], -CP * (disc.coupling ?? 0) * lat[j])));
     for (const [k, tent] of Object.entries(tents)) {
       const steps = discs.map((_, j) => tent[j] - (j ? tent[j - 1] : 0));
       let lam = 1;
       steps.forEach((b, j) => {
-        if (Math.abs(b) > 1e-12 && car[j] < Infinity) lam = Math.min(lam, Math.max(0, (car[j] - Math.sign(b) * relAx[j]) / Math.abs(b)));
+        if (Math.abs(b) > 1e-12 && side(car, b)[j] < Infinity) {
+          const room = b > 0 ? car[0][j] - relAx[j] : car[1][j] + relAx[j];
+          lam = Math.min(lam, Math.max(0, room / Math.abs(b)));
+        }
       });
       steps.forEach((b, j) => { relAx[j] += lam * b; });
       short[`${k}_AR`] = (1 - lam) * Math.max(0, ...tent.map(Math.abs));
@@ -313,8 +334,9 @@ const Solvers = (() => {
       report.at_limit = [];
       discs.forEach((disc, j) => {
         if (!disc.label) return;
-        [[sag[j], cfe[j]], [lat[j], clb[j]], [relAx[j], car[j]]].forEach(([x, c], p) => {
-          if (c < Infinity && Math.abs(x) >= c - 1e-9) report.at_limit.push([disc.label, PLANES[p]]);
+        [[sag[j], cfe], [lat[j], clb], [relAx[j], car]].forEach(([x, C], p) => {
+          const c = side(C, x)[j];
+          if (c < Infinity && Math.abs(x) >= c - 1e-9) report.at_limit.push([disc.label, PLANES[p], why(disc, p, x >= 0 ? 1 : -1)]);
         });
       });
     }
@@ -455,7 +477,7 @@ const Solvers = (() => {
       if (s.kind !== "spinopelvic") continue;
       const lim = run(s, value).limits;
       if (!lim || !lim.short) continue;
-      const at = (lim.at_limit || []).map(([d, p]) => `${d} ${p}`);
+      const at = (lim.at_limit || []).map(([d, p, w]) => `${d} ${p} (${w})`);
       for (const [k, x] of Object.entries(lim.short)) {
         const mm = k === "CB";
         if (Math.abs(x) < (mm ? 0.5 : 0.1)) continue;
