@@ -21,7 +21,10 @@ is updated from it.
      [semver](https://semver.org/): patch for fixes, minor for features (0.x for now);
    - add a dated section `## [X.Y.Z] - YYYY-MM-DD` to `CHANGELOG.md`, which
      becomes the release notes;
-   - list any new third-party code or data in `NOTICE.md`.
+   - list any new third-party code or data in `NOTICE.md`;
+   - add a row to `docs/LITERATURE.md` for every source read in the step (used,
+     considered or rejected), and update the rows of sources the step uses again:
+     what the source reports, what we concluded or assumed, and where it is used.
 
    PRs that should not release (docs, CI chores) get the label `no-release`;
    `ci/check.sh --no-release` skips the version check locally.

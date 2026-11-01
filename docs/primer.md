@@ -127,17 +127,23 @@ analytic shapes.
 ## 3. Architecture
 
 ```
-examples/*.py   Python scene scripts (source of truth; version-controlled)
-      │  builds a graph of SDF nodes + Params
-implicit/       expr.py (scalar exprs, Params) · sdf.py (nodes: GLSL + NumPy)
-      │          scene.py (bodies → GLSL/JSON) · mesh.py (marching tets, STL)
-      ├──► scene JSON ──► viewer/ (WebGL2 sphere tracer, sliders, section)
+examples/*.json  block graphs (bones, landmarks, alignment, booleans, outputs)
+examples/*.py    Python scene scripts
+      │  build a graph of SDF nodes + Params
+implicit/        expr.py (scalar exprs, Params, CPU solvers) · sdf.py (nodes: GLSL + NumPy)
+      │          graph.py (blocks) · scene.py (bodies → GLSL/JSON) · mesh.py (marching tets, STL)
+      │          anatomy/ (conversion, landmarks, template, alignment, motion limits,
+      │                    clearance, discs)
+      ├──► scene JSON ──► viewer/ (WebGL2 sphere tracer, block canvas, sliders,
+      │                    clearance, discs, motion limits; same solvers in JS)
       │                    static → GitHub Pages; local → live reload + export
-      └──► NumPy sampling ──► STL now; FE meshes (Marc/Abaqus) next
+      └──► NumPy sampling ──► STL now; FE meshes (Marc) next
 ```
 
 Every node implements the same math twice, in GLSL (display) and in NumPy
-(export). GLSL↔NumPy parity tests are on the roadmap.
+(export); the CPU solvers (alignment, clearance, discs) twice, in Python and
+JavaScript. CI checks both: the GPU check renders the browser-built shader and
+compares it with NumPy, and the tests run the JavaScript solvers against Python.
 
 ## 4. Roadmap
 

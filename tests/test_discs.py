@@ -64,7 +64,7 @@ class TestDiscs(unittest.TestCase):
         self.assertEqual(discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest), {})
 
     def test_hyperkyphosis_compresses_thoracic_discs(self):
-        h, rest = self.heights(spp_TK=70)
+        h, rest = self.heights(spp_TK=70, spp_ML=0)  # beyond the motion limits
         thick = discs.report_thickness(self.scene)[0]
         flags = discs.posture_flags([(u, l, *x) for (u, l), x in h.items()], rest, thick)
         self.assertEqual(set(flags), {("T4", "T5"), ("T5", "T6"), ("T8", "T9")})
@@ -81,7 +81,7 @@ class TestDiscs(unittest.TestCase):
         now, _ = discs.report(self.scene)
         for u, l, *h in now:
             self.assertLessEqual(thick[(u, l)], min(h) + 0.3, discs.label(u, l))
-        self.scene.set_params({**self.defaults, "spp_TK": 70})
+        self.scene.set_params({**self.defaults, "spp_TK": 70, "spp_ML": 0})
         thick = discs.report_thickness(self.scene)[0]
         self.assertLess(thick[("T4", "T5")], discs.MIN_THICKNESS)
         self.assertIn(("T4", "T5"), discs.thin_flags(thick))

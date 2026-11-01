@@ -383,7 +383,7 @@ const Graph = (() => {
   // ------------------------------------------------------------ spinopelvic alignment
   // As implicit/graph.py: the chain model runs on the CPU (solvers.js) and each Align
   // block reads its segment's motion (cos a, sin a, t_y, t_z) as computed uniforms.
-  const KNOB_NAMES = ["PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB"];
+  const KNOB_NAMES = ["PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB", "ML", "CP"];
   function spinopelvic(id, x, library) {
     const b = library && library.bones[x.bone.lib];
     if (!b || !b.spine) throw new Error("no spine and pelvis landmarks for this subject");
@@ -417,7 +417,7 @@ const Graph = (() => {
   function align(id, x, params) {
     const a = x.alignment, seg = x.segment, s = a.solver;
     const res = Solvers.run(s, (n) => a.knobs[n].value);
-    if (!(seg in res) || seg === "tps") throw new Error(`segment "${seg}" is not in this alignment`);
+    if (!(seg in res) || ["tps", "chain", "grid", "flow_cells", "flow_segs", "limits"].includes(seg)) throw new Error(`segment "${seg}" is not in this alignment`);
     if (!a.motions[seg]) {
       a.motions[seg] = res[seg].map((v, i) => {
         const p = computedParam(s, `${s.id}_${seg}_${i}`, seg, i, v, sampled(a).map((r) => r[seg][i]), params);

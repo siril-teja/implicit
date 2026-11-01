@@ -5,6 +5,52 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.17.0] - 2026-11-01
+
+### Added
+- **Motion limits and coupling** (roadmap step 1.5): per-level ranges of motion
+  (flexion-extension, lateral bending, axial rotation) from Wilke et al. 2025
+  (JOR Spine, doi:10.1002/jsp2.70052; medians, thoracic levels with the rib cage,
+  which agree with in vivo data), in `implicit/anatomy/motion.py` and stored with
+  each disc of the chain data. With the new **ML** slider on (default in the Spine
+  alignment block) no disc turns from rest beyond half its range either way; LL,
+  TK, MT, TL and the coronal balance are spread over their discs as before until a
+  disc reaches its limit, then over the others (water-filling: continuous in the
+  sliders). The apex rotation (AR) is scaled down where it would exceed a disc's
+  axial range.
+- **CP** slider: thoracic lateral bending carries ipsilateral axial rotation,
+  0.40 deg per deg at CP = 1 (6.2 deg per 15.6 deg over T1-L1, Fujimori et al.
+  2014, doi:10.1016/j.spinee.2013.11.054); none at lumbar levels (in vivo coupling
+  there is small and changes direction between levels).
+- Viewer: a **Motion limits** list in the Scene tab gives each target that is not
+  reached and by how much (deg; CB in mm), with the discs at a limit in the
+  tooltip. The solver result has a `limits` entry (`short`, `at_limit`), the same
+  in Python and the browser.
+- `docs/LITERATURE.md`: every source read so far (26 rows): what it reports, what
+  we concluded or assumed, where it is used, and whether it is used, considered or
+  superseded. Updated in every step (CONTRIBUTING.md).
+
+### Changed
+- Docs brought up to date: README (project status, rib cage in the template, its
+  drift from the rib ends with large slider changes, licences of both bundled
+  subjects), NOTICE (derived rib cage files), primer (architecture, Python/JS
+  parity checks), roadmap (goal, step numbers).
+- Roadmap: new step 1.6 **Connected rib cage** (ribs, costal cartilages and
+  sternum stay joined in every posture: rigid sternum fitted to the rib ends,
+  cartilages deformed between rib and sternum); constrained distribution, global
+  balance and cervical spine move to 1.7-1.9.
+- `alignment.solve` takes `ML` and `CP` (both off by default there; the graph
+  block defaults to on). The slider smoothness test runs with the limits off and
+  on, and accepts a steeper stretch that splits into proportionally smaller steps.
+
+### Notes
+- The ranges are small: from the template, T4-T12 allow about +-6.8 deg of TK,
+  L1-S1 about +-21.9 deg of LL, MT about +-7.8 deg, TL about +-15.4 deg, and the two
+  lumbosacral discs below the curves about 8 deg of balancing bend. Posture
+  differences between people beyond these come from vertebral and disc shape
+  (roadmap 3.2, 3.3). Splitting each range equally into its two directions is an
+  assumption (standing is not the middle of the range in vivo).
+
 ## [0.16.0] - 2026-10-31
 
 ### Added
