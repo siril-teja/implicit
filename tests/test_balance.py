@@ -54,16 +54,17 @@ class TestBalance(unittest.TestCase):
         self.assertAlmostEqual(res["limits"]["balance"]["TPA"], tpa, places=6)
 
     def test_compensation_meets_the_target(self):
-        """With a compensation mode T1 is held at the SV target within 1 mm; pelvic
-        retroversion leaves TPA as it is (it measures the deformity independently of
-        pelvic retroversion, Protopsaltis 2014), thoracic flattening lowers it."""
-        free = self.solve(LL=35.0)
-        sv0, tpa0 = self.measured(free)
-        self.assertGreater(sv0, self.b["SV"] + 50.0)  # lordosis lost: the trunk falls forward
-        for cm, var in ((1.0, "PT"), (2.0, "TK")):
-            res = self.solve(LL=35.0, CM=cm, SV=self.b["SV"])
+        """With a compensation mode T1 is held at the SV target within 1 mm (limits off);
+        pelvic retroversion leaves TPA as it is (it measures the deformity independently
+        of pelvic retroversion, Protopsaltis 2014), thoracic flattening lowers it."""
+        target = self.data["measured"]["SV"]  # the subject's own (SV knob at its rounded value)
+        for ll, cm, var in ((35.0, 1.0, "PT"), (45.0, 2.0, "TK")):
+            free = self.solve(LL=ll)
+            sv0, tpa0 = self.measured(free)
+            self.assertGreater(sv0, target + 20.0)  # lordosis lost: the trunk falls forward
+            res = self.solve(LL=ll, CM=cm, SV=self.b["SV"])
             sv, tpa = self.measured(res)
-            self.assertAlmostEqual(sv, self.b["SV"], delta=1.0, msg=var)
+            self.assertAlmostEqual(sv, target, delta=1.0, msg=var)
             self.assertIn(var, res["limits"]["compensation"])
             if var == "PT":
                 self.assertGreater(res["limits"]["compensation"]["PT"], self.b["PT"] + 10.0)
@@ -72,7 +73,11 @@ class TestBalance(unittest.TestCase):
                 self.assertLess(res["limits"]["compensation"]["TK"], self.b["TK"] - 10.0)
                 self.assertLess(tpa, tpa0)
         res = self.solve(SV=self.b["SV"] + 30.0, CM=1.0)
-        self.assertAlmostEqual(self.measured(res)[0], self.b["SV"] + 30.0, delta=1.0)
+        self.assertAlmostEqual(self.measured(res)[0], target + 30.0, delta=1.0)
+        # thoracic flattening alone cannot make up 17 deg of lordosis: TK reaches 0
+        res = self.solve(LL=35.0, CM=2.0, SV=self.b["SV"])
+        self.assertAlmostEqual(res["limits"]["compensation"]["TK"], 0.0, places=6)
+        self.assertLess(res["limits"]["short"]["SV"], -20.0)
 
     def test_compensation_within_the_limits(self):
         """With the limits on thoracic flattening cannot reach the target (TK can change
@@ -80,7 +85,7 @@ class TestBalance(unittest.TestCase):
         res = self.solve(LL=35.0, CM=2.0, SV=self.b["SV"], ML=1.0)
         short = res["limits"]["short"]["SV"]
         self.assertLess(short, -20.0)
-        self.assertAlmostEqual(self.measured(res)[0], self.b["SV"] - short, delta=1e-6)
+        self.assertAlmostEqual(self.measured(res)[0], self.data["measured"]["SV"] - short, delta=1e-6)
 
     def test_presets(self):
         """Roussouly presets: PI and PT of each type (Laouissat et al. 2017), LL from PI
