@@ -607,6 +607,7 @@ function updateDiscs(bodies) {
   const thick = Discs.thickness(state.atlasData, state.atlasSize, bodies);
   const thin0 = Discs.thinFlags(Discs.thickness(state.atlasData, state.atlasSize, idle));
   const bad = Discs.postureFlags(now, rest, thick), norm = Discs.normFlags(rest);
+  const wedge = Discs.wedge(bodies);
   for (const [k, v] of Object.entries(thin0)) norm[k] = [...(norm[k] || []), v];
   $("#discHead").hidden = !now.length;
   $("#discs").replaceChildren(...now.map(([u, l, a, m, p, le, ri]) => {
@@ -616,7 +617,8 @@ function updateDiscs(bodies) {
         + `left ${le.toFixed(1)}, right ${ri.toFixed(1)} mm; thinnest ${t === undefined ? "?" : t.toFixed(1)} mm `
         + `(floor ${Discs.thicknessFloor(u, l).toFixed(1)} mm)` },
       el("span", { textContent: `${Discs.label(u, l)}${norm[k] ? " *" : ""}` }),
-      el("span", { textContent: `${a.toFixed(1)} / ${m.toFixed(1)} / ${p.toFixed(1)}${t === undefined ? "" : ` · ${t.toFixed(1)}`}` }));
+      el("span", { textContent: `${a.toFixed(1)} / ${m.toFixed(1)} / ${p.toFixed(1)}${t === undefined ? "" : ` · ${t.toFixed(1)}`}`
+        + `${wedge[k] === undefined ? "" : ` · ${wedge[k].toFixed(1)}°`}` }));
   }));
 }
 

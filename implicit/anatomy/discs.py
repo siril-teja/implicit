@@ -197,6 +197,26 @@ def heights(bodies):
     return out
 
 
+def wedge(bodies):
+    """{(upper, lower): sagittal wedge angle (deg)} of each disc, as on a lateral
+    radiograph: the angle between the endplate lines (posterior corner to anterior
+    corner) of the two endplates, projected on the plane normal to the lower endplate's
+    left-right axis (right minus left corner), + when the disc opens anteriorly
+    (lordotic). ``bodies`` as heights(). viewer/discs.js is the same."""
+    out = {}
+    for up, lo in pairs([k for k, (c, _) in bodies.items() if c]):
+        (cu, Mu), (cl, Ml) = bodies[up], bodies[lo]
+        if "inf" not in cu or "sup" not in cl:
+            continue
+        line = lambda M, c: _move(M, c["anterior"]) - _move(M, c["posterior"])
+        el, eu = line(Ml, cl["sup"]), line(Mu, cu["inf"])
+        r = _move(Ml, cl["sup"]["right"]) - _move(Ml, cl["sup"]["left"])
+        r /= np.linalg.norm(r)
+        el, eu = el - (el @ r) * r, eu - (eu @ r) * r  # sagittal projections
+        out[(up, lo)] = float(np.degrees(np.arctan2(np.cross(el, eu) @ r, el @ eu)))
+    return out
+
+
 IDENTITY = (np.eye(3), np.zeros(3))
 
 

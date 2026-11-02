@@ -24,7 +24,14 @@ COLORS = {
     "sacrum": (0.88, 0.76, 0.62), "hip": (0.86, 0.78, 0.70), "femur": (0.84, 0.80, 0.74),
     "reference": (0.95, 0.85, 0.35), "marker": (0.2, 0.85, 0.5), "curve": (0.3, 0.82, 0.88),
     "rib": (0.92, 0.84, 0.70), "sternum": (0.90, 0.82, 0.68), "cartilage": (0.70, 0.82, 0.88),
+    "disc_annulus": (0.62, 0.74, 0.86), "disc_nucleus": (0.86, 0.52, 0.58),
 }
+# Nucleus pulposus: fraction of the disc's cross-sectional area. Moens et al. 2024 (MRI,
+# children 0-18 y): the nucleus is 20-25 % of the disc volume at the low thoracic and
+# lumbar levels, 10-12 % at the upper and middle thoracic ones; taken as area fractions
+# (the nucleus spans the disc height here: assumption): 0.22 from T10-T11 down (the
+# low thoracic and lumbar discs), 0.11 above.
+nucleus_fraction = lambda upper: 0.22 if upper[0] == "L" or int(upper[1:]) >= 10 else 0.11
 GROUP = {"C": "Cervical", "T": "Thoracic", "L": "Lumbar", "sacrum": "Sacrum", "hip": "Pelvis",
          "femur": "Femurs", "reference": "Spinal cord", "rib": "Rib cage", "sternum": "Rib cage",
          "cartilage": "Rib cage"}
@@ -222,8 +229,12 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                           "in": {"body": f"@field_{mode}", "name": title, "color": "#8fb3ff",
                                                  "group": title, "visible": False}}
     ys = {"vertebra": 0, "other": 0, "ribcage": 0}
+    discs = {}
     for bname, (_, meta) in loaded.items():
         kind = meta["kind"]
+        if kind == "disc":  # after the bones (it needs their landmarks)
+            discs[bname] = meta
+            continue
         key = bname[0] if kind == "vertebra" else kind
         has_lm = ("S1" if bname == "sacrum" else bname) in levels
         seg = segments.get(bname)
@@ -273,5 +284,31 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                         "in": {"body": markers, "name": f"{bname} landmarks",
                                                "color": hexc(COLORS["marker"]), "group": "Landmarks",
                                                "visible": False}}
+    # Intervertebral discs (implicit.anatomy.intervertebral): nucleus and annulus,
+    # carried by the polyrigid field (exactly rigid at both endplates).
+    yd = 0
+    for dname, meta in discs.items():
+        up, lo = meta["upper"], meta["lower"]
+        if f"{up}_lm" not in nodes or f"{lo}_lm" not in nodes:
+            continue
+        x0, y = 3600, yd
+        yd += 240
+        file, dname = rel(dname), dname.replace("-", "_")  # node ids are identifiers
+        nodes[dname] = {"block": "bone", "title": meta["name"], "pos": [x0, y], "in": {"file": file}}
+        nodes[f"{dname}_split"] = {"block": "disc", "title": f"{dname} nucleus/annulus", "pos": [x0 + 240, y],
+                                   "in": {"bone": f"@{dname}", "upper": f"@{up}_lm.vertebra",
+                                          "lower": f"@{lo}_lm.vertebra",
+                                          "nucleus": nucleus_fraction(up)}}
+        for part, dy in (("annulus", 0), ("nucleus", 115)):
+            src = f"@{dname}_split.{part}"
+            if spine:
+                nodes[f"{dname}_{part}_warp"] = {"block": "tps_warp", "title": f"{dname} {part} warp",
+                                                 "pos": [x0 + 480, y + dy],
+                                                 "in": {"body": src, "alignment": "@spp", "carrier": "polyrigid"}}
+                src = f"@{dname}_{part}_warp"
+            nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 720, y + dy],
+                                            "in": {"body": src, "name": f"{meta['name'].removeprefix('disc_')} {part}",
+                                                   "color": hexc(COLORS[f"disc_{part}"]),
+                                                   "group": f"Discs: {part}", "visible": True}}
     return {"format": "implicit.graph", "version": 1,
             "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}

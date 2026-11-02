@@ -50,6 +50,26 @@ const Discs = (() => {
     }
     return out;
   }
+  // Sagittal wedge angle per disc (discs.py wedge): between the endplate lines
+  // (posterior to anterior corner), + opening anteriorly. { "upper|lower": deg }.
+  function wedge(bodies) {
+    const out = {};
+    const sub = (a, b) => a.map((x, i) => x - b[i]), dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    for (const [up, lo] of pairs(Object.keys(bodies).filter((k) => bodies[k].corners))) {
+      const cu = bodies[up].corners, cl = bodies[lo].corners;
+      if (!cu.inf || !cl.sup) continue;
+      const Mu = bodies[up].motion, Ml = bodies[lo].motion;
+      const line = (M, c) => sub(move(M, c.anterior), move(M, c.posterior));
+      let el = line(Ml, cl.sup), eu = line(Mu, cu.inf), r = sub(move(Ml, cl.sup.right), move(Ml, cl.sup.left));
+      const n = Math.hypot(...r);
+      r = r.map((x) => x / n);
+      el = sub(el, r.map((x) => x * dot(el, r)));
+      eu = sub(eu, r.map((x) => x * dot(eu, r)));
+      out[`${up}|${lo}`] = Math.atan2(dot(cross(el, eu), r), dot(el, eu)) * 180 / Math.PI;
+    }
+    return out;
+  }
   const restHeights = (bodies) => heights(Object.fromEntries(Object.entries(bodies)
     .map(([k, b]) => [k, { corners: b.corners, motion: IDENTITY }])));
 
@@ -121,7 +141,7 @@ const Discs = (() => {
     return out;
   }
 
-  return { pairs, label, heights, restHeights, thickness, thicknessFloor, thinFlags, postureFlags, normFlags, KEYS, NORMS,
+  return { pairs, label, heights, restHeights, wedge, thickness, thicknessFloor, thinFlags, postureFlags, normFlags, KEYS, NORMS,
     MEAN_CHANGE, LOCAL_STRAIN, MIN_REST, MIN_THICKNESS };
 })();
 

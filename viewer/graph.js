@@ -507,6 +507,10 @@ const Graph = (() => {
   // The soft-tissue field: the GLSL of its inverse map at a point (as Warp in sdf.py).
   function fieldInverse(a, params, carrier = "soft tissue") {
     const d = a.solver.data;
+    if (carrier === "polyrigid") {
+      const u = tableParam(a, "chain", params).uniform;
+      return (p) => `polyInv(${p}, ${u}, ${1 + d.levels.length})`;
+    }
     if (carrier === "rib cage") {
       if (!d.ribcage) throw new Error("no rib cage landmarks for this subject");
       const u = tableParam(a, "tps_ribcage", params).uniform;

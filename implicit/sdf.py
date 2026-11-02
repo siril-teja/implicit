@@ -1026,6 +1026,35 @@ class ScaleAbout(SDF):
         return self.child.eval(c + (p - c) / k) * k
 
 
+class ScaleInPlane(SDF):
+    """Scale by k in the plane through ``center`` normal to ``axis``, keeping
+    distances along the axis (e.g. a disc's nucleus inside the disc: same height, k
+    times the width). A lower bound of the distance for k <= 1 (the value is scaled by
+    k, the field stretched by 1/k in the plane)."""
+
+    def __init__(self, child, k, center, axis):
+        self.child, self.k, self.center, self.axis = child, wrap(k), vec3(center), vec3(axis)
+
+    def children(self): return [self.child]
+    def exprs(self): return [self.k, self.center, self.axis]
+
+    def emit(self, ctx, p):
+        c, k = self.center.glsl(), self.k.glsl()
+        w = ctx.var("vec3", f"normalize({self.axis.glsl()})")
+        d = ctx.var("vec3", f"{p} - {c}")
+        h = ctx.var("float", f"dot({d}, {w})")
+        q = ctx.var("vec3", f"{c} + ({d} - {h} * {w}) / {k} + {h} * {w}")
+        return ctx.var("float", f"{ctx.sub(self.child, q)} * min({k}, 1.0)")
+
+    def eval(self, p):
+        c, k, w = _vv(self.center), _v(self.k), _vv(self.axis)
+        w = w / np.linalg.norm(w)
+        d = p - c
+        h = d @ w
+        q = c + (d - np.outer(h, w)) / k + np.outer(h, w)
+        return self.child.eval(q) * min(k, 1.0)
+
+
 POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
 # Flow line lookup margin (mm; above the renderer's hit tolerance, 0.002 mm per mm of ray, at
 # viewing distances up to 3 m) and segment table width (alignment.py).
@@ -1196,6 +1225,6 @@ __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
     "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
-    "ScaleAbout", "FramePose",
+    "ScaleAbout", "ScaleInPlane", "FramePose",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]
