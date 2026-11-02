@@ -59,7 +59,10 @@ vertebra above it and everything higher turn with it.
   - AR: each curve vertebra also turns about its own axial axis, locally (the turn
     does not carry the vertebrae above);
   - ML (motion limits, >= 0.5: on): no disc turns from rest beyond half its range of
-    motion in each plane (implicit.anatomy.motion.ROM). Each target above is spread
+    motion in each plane (implicit.anatomy.motion.ROM), nor beyond its feasible range
+    in each direction (implicit.anatomy.ranges: neighbouring bones stay about 1 mm
+    apart, the disc rules hold); a disc's planes share its range (_used, _shrink); the
+    sacrum's turn for PI stays within its range ("pi_range"). Each target above is spread
     by motion.fill: in the shares above until a disc reaches its limit, then over the
     others; the part no disc can take is reported (solve: "limits"). The balance bend
     is spread over its discs the same way; the AR tent of a curve is scaled down until
@@ -243,7 +246,8 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0), ribcage=None):
                       "angle": tilt(_up(below, "sup")) - tilt(_up(e, "inf")),
                       "sagittal": pt(rc["sagittal"]), "coronal": pt(rc["coronal"]),
                       **({"rom": list(motion.ROM[label]), "coupling": motion.COUPLING[label]}
-                         if label in motion.ROM else {})})
+                         if label in motion.ROM else {}),
+                      **({"range": e["range"]} if "range" in e else {})})
         below, below_name = e, lv
     frames = {lv: {"center": pt(landmarks[lv]["body_center"]), "axes": _axes(landmarks[lv])} for lv in levels}
     frames["sacrum"] = {"center": pt(s1["sup"]["point"]), "axes": _axes(s1)}
@@ -281,6 +285,8 @@ def chain(landmarks, pelvis, offset=(0.0, 0.0, 0.0), ribcage=None):
     rc = _ribcage_data(ribcage, levels, pt)
     if rc:
         data["ribcage"] = rc
+    if pelvis and "pi_range" in pelvis:
+        data["pi_range"] = list(pelvis["pi_range"])
     data["measured"] = measure_chain(data, landmarks)
     # The knobs start at these (0.1 deg / mm); targets are taken relative to them, so
     # the starting values move nothing.
@@ -527,42 +533,92 @@ def _forward(data, out):
     return lambda X: tps_eval(F, X)  # forward: fitted from the rest points
 
 
-def _caps(discs, plane, on):
-    """Half range of motion (rad) of each disc in a plane (index into PLANES); no cap
-    when the limits are off or the disc has no range."""
-    return [math.radians(d["rom"][plane]) / 2 if on and "rom" in d else math.inf for d in discs]
+def _caps(discs, plane, on, sign):
+    """How far (rad, >= 0) each disc may turn in a plane (index into PLANES) in the
+    direction ``sign`` (+1, -1) of the chain's turns: half its range of motion, or its
+    feasible range (implicit.anatomy.ranges) when that is smaller; no cap when the
+    limits are off or the disc has no range of motion."""
+    out = []
+    for d in discs:
+        if not on or "rom" not in d:
+            out.append(math.inf)
+            continue
+        c = math.radians(d["rom"][plane]) / 2
+        r = d.get("range")
+        if r:
+            c = min(c, max(0.0, math.radians(r[PLANES[plane]][1 if sign > 0 else 0]) * sign))
+        out.append(c)
+    return out
+
+
+def _used(x, C):
+    """Part (0-1) of each disc's cap (C: positive caps, negative caps) that turns x use."""
+    out = []
+    for j, v in enumerate(x):
+        c = C[0][j] if v >= 0 else C[1][j]
+        out.append(0.0 if c == math.inf or abs(v) < 1e-15 else (1.0 if c <= 0 else min(1.0, abs(v) / c)))
+    return out
+
+
+def _shrink(C, used):
+    """Caps C with each disc's left by the part ``used`` elsewhere."""
+    f = lambda c, u: c if c == math.inf else c * max(0.0, 1.0 - u)
+    return ([f(c, u) for c, u in zip(C[0], used)], [f(c, u) for c, u in zip(C[1], used)])
+
+
+def _why(d, plane, sign):
+    """What stops a disc at its cap (see _caps)."""
+    r = d.get("range")
+    if r:
+        w = r["why"].get(f"{PLANES[plane]}{'+' if sign > 0 else '-'}")
+        if w and math.radians(abs(r[PLANES[plane]][1 if sign > 0 else 0])) < math.radians(d["rom"][plane]) / 2:
+            return w
+    return "range of motion"
 
 
 def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.0, CP=0.0, report=None):
     """{segment: (R, t)} for the given parameter values (see solve). ``report`` (a dict)
     receives what the limits cost: "short" {target: part not reached} (LL, TK, MT, TL in
-    deg, CB in mm, MT_AR / TL_AR: apex rotation in deg) and "at_limit" [[disc, plane]]."""
+    deg, CB in mm, MT_AR / TL_AR: apex rotation in deg) and "at_limit" [[disc, plane,
+    what stops it]]."""
     base, meas = data["base"], data["measured"]
     rel = lambda k, v: v + meas[k] - base[k] if k in base else v  # relative to the rounded starting values
     PI, PT, CB = rel("PI", PI), rel("PT", PT), rel("CB", CB)
     delta = lambda k, v: math.radians(v - base.get(k, v))
     levels, discs = data["levels"], data["discs"]
     on = ML >= 0.5
-    cfe, clb, car = (_caps(discs, p, on) for p in range(3))
+    # per plane: (caps of positive turns, caps of negative turns)
+    cfe, clb, car = ((_caps(discs, p, on, 1), _caps(discs, p, on, -1)) for p in range(3))
+    side = lambda C, x: C[0] if x >= 0 else C[1]
     short = {}
     # Pelvis: obliquity and tilt about the hips; PI by the sacrum about the SI axis.
     beta = 0.0 if abs(PI - meas["PI"]) < 1e-9 else _bisect(lambda b: _pi_after(data, b)[0], -math.radians(60),
                                                           math.radians(60), PI)
+    pr = data.get("pi_range")
+    if on and pr:  # the sacrum's turn in the pelvis keeps the sacroiliac joints clear
+        beta = max(math.radians(pr[0]), min(math.radians(pr[1]), beta))
+    short["PI"] = math.radians(PI - _pi_after(data, beta)[0])
     alpha = math.radians(PT - _pi_after(data, beta)[1])
     legs = _rot(data["hip"], Y_AXIS, -math.radians(PO))
     pelvis = _compose(legs, _rot(data["hip"], X_AXIS, alpha))
     sacrum = _compose(pelvis, _rot(data["si"], X_AXIS, beta))
     # Disc turns: sagittal (LL, TK) and coronal (curves, then the balance below them),
     # each spread over its discs within their ranges (motion.fill).
-    sl, short["LL"] = motion.fill(delta("LL", LL), _weights(discs, LORDOSIS, 1.0), cfe)
-    sk, short["TK"] = motion.fill(delta("TK", TK), _weights(discs, KYPHOSIS, -1.0), cfe)
+    d_ll, d_tk = delta("LL", LL), delta("TK", TK)
+    sl, short["LL"] = motion.fill(d_ll, _weights(discs, LORDOSIS, 1.0), side(cfe, d_ll))
+    sk, short["TK"] = motion.fill(d_tk, _weights(discs, KYPHOSIS, -1.0), side(cfe, -d_tk))  # turns -sk
     sag = [a - b for a, b in zip(sl, sk)]
+    # A disc's planes share its range: the coronal caps shrink by the part of its
+    # sagittal range in use, the axial ones by the sagittal and coronal parts (so
+    # |FE| / cap + |LB| / cap + |AR| / cap <= 1: inside the feasible ranges' corners).
+    used_s = _used(sag, cfe)
+    clb_free = _shrink(clb, used_s)
     plans = _curve_plan(levels, data["curves"])
     cor, tents = [0.0] * len(discs), {}
     targets = {"MT": MT, "TL": TL}  # curves whose vertebrae the subject lacks are not in the plan
     for k, (share, shape, _) in plans.items():
         d = delta(k, targets[k])
-        x, miss = motion.fill(d, share, clb)
+        x, miss = motion.fill(d, share, side(clb_free, -d))  # turns -x
         short[k] = miss
         for j in range(len(discs)):
             cor[j] -= x[j]  # convex right: each disc bends the spine above to the left
@@ -572,7 +628,7 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
     frac = [j for j in range(len(discs)) if j <= lowest]
 
     def bend(bal):
-        return motion.fill(bal, wfrac, clb)[0]
+        return motion.fill(bal, wfrac, side(clb_free, bal))[0]
 
     def build(bal):
         T, out, b = sacrum, {}, bend(bal)
@@ -603,6 +659,7 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
     out = build(bal)
     short["CB"] = CB - (_apply(out[top], data["frames"][top]["center"])[0] - s1[0]) if solved else 0.0
     lat = [c + b for c, b in zip(cor, bend(bal))]
+    car = _shrink(car, [a + b for a, b in zip(used_s, _used(lat, clb))])
     # Axial rotation: the coupled rotation of each disc's lateral bend (ipsilateral,
     # motion.COUPLING), carried by the vertebrae above, plus each curve's apex rotation
     # (AR: a tent toward the convexity), scaled down so that no disc turns beyond its
@@ -610,14 +667,15 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
     rel_ax = []
     for j, d in enumerate(discs):
         a = -CP * d.get("coupling", 0.0) * lat[j]  # + about the cranial axis: anterior turns left
-        rel_ax.append(max(-car[j], min(car[j], a)))
+        rel_ax.append(max(-car[1][j], min(car[0][j], a)))
     axial = [0.0] * len(levels)
     for k, tent in tents.items():
         steps = [tent[j] - (tent[j - 1] if j else 0.0) for j in range(len(discs))]
         lam = 1.0
         for j, b in enumerate(steps):
-            if abs(b) > 1e-12 and car[j] < math.inf:
-                lam = min(lam, max(0.0, (car[j] - math.copysign(1.0, b) * rel_ax[j]) / abs(b)))
+            if abs(b) > 1e-12 and side(car, b)[j] < math.inf:
+                room = car[0][j] - rel_ax[j] if b > 0 else car[1][j] + rel_ax[j]
+                lam = min(lam, max(0.0, room / abs(b)))
         for j in range(len(discs)):
             rel_ax[j] += lam * steps[j]
         short[f"{k}_AR"] = (1.0 - lam) * max((abs(v) for v in tent), default=0.0)
@@ -643,9 +701,10 @@ def _motions(data, PI, PT, LL, TK, MT=0.0, TL=0.0, AR=0.0, PO=0.0, CB=0.0, ML=0.
     if report is not None:
         deg = {k: (v if k == "CB" else math.degrees(v)) for k, v in short.items()}
         report["short"] = deg
-        report["at_limit"] = [[d["label"], PLANES[p]] for j, d in enumerate(discs) if "label" in d
-                              for p, (v, c) in enumerate(((sag[j], cfe[j]), (lat[j], clb[j]), (rel_ax[j], car[j])))
-                              if c < math.inf and abs(v) >= c - 1e-9]
+        report["at_limit"] = [[d["label"], PLANES[p], _why(d, p, 1 if v >= 0 else -1)]
+                              for j, d in enumerate(discs) if "label" in d
+                              for p, (v, C) in enumerate(((sag[j], cfe), (lat[j], clb_free), (rel_ax[j], car)))
+                              if side(C, v)[j] < math.inf and abs(v) >= side(C, v)[j] - 1e-9]
     return out
 
 

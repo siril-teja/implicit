@@ -67,6 +67,28 @@
      -29.0168,
      1329.4382
     ]
+   },
+   "range": {
+    "FE": [
+     -3.1,
+     3.1
+    ],
+    "LB": [
+     -2.4,
+     2.4
+    ],
+    "AR": [
+     -2.5,
+     2.5
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T2": {
@@ -199,6 +221,28 @@
      -35.6182,
      1309.403
     ]
+   },
+   "range": {
+    "FE": [
+     -1.85,
+     1.85
+    ],
+    "LB": [
+     -2.0,
+     2.0
+    ],
+    "AR": [
+     -1.6,
+     1.6
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T3": {
@@ -331,6 +375,28 @@
      -41.8751,
      1289.9555
     ]
+   },
+   "range": {
+    "FE": [
+     -1.1,
+     1.1
+    ],
+    "LB": [
+     -1.192,
+     1.196
+    ],
+    "AR": [
+     -0.8,
+     0.8
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "clearance T3-T4",
+     "LB+": "clearance T3-T4",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T4": {
@@ -463,6 +529,28 @@
      -50.1796,
      1270.5659
     ]
+   },
+   "range": {
+    "FE": [
+     -0.65,
+     0.65
+    ],
+    "LB": [
+     -1.0,
+     1.0
+    ],
+    "AR": [
+     -0.7,
+     0.7
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T5": {
@@ -595,6 +683,28 @@
      -55.3201,
      1249.0525
     ]
+   },
+   "range": {
+    "FE": [
+     -0.188,
+     0.65
+    ],
+    "LB": [
+     -0.95,
+     0.95
+    ],
+    "AR": [
+     -0.95,
+     0.95
+    ],
+    "why": {
+     "FE-": "disc thinnest 2.67 mm < 2.66 mm",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T6": {
@@ -727,6 +837,28 @@
      -58.5771,
      1224.5002
     ]
+   },
+   "range": {
+    "FE": [
+     -0.65,
+     0.65
+    ],
+    "LB": [
+     -0.8,
+     0.8
+    ],
+    "AR": [
+     -1.05,
+     1.05
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T7": {
@@ -859,6 +991,28 @@
      -59.6579,
      1200.8686
     ]
+   },
+   "range": {
+    "FE": [
+     -0.75,
+     0.75
+    ],
+    "LB": [
+     -1.0,
+     1.0
+    ],
+    "AR": [
+     -1.25,
+     1.25
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T8": {
@@ -991,6 +1145,28 @@
      -58.6761,
      1175.288
     ]
+   },
+   "range": {
+    "FE": [
+     -0.192,
+     0.8
+    ],
+    "LB": [
+     -0.85,
+     0.85
+    ],
+    "AR": [
+     -1.65,
+     1.65
+    ],
+    "why": {
+     "FE-": "disc thinnest 3.20 mm < 3.18 mm",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T9": {
@@ -1123,6 +1299,28 @@
      -56.1309,
      1149.4021
     ]
+   },
+   "range": {
+    "FE": [
+     -0.9,
+     0.9
+    ],
+    "LB": [
+     -1.3,
+     1.3
+    ],
+    "AR": [
+     -1.95,
+     1.95
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T10": {
@@ -1255,6 +1453,28 @@
      -50.0664,
      1123.5787
     ]
+   },
+   "range": {
+    "FE": [
+     -1.15,
+     1.15
+    ],
+    "LB": [
+     -1.25,
+     1.25
+    ],
+    "AR": [
+     -1.85,
+     1.85
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T11": {
@@ -1387,6 +1607,28 @@
      -42.9083,
      1096.2157
     ]
+   },
+   "range": {
+    "FE": [
+     -1.2,
+     1.2
+    ],
+    "LB": [
+     -1.6,
+     1.6
+    ],
+    "AR": [
+     -1.3,
+     1.3
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "T12": {
@@ -1519,6 +1761,28 @@
      -34.4114,
      1068.4121
     ]
+   },
+   "range": {
+    "FE": [
+     -2.8,
+     2.8
+    ],
+    "LB": [
+     -2.4,
+     2.4
+    ],
+    "AR": [
+     -1.05,
+     1.05
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "L1": {
@@ -1651,6 +1915,28 @@
      -26.7022,
      1045.8151
     ]
+   },
+   "range": {
+    "FE": [
+     -3.2,
+     3.2
+    ],
+    "LB": [
+     -3.65,
+     3.65
+    ],
+    "AR": [
+     -1.2,
+     1.2
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "L2": {
@@ -1783,6 +2069,28 @@
      -18.7337,
      1014.7955
     ]
+   },
+   "range": {
+    "FE": [
+     -4.2,
+     3.65
+    ],
+    "LB": [
+     -4.75,
+     4.75
+    ],
+    "AR": [
+     -1.636,
+     1.644
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "clearance L2-L3",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "clearance L2-L3",
+     "AR+": "clearance L2-L3"
+    }
    }
   },
   "L3": {
@@ -1915,6 +2223,28 @@
      -14.3125,
      980.24
     ]
+   },
+   "range": {
+    "FE": [
+     -3.9,
+     3.9
+    ],
+    "LB": [
+     -4.55,
+     4.55
+    ],
+    "AR": [
+     -1.5,
+     1.5
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "range of motion",
+     "AR+": "range of motion"
+    }
    }
   },
   "L4": {
@@ -2047,6 +2377,28 @@
      -14.7238,
      945.82
     ]
+   },
+   "range": {
+    "FE": [
+     -5.15,
+     4.207
+    ],
+    "LB": [
+     -4.75,
+     4.75
+    ],
+    "AR": [
+     -2.027,
+     1.857
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "clearance L4-L5",
+     "LB-": "range of motion",
+     "LB+": "range of motion",
+     "AR-": "clearance L4-L5",
+     "AR+": "clearance L4-L5"
+    }
    }
   },
   "L5": {
@@ -2179,6 +2531,28 @@
      -26.1663,
      913.0919
     ]
+   },
+   "range": {
+    "FE": [
+     -5.4,
+     5.4
+    ],
+    "LB": [
+     -2.582,
+     3.053
+    ],
+    "AR": [
+     -1.771,
+     1.803
+    ],
+    "why": {
+     "FE-": "range of motion",
+     "FE+": "range of motion",
+     "LB-": "clearance L5-sacrum",
+     "LB+": "clearance L5-sacrum",
+     "AR-": "clearance L5-sacrum",
+     "AR+": "clearance L5-sacrum"
+    }
    }
   },
   "S1": {
@@ -2274,6 +2648,10 @@
    48.6622,
    -52.7631,
    884.5305
+  ],
+  "pi_range": [
+   -11.726,
+   11.971
   ]
  },
  "ribcage": {

@@ -87,8 +87,14 @@ in the direction of the bend per degree (CP = 1; Fujimori et al. 2014,
 The ranges are small: T4-T12 together allow about +-7 deg of kyphosis change and
 L1-S1 about +-22 deg of lordosis change from the template, so differences in
 posture between people beyond that come from the shape of vertebrae and discs
-(roadmap 3.2, 3.3), not motion. ML = 0 lifts the limits. Tables and assumptions:
-`implicit/anatomy/motion.py`.
+(roadmap 3.2, 3.3), not motion. Each disc's range is also cut where it would bring
+neighbouring bones closer than about 1 mm (facets, ribs) or break a disc rule
+(height change, thickness floor): its feasible range, found once from the bone fields
+(`python -m implicit.anatomy.ranges`, stored with the landmarks), and the planes of a
+disc share it. PI is kept where the sacrum stays clear of the hip bones (about +-12
+deg on VIVA+ 50F). On a grid and at random slider settings no bones collide and no
+disc is flagged. ML = 0 lifts all limits. Tables and assumptions:
+`implicit/anatomy/motion.py`, `implicit/anatomy/ranges.py`.
 
 The **Field view** block shows the field: flow lines (the paths tissue near the
 spine travels while the sliders go from the subject's values to the current ones,
@@ -112,9 +118,9 @@ neighbouring bones (consecutive vertebrae, L5 and sacrum, sacrum and L5 with eac
 hip bone, hip bone and femur) at the current sliders: a table under Clearance,
 smallest first, and colliding bones tinted red. A bone's field is evaluated at the
 other bone's surface points (2 mm apart), both ways; negative is the depth of the
-overlap. The motion limits (ML) keep most postures clear (LL 80 with TK 60 collides
-at L4-L5 only with ML = 0); the sliders do not yet avoid collisions directly (roadmap
-step 1.7).
+overlap. With the motion limits on (ML = 1) the sliders cannot make bones collide or
+deform a disc beyond its rules (see Motion limits above); with ML = 0, LL 80 with TK
+60 collides at L4-L5.
 
 ```bash
 python -m implicit.anatomy.clearance examples/average_spine.json --set spp_LL=80 --set spp_TK=60 --set spp_ML=0
@@ -155,9 +161,9 @@ sternum at rest (VIVA+ 50F had gaps of up to 2.7 mm). The Scene tab's **Rib cage
 list gives the sternum's motion and each true rib's cartilage length change
 (`implicit/anatomy/ribcage.py`). The clearance table lists every
 rib against its vertebra and the one above (costovertebral joints, carved to 1.3 mm
-in the template) and against the next rib on its side; e.g. MT 40 crowds the ribs of
-the concave side into each other (with ML = 0), which rib motion (roadmap 2.7) and
-the constrained distribution (1.7) are to resolve.
+in the template) and against the next rib on its side; with the limits on these stay
+at least about 1 mm apart (the feasible ranges), with ML = 0 MT 40 crowds the ribs of
+the concave side into each other (rib motion, roadmap 2.7, will let ribs move too).
 
 ## Patient anatomy: implicit bones
 

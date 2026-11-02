@@ -333,6 +333,9 @@ def detect(bone_dir, log=print):
         doc["ribcage"] = rc
     (bone_dir / "landmarks.json").write_text(json.dumps(doc, indent=1))
     log(f"wrote {bone_dir / 'landmarks.json'}")
+    if pelvis:  # feasible range of each disc (needs the chain model)
+        from .ranges import add_ranges
+        add_ranges(bone_dir, log)
     return marks
 
 
