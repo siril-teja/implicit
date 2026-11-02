@@ -43,13 +43,18 @@ async function sharp(n = 5) {
     await page.waitForFunction(() => /sharp in/.test(document.querySelector("#fps").textContent), null,
       { timeout: 5 * 60 * 1000, polling: 100 });
     times.push(+(await page.textContent("#fps")).match(/sharp in (\d+) ms/)[1]);
+    console.log(`  sharp ${times[times.length - 1]} ms`);
   }
   times.sort((a, b) => a - b);
   return times[Math.floor(n / 2)];
 }
 
+const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
+page.on("pageerror", (e) => log(`pageerror: ${e.message}`));
 await compiled();
+log(`compiled: ${await page.textContent("#status")}`);
 const shown = await sharp();
+log(`shown: ${shown} ms`);
 for (const g of groups) {
   const box = page.locator("#bodies label.body", { hasText: g }).locator("input");
   if (await box.count() !== 1) { console.log(`frame_time: no group "${g}"`); process.exit(1); }
