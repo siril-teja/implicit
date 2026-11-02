@@ -22,11 +22,20 @@ normals, centre c: midway between the endplate centres):
     endplate concavities and shares their surfaces;
   - height: limited to the disc space (CAP mm beyond each endplate plane, more than
     any endplate concavity).
+Annulus fibres (``fibres``, for FE): 20 lamellae between the outer wall and the
+nucleus, each with its fibres inclined to the transverse plane, alternately up and
+down, from 28 deg at the outer wall to 45 deg at the nucleus (Cassidy et al. 1989;
+Marchand & Ahmed 1990: 15-25 lamellae).
+
 Endplate rim area: the area inside the rim outline on each endplate plane
 (``rim_area``), compared with population values (lumbar: Louie et al. 2018, women
 1,819 +- 502 mm2 over L1-S1).
 
 References
+  Cassidy JJ, Hiltner A, Baer E. Hierarchical structure of the intervertebral disc.
+    Connect Tissue Res 1989;23(1):75-88. doi:10.3109/03008208909103905
+  Marchand F, Ahmed AM. Investigation of the laminate structure of lumbar disc anulus
+    fibrosus. Spine 1990;15(5):402-10. doi:10.1097/00007632-199005000-00011
   Louie PK, Espinoza Orias AA, Fogg LF, et al. Changes in lumbar endplate area and
     concavity associated with disc degeneration. Spine 2018;43(19):E1127-34.
     doi:10.1097/BRS.0000000000002657
@@ -49,6 +58,8 @@ CAP = 4.0       # mm: the disc extends at most this far beyond each endplate pla
 SPACING = 0.6   # mm: disc grid spacing (as the vertebrae)
 MARGIN = 3.0    # mm: grid padding around the disc
 LUMBAR_AREA = (1819.0, 502.0)  # mm2, mean, SD: women, L1-S1 (Louie et al. 2018)
+LAMELLAE = 20                  # annulus lamellae (Marchand & Ahmed 1990: 15-25)
+FIBRE_OUTER, FIBRE_INNER = 28.0, 45.0  # deg from the transverse plane (Cassidy et al. 1989)
 
 
 def _unit(v):
@@ -133,6 +144,54 @@ def rim_area(g, entry, ep, w, a, partner=None, step=0.5):
     inside = ((g.eval(X) < 0) & ((X - np.asarray(entry[ep]["corners"]["posterior"], float)) @ a >= 0)
               & (_footprint(entry[ep]["corners"], a, partner)(X) < 0))
     return float(inside.sum() * step * step)
+
+
+def radial_position(g, centre, axis, P, iters=40):
+    """For points P of a disc (grid g, centre, unit axis): the in-plane scale s at which
+    each point lies on the disc's outline scaled about the centre (normal to the axis,
+    as the Disc block scales the nucleus): 0 at the centre, 1 on the outer wall; the
+    nucleus is s < sqrt(fraction). Bisection on s (the outline is star-shaped about the
+    centre)."""
+    c, w = np.asarray(centre, float), _unit(axis)
+    d = np.asarray(P, float) - c
+    h = d @ w
+    inplane = d - np.outer(h, w)
+    lo, hi = np.full(len(d), 1e-3), np.full(len(d), 4.0)
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        inside = g.eval(c + inplane / mid[:, None] + np.outer(h, w)) < 0
+        hi = np.where(inside, mid, hi)
+        lo = np.where(inside, lo, mid)
+    return 0.5 * (lo + hi)
+
+
+def fibres(g, centre, axis, P, nucleus, lamellae=LAMELLAE, h=0.3):
+    """Annulus fibre field at points P (FE material directions): (lamella index, 0 at
+    the outer wall, -1 in the nucleus; unit fibre direction). Lamellae are equal steps of
+    the radial position between the outer wall (1) and the nucleus (sqrt(nucleus)); the
+    fibres lie in the lamella (along the outline's tangent, normal to the axis, and the
+    axis), inclined to the transverse plane by FIBRE_OUTER at the wall to FIBRE_INNER at
+    the nucleus, the sign alternating between lamellae (Cassidy et al. 1989: 62 to 45 deg
+    from the spine's axis, i.e. 28 to 45 deg from the transverse plane; Marchand & Ahmed
+    1990: 15-25 lamellae)."""
+    c, w = np.asarray(centre, float), _unit(axis)
+    P = np.asarray(P, float)
+    s = radial_position(g, c, w, P)
+    k = np.sqrt(nucleus)
+    t = np.clip((1.0 - s) / (1.0 - k), 0.0, 1.0)  # 0 at the outer wall, 1 at the nucleus
+    lam = np.where(s < k, -1, np.minimum((t * lamellae).astype(int), lamellae - 1))
+    # Outline normal at the corresponding point of the outer wall (in plane), its tangent.
+    d = P - c
+    hh = d @ w
+    B = c + (d - np.outer(hh, w)) / s[:, None] + np.outer(hh, w)
+    grad = np.stack([(g.eval(B + h * e) - g.eval(B - h * e)) / (2 * h) for e in np.eye(3)], 1)
+    grad -= np.outer(grad @ w, w)
+    grad /= np.linalg.norm(grad, axis=1, keepdims=True)
+    tangent = np.cross(w, grad)
+    alpha = np.radians(FIBRE_OUTER + (FIBRE_INNER - FIBRE_OUTER) * t)
+    sign = np.where(lam % 2 == 0, 1.0, -1.0)
+    f = np.cos(alpha)[:, None] * tangent + (sign * np.sin(alpha))[:, None] * w
+    return lam, f
 
 
 def build(bone_dir, log=print):

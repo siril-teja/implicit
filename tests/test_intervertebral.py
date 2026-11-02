@@ -44,6 +44,30 @@ class TestDiscFiles(unittest.TestCase):
         self.assertLess(areas["T11-T12"], areas["L4-L5"])
 
 
+class TestFibres(unittest.TestCase):
+    def test_fibre_field(self):
+        """Annulus points get a lamella (0 at the wall, 19 at the nucleus) and a unit fibre
+        direction normal to the outline's radial direction, inclined to the transverse
+        plane by 28-45 deg (outer to inner), alternately up and down; nucleus points -1."""
+        g, meta = load_bone(SUBJECT / "disc_L4-L5.npz")
+        c, w = np.array(meta["centre"]), np.array(meta["axis"])
+        a = np.array(meta["anterior"])
+        P = c + np.outer(np.linspace(0, 25, 120), a)  # centre to the anterior wall, mid-height
+        P = P[g.eval(P) < 0]
+        lam, f = iv.fibres(g, c, w, P, nucleus=0.22)
+        self.assertEqual(lam[0], -1)  # the centre: nucleus
+        ann = lam >= 0
+        np.testing.assert_allclose(np.linalg.norm(f[ann], axis=1), 1.0, atol=1e-9)
+        incl = np.degrees(np.arcsin(np.abs(f[ann] @ w)))
+        self.assertTrue(np.all((incl > 27.9) & (incl < 45.1)))
+        self.assertEqual(lam[ann].max(), iv.LAMELLAE - 1)
+        self.assertEqual(lam[ann].min(), 0)
+        self.assertGreater(incl[lam[ann].argmax()], incl[lam[ann].argmin()])  # steeper inside
+        sign = np.sign(f[ann] @ w)
+        self.assertTrue(np.all(sign[lam[ann] % 2 == 0] > 0) and np.all(sign[lam[ann] % 2 == 1] < 0))
+        np.testing.assert_allclose(f[ann] @ a, 0.0, atol=0.15)  # circumferential: across the radius
+
+
 class TestDiscBodies(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
