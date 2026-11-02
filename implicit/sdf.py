@@ -827,27 +827,40 @@ class Warp(SDF):
     """
     LIP = 0.8
 
-    def __init__(self, child, kind, table, n):
+    def __init__(self, child, kind, table, n, m=None, local_box=None):
         self.child, self.kind, self.table, self.n = child, kind, table, int(n)
+        # Culling (as RigidMove): with m (a segment's motion, 12 scalars) and local_box, the
+        # scene culls the body with that box moved by m (Scene.glsl).
+        self.m = [wrap(e) for e in m] if m is not None else None
+        self.local_box = local_box
+
+    def m_glsl(self):
+        g = [e.glsl() for e in self.m]
+        return ", ".join(f"vec3({', '.join(g[i:i + 3])})" for i in range(0, 12, 3))
 
     def children(self): return [self.child]
-    def exprs(self): return [self.table]
+    def exprs(self): return [self.table] + (self.m or [])
 
     def emit(self, ctx, p):
         q = ctx.var("vec3", inverse_glsl(self.kind, p, self.table.glsl(), self.n))
         return ctx.var("float", f"{glsl_float(self.LIP)} * {ctx.sub(self.child, q)}")
 
     def eval(self, p):
-        return self.LIP * self.child.eval(inverse_np(self.kind, self.table.value(), p))
+        return self.LIP * self.child.eval(inverse_np(self.kind, self.table.value(), p, self.n))
 
 
 def inverse_glsl(kind, p, table, n):
-    return f"{'tpsInv' if kind == 'tps' else 'polyInv'}({p}, {table}, {n})"
+    """Inverse map of a soft-tissue field: kind "tps" (n control points), "polyrigid"
+    (n segments) or "polypair" (the polyrigid field of segments n and n + 1 only)."""
+    fn = {"tps": "tpsInv", "polyrigid": "polyInv", "polypair": "polyInv2"}[kind]
+    return f"{fn}({p}, {table}, {n})"
 
 
-def inverse_np(kind, table, p):
-    from .anatomy.alignment import poly_inverse, tps_eval
-    return tps_eval(table, p) if kind == "tps" else poly_inverse(table, p)
+def inverse_np(kind, table, p, n=None):
+    from .anatomy.alignment import poly_inverse, poly_inverse_pair, tps_eval
+    if kind == "tps":
+        return tps_eval(table, p)
+    return poly_inverse(table, p) if kind == "polyrigid" else poly_inverse_pair(table, p, int(n))
 
 
 class Lattice(SDF):
@@ -1026,7 +1039,37 @@ class ScaleAbout(SDF):
         return self.child.eval(c + (p - c) / k) * k
 
 
+class ScaleInPlane(SDF):
+    """Scale by k in the plane through ``center`` normal to ``axis``, keeping
+    distances along the axis (e.g. a disc's nucleus inside the disc: same height, k
+    times the width). A lower bound of the distance for k <= 1 (the value is scaled by
+    k, the field stretched by 1/k in the plane)."""
+
+    def __init__(self, child, k, center, axis):
+        self.child, self.k, self.center, self.axis = child, wrap(k), vec3(center), vec3(axis)
+
+    def children(self): return [self.child]
+    def exprs(self): return [self.k, self.center, self.axis]
+
+    def emit(self, ctx, p):
+        c, k = self.center.glsl(), self.k.glsl()
+        w = ctx.var("vec3", f"normalize({self.axis.glsl()})")
+        d = ctx.var("vec3", f"{p} - {c}")
+        h = ctx.var("float", f"dot({d}, {w})")
+        q = ctx.var("vec3", f"{c} + ({d} - {h} * {w}) / {k} + {h} * {w}")
+        return ctx.var("float", f"{ctx.sub(self.child, q)} * min({k}, 1.0)")
+
+    def eval(self, p):
+        c, k, w = _vv(self.center), _v(self.k), _vv(self.axis)
+        w = w / np.linalg.norm(w)
+        d = p - c
+        h = d @ w
+        q = c + (d - np.outer(h, w)) / k + np.outer(h, w)
+        return self.child.eval(q) * min(k, 1.0)
+
+
 POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
+POLY_EPS = 1e-4  # mm: the two-segment inverse (polyInv2) stops once a step moves less
 # Flow line lookup margin (mm; above the renderer's hit tolerance, 0.002 mm per mm of ray, at
 # viewing distances up to 3 m) and segment table width (alignment.py).
 FLOW_MARGIN, FLOW_ROW = 6.0, 512
@@ -1127,6 +1170,24 @@ vec3 polyInv(vec3 p, highp sampler2D T, int n) {{
     }}
     return x;
 }}
+// polyInv for the two segments r0 and r0 + 1 only (alignment.poly_inverse_pair).
+vec3 polyInv2(vec3 p, highp sampler2D T, int r0) {{
+    vec3 x = p;
+    vec4 ps = texelFetch(T, ivec2(6, r0), 0), pi = texelFetch(T, ivec2(5, r0 + 1), 0);
+    for (int it = 0; it < {POLY_ITERS}; it++) {{
+        float a = dot(ps.xyz, x) + ps.w, b = dot(pi.xyz, x) + pi.w;
+        int r = (a >= 0.0 && b >= 0.0) ? r0 + 1 : r0;
+        float lam = (a >= 0.0 && b < 0.0) ? clamp(a / (abs(a - b) > 1e-12 ? a - b : 1.0), 0.0, 1.0) : 0.0;
+        vec4 c0 = texelFetch(T, ivec2(0, r), 0), c1 = texelFetch(T, ivec2(1, r), 0), c2 = texelFetch(T, ivec2(2, r), 0);
+        vec3 q = p - vec3(c0.w, c1.w, c2.w);
+        q = vec3(dot(q, c0.xyz), dot(q, c1.xyz), dot(q, c2.xyz));
+        vec3 g = screwApply(q, -lam * texelFetch(T, ivec2(3, r), 0).xyz, -lam * texelFetch(T, ivec2(4, r), 0).xyz);
+        vec3 nx = it < {POLY_RELAX} ? g : x + 0.5 * (g - x);
+        if (dot(nx - x, nx - x) < {POLY_EPS * POLY_EPS:.1e}) {{ x = nx; break; }}  // converged
+        x = nx;
+    }}
+    return x;
+}}
 float sdLattice(vec3 q, vec3 lo, vec3 hi, float s, float r) {{
     vec3 a = q - lo, m = abs(a - s * floor(a / s + 0.5));
     return max(min(min(length(m.xy), length(m.yz)), length(m.xz)) - r, sdAABB(q, lo, hi));
@@ -1196,6 +1257,6 @@ __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
     "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
-    "ScaleAbout", "FramePose",
+    "ScaleAbout", "ScaleInPlane", "FramePose",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]

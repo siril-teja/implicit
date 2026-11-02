@@ -51,5 +51,5 @@ distance fields; the thoracic and lumbar vertebrae, with their ribs, translated 
 that the disc spaces take population heights, the sternum and cartilages following
 the rib ends, the facet and costovertebral joints carved to the population
 joint space, and the costal cartilages joined to the ribs and the sternum, recorded
-in `template.json`) and stay under the LGPL-3.0-or-later;
+in `template.json`; the intervertebral discs `disc_*.npz` are built from these bones) and stay under the LGPL-3.0-or-later;
 the MIT License covers the code only. See [docs/LICENSING.md](docs/LICENSING.md).

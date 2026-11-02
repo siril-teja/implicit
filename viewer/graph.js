@@ -414,9 +414,9 @@ const Graph = (() => {
   };
   const rigNp = (m, q) => [0, 1, 2].map((i) => m[i] * q[0] + m[3 + i] * q[1] + m[6 + i] * q[2] + m[9 + i]);
 
-  function align(id, x, params) {
-    const a = x.alignment, seg = x.segment, s = a.solver;
-    const res = Solvers.run(s, (n) => a.knobs[n].value);
+  // A segment's motion as 12 computed uniforms (shared by Align and Field warp culling).
+  function segMotion(a, seg, params) {
+    const s = a.solver, res = Solvers.run(s, (n) => a.knobs[n].value);
     if (!(seg in res) || ["tps", "tps_ribcage", "chain", "grid", "flow_cells", "flow_segs", "limits"].includes(seg)) throw new Error(`segment "${seg}" is not in this alignment`);
     if (!a.motions[seg]) {
       a.motions[seg] = res[seg].map((v, i) => {
@@ -424,6 +424,12 @@ const Graph = (() => {
         return { g: p.uniform, iv: [p.min, p.max], param: p };
       });
     }
+    return a.motions[seg];
+  }
+
+  function align(id, x, params) {
+    const a = x.alignment, seg = x.segment, s = a.solver;
+    segMotion(a, seg, params);
     const m = a.motions[seg], g = m.map((q) => q.g);
     const bf = (iv) => {
       const bb = child(x.body, iv);
@@ -505,8 +511,12 @@ const Graph = (() => {
     return a.tables[key];
   }
   // The soft-tissue field: the GLSL of its inverse map at a point (as Warp in sdf.py).
-  function fieldInverse(a, params, carrier = "soft tissue") {
+  function fieldInverse(a, params, carrier = "soft tissue", segment = "") {
     const d = a.solver.data;
+    if (carrier === "polyrigid") {
+      const u = tableParam(a, "chain", params).uniform, r0 = ["sacrum", ...d.levels].indexOf(segment);
+      return segment ? (p) => `polyInv2(${p}, ${u}, ${r0})` : (p) => `polyInv(${p}, ${u}, ${1 + d.levels.length})`;
+    }
     if (carrier === "rib cage") {
       if (!d.ribcage) throw new Error("no rib cage landmarks for this subject");
       const u = tableParam(a, "tps_ribcage", params).uniform;
@@ -529,12 +539,38 @@ const Graph = (() => {
     }
     return mx;
   }
+  // Largest displacement of the corners of ``box`` by segment ``upper`` relative to ``lower``
+  // (graph.py AlignmentV.relative_motion), now and over the slider ranges.
+  function relMotion(a, lower, upper, box) {
+    const s = a.solver, res = [Solvers.run(s, (n) => a.knobs[n].value), ...sampled(a)];
+    let mx = 0;
+    for (const r of res) {
+      const ml = r[lower], mu = r[upper];
+      for (const i of [0, 1]) for (const j of [0, 1]) for (const k of [0, 1]) {
+        const c = [box[i][0], box[j][1], box[k][2]], y = rigNp(mu, c), d = [0, 1, 2].map((n) => y[n] - ml[9 + n]);
+        const w = [0, 1, 2].map((col) => ml[3 * col] * d[0] + ml[3 * col + 1] * d[1] + ml[3 * col + 2] * d[2]);
+        mx = Math.max(mx, Math.hypot(w[0] - c[0], w[1] - c[1], w[2] - c[2]));
+      }
+    }
+    return mx;
+  }
   const WARP_LIP = 0.8;
   function tpsWarp(id, x, params) {
-    const a = x.alignment, carrier = x.carrier || "soft tissue", inv = fieldInverse(a, params, carrier);
+    const a = x.alignment, carrier = x.carrier || "soft tissue", inv = fieldInverse(a, params, carrier, x.segment || "");
     const bf = (iv) => { const bb = child(x.body, iv); return bb ? grow(bb, fieldDisp(a, iv, carrier) + 2.0) : null; };
     const ops = [["var", "vec3", inv("$p")], ["sub", "body", "$0"], ["var", "float", `${glslFloat(WARP_LIP)} * $1`]];
-    return { node: id, inputs: { body: x.body }, bf, tmpl: { ops, out: "$2" } };
+    let local = null;
+    if (x.segment) {  // as graph.py: cull with the box carried by that segment, grown by the next one's motion
+      const segs = ["sacrum", ...a.solver.data.levels], k = segs.indexOf(x.segment);
+      if (k < 0 || k >= segs.length - 1) throw new Error(`segment "${x.segment}": a segment with one above it`);
+      const lb = child(x.body, rangeIv);
+      if (lb) {
+        const g = segMotion(a, x.segment, params).map((q) => q.g);
+        const mv = [0, 3, 6, 9].map((i) => `vec3(${g[i]}, ${g[i + 1]}, ${g[i + 2]})`).join(", ");
+        local = { m: mv, box: grow(lb, relMotion(a, x.segment, segs[k + 1], lb) + 2.0) };
+      }
+    }
+    return { node: id, inputs: { body: x.body }, bf, local, tmpl: { ops, out: "$2" } };
   }
 
   // Field view (as graph.py): lattice carried by the field, arrows of the display grid, or

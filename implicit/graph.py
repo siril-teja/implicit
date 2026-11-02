@@ -44,7 +44,7 @@ import numpy as np
 
 from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, ScaleInPlane, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -352,6 +352,28 @@ BLOCKS["subtract"].doc = "A with B removed."
 
 def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
+
+
+@block("disc", "Disc", "Anatomy",
+       [Port("bone", "bone", label="Disc (bone file from implicit.anatomy.intervertebral)"),
+        Port("upper", "vertebra", label="Upper vertebra (at rest)"),
+        Port("lower", "vertebra", label="Lower vertebra or sacrum (at rest)"),
+        S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area")],
+       [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus")])
+def _disc_block(x, node):
+    """An intervertebral disc split into nucleus and annulus: the nucleus is the disc
+    scaled in its mid-plane (about the point midway between the two endplate centres,
+    normal to the bisector of the endplate normals) to the given fraction
+    of its cross-sectional area, over the full disc height; the annulus is the rest.
+    Carry both with a Field warp (polyrigid: exactly rigid at both endplates)."""
+    from .expr import sqrt
+    b = x["bone"]
+    u, lo = x["upper"], x["lower"]
+    center = (u.inf.point + lo.sup.point) * 0.5  # midway between the endplate centres
+    axis = lo.sup.normal - u.inf.normal  # bisector of the outward normals (normalised by ScaleInPlane)
+    nuc = ScaleInPlane(b.sdf, sqrt(x["nucleus"]), center, axis)
+    bounds = lambda now: _child(b, now)
+    return {"annulus": Field(Difference(b.sdf, nuc), bounds), "nucleus": Field(nuc, bounds)}
 
 
 @block("translate", "Move", "Transforms",
@@ -729,6 +751,11 @@ class AlignmentV:
         return kind, self.texture("tps" if kind == "tps" else "chain"), n
 
     @property
+    def polyrigid_field(self):
+        """The polyrigid field (exactly rigid in every vertebral body), as (kind, table, size)."""
+        return "polyrigid", self.texture("chain"), 1 + len(self.solver.data["levels"])
+
+    @property
     def ribcage_field(self):
         """The rib cage field (costal cartilages): a thin-plate spline through the rib and
         sternum junctions (implicit/anatomy/ribcage.py), as (kind, table, size)."""
@@ -737,6 +764,20 @@ class AlignmentV:
             raise GraphError("no rib cage landmarks for this subject (costal cartilages and ribs; "
                              "run python -m implicit.anatomy.landmarks on its folder)")
         return "tps", self.texture("tps_ribcage"), len(rc["points"])
+
+    def relative_motion(self, lower, upper, box):
+        """Largest displacement (mm) of the corners of ``box`` by the motion of segment
+        ``upper`` relative to ``lower``, now and over the slider ranges."""
+        from .anatomy.alignment import _apply
+        corners = [[box[i][0], box[j][1], box[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)]
+        rt = lambda m: ([[m[0], m[3], m[6]], [m[1], m[4], m[7]], [m[2], m[5], m[8]]], m[9:])
+        out = 0.0
+        for res in [self.solver.result()] + list(self.solver.samples()):
+            (Rl, tl), (Ru, tu) = rt(res[lower]), rt(res[upper])
+            for c in corners:
+                w = np.subtract(_apply((Ru, tu), c), tl) @ np.asarray(Rl)  # lower^-1 upper c
+                out = max(out, float(np.linalg.norm(w - np.asarray(c))))
+        return out
 
     def displacement(self, now, carrier="soft tissue"):
         """Largest control point displacement (mm), now or over the slider ranges."""
@@ -872,21 +913,36 @@ def _spine_curve(x, node):
 
 @block("tps_warp", "Field warp", "Anatomy",
        [BODY(label="Body"), Port("alignment", "alignment", label="Alignment"),
-        Port("carrier", "choice", "soft tissue", label="Carried by", choices=("soft tissue", "rib cage"))],
+        Port("carrier", "choice", "soft tissue", label="Carried by",
+             choices=("soft tissue", "rib cage", "polyrigid")),
+        Port("segment", "text", "", label="Moves with (culling; e.g. the lower vertebra of a disc)")],
        [Port("body", "body", label="Body")])
 def _tps_warp(x, node):
     """Carry a soft structure (spine curve, discs, ligaments) with the alignment, by the
     soft-tissue field chosen on the Spine alignment block (thin-plate spline or
     polyrigid); both move exactly with the bones. "rib cage": the costal cartilages,
     by a thin-plate spline through their junctions with the ribs and the sternum, so
-    they stay joined to both (implicit/anatomy/ribcage.py)."""
-    a, b, carrier = x["alignment"], x["body"], x["carrier"]
-    kind, table, n = a.ribcage_field if carrier == "rib cage" else a.field
+    they stay joined to both (implicit/anatomy/ribcage.py). "polyrigid": the polyrigid
+    field whatever the Spine alignment's choice (discs: exactly rigid at both endplates;
+    with a segment, only that segment and the next one carry the body)."""
+    a, b, carrier, seg = x["alignment"], x["body"], x["carrier"], x["segment"]
+    kind, table, n = (a.ribcage_field if carrier == "rib cage" else a.polyrigid_field if carrier == "polyrigid"
+                      else a.field)
+    m = local = None
+    if seg:  # cull with the body's box carried by that segment, grown by the next one's relative motion
+        segs = ["sacrum"] + list(a.solver.data["levels"])
+        if seg not in segs[:-1]:
+            raise GraphError(f"segment {seg!r}: a segment with one above it ({', '.join(segs[:-1])})")
+        lb = _child(b, False)
+        if lb is not None:
+            m, local = a.motion(seg), _grow(lb, a.relative_motion(seg, segs[segs.index(seg) + 1], lb) + 2.0)
+        if carrier == "polyrigid":  # only this segment and the next carry the body: the cheap inverse
+            kind, n = "polypair", segs.index(seg)
 
     def bounds(now):
         bb = _child(b, now)
         return None if bb is None else _grow(bb, a.displacement(now, carrier) + 2.0)
-    return {"body": Field(Warp(b.sdf, kind, table, n), bounds)}
+    return {"body": Field(Warp(b.sdf, kind, table, n, m, local), bounds)}
 
 
 @block("field_view", "Field view", "Anatomy",

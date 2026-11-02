@@ -133,7 +133,8 @@ examples/*.py    Python scene scripts
 implicit/        expr.py (scalar exprs, Params, CPU solvers) · sdf.py (nodes: GLSL + NumPy)
       │          graph.py (blocks) · scene.py (bodies → GLSL/JSON) · mesh.py (marching tets, STL)
       │          anatomy/ (conversion, landmarks, template, alignment, motion limits,
-      │                    feasible ranges, global balance, rib cage, clearance, discs)
+      │                    feasible ranges, global balance, rib cage, clearance, discs,
+      │                    intervertebral discs)
       ├──► scene JSON ──► viewer/ (WebGL2 sphere tracer, block canvas, sliders,
       │                    clearance, discs, motion limits; same solvers in JS)
       │                    static → GitHub Pages; local → live reload + export

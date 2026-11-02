@@ -5,6 +5,40 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.21.0] - 2026-11-02
+
+### Added
+- **Intervertebral discs** (roadmap step 2.1): `python -m implicit.anatomy.intervertebral`
+  builds a disc between every pair of neighbouring vertebrae with endplate corners
+  (T2-T3 to L5-S1 on VIVA+ 50F) from the template at rest: its wall joins the two
+  endplate rims (each body's outline 1.5 mm inside its endplate, within the ellipse
+  through its corners, at most 15 % wider than the opposite endplate's: S1's corners
+  reach the alae), and it ends at both bones, filling the endplate concavities only
+  inside the rim. Written as bone files `disc_*.npz` with rim areas and frame.
+- **Disc** block: nucleus (the disc scaled in its mid-plane to a fraction of its
+  cross-section; defaults 0.22 from T10-T11 down, 0.11 above, from Moens et al. 2024)
+  and annulus. Field warp: "polyrigid" carrier and a segment to move with, using a
+  two-segment polyrigid inverse (`polyInv2`, stops once converged) and a cull box
+  carried by the lower vertebra; the discs stay on both endplates in every posture
+  (within 0.1 mm).
+- Discs table: sagittal wedge angle per disc (between the endplate lines, as on a
+  lateral radiograph), Python and browser.
+- Annulus fibre field for FE (`intervertebral.fibres`): 20 lamellae, fibres 28 deg to
+  the transverse plane at the outer wall to 45 deg at the nucleus, alternating
+  (Cassidy et al. 1989; Marchand & Ahmed 1990).
+- `ci/frame_time.mjs`: frame time of a scene with some groups shown and hidden.
+- Literature rows 41-47.
+
+### Notes
+- Lumbar endplate rim areas 860-1,100 mm2, within the women's mean +- 2 SD of Louie
+  et al. 2018 (1,819 +- 502 mm2, 3D surface area). Thoracic areas are not checked yet
+  (Panjabi et al. 1991: full text not read).
+- The discs are hidden by default: shown, a full-resolution frame takes about 3.7
+  times as long in headless SwiftShader; the cost is the extra geometry (static
+  discs cost the same). Roadmap 2.1's budget changed accordingly.
+- The nucleus defaults come from children's volume fractions (no adult area fraction
+  found); the roadmap's "40-50 % of the area" had no source.
+
 ## [0.20.0] - 2026-11-01
 
 ### Added

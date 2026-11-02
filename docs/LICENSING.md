@@ -89,8 +89,8 @@ Licence: **LGPL-3.0-or-later** (stated in the release's `LICENSE.md` and on Zeno
 - The bone files here are modified VIVA+ data (converted to distance fields, then
   corrected by `implicit/anatomy/template.py`: vertebrae and ribs translated, joints
   carved, costal cartilages joined to the ribs and sternum, all recorded in
-  `template.json`), so they stay under LGPL-3.0-or-later and their changes are
-  published (this repository does that).
+  `template.json`; the discs `disc_*.npz` are built from them), so they stay under
+  LGPL-3.0-or-later and their changes are published (this repository does that).
   The code that reads them stays MIT.
 - **Open question for counsel:** whether a model built on these bones (e.g. an
   FE model shipped to a customer) is a derivative of the LGPL data that must

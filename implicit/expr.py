@@ -275,6 +275,7 @@ def sin(x): return Func("sin", x)
 def cos(x): return Func("cos", x)
 def tan(x): return Func("tan", x)
 def radians(x): return Func("radians", x)
+def sqrt(x): return Func("sqrt", x)
 
 
 class Vec3:
