@@ -1005,6 +1005,31 @@ def poly_inverse(table, P):
     return X
 
 
+def _poly_region_pair(table, X, r0):
+    """As _poly_region for the two segments r0 and r0 + 1 only (a disc between them):
+    below r0's superior plane r0 rigid, above r0 + 1's inferior plane r0 + 1 rigid, the
+    blend in between."""
+    _, _, _, _, inf, sup = _poly_parts(table)
+    a = X @ sup[r0, :3] + sup[r0, 3]
+    b = X @ inf[r0 + 1, :3] + inf[r0 + 1, 3]
+    r = np.where((a >= 0) & (b >= 0), r0 + 1, r0)
+    lam = np.where((a >= 0) & (b < 0), np.clip(a / np.where(np.abs(a - b) > 1e-12, a - b, 1.0), 0.0, 1.0), 0.0)
+    return r, lam
+
+
+def poly_inverse_pair(table, P, r0):
+    """poly_inverse with only segments r0 and r0 + 1 (exact for points carried by those
+    two: a disc between them), as polyInv2 in the shader: 2 planes per step, not all."""
+    R, t, w, u, _, _ = _poly_parts(table)
+    X = np.array(P, float)
+    for k in range(POLY_ITERS):
+        r, lam = _poly_region_pair(table, X, r0)
+        G = np.array([screw((R[r[i]].T @ (P[i] - t[r[i]]))[None], -lam[i] * w[r[i]], -lam[i] * u[r[i]])[0]
+                      for i in range(len(X))])
+        X = G if k < POLY_RELAX else X + 0.5 * (G - X)
+    return X
+
+
 def grid_points(g):
     """Rest points of the field display grid, x fastest, then y, then z."""
     nx, ny, nz = g["n"]

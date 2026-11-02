@@ -846,16 +846,21 @@ class Warp(SDF):
         return ctx.var("float", f"{glsl_float(self.LIP)} * {ctx.sub(self.child, q)}")
 
     def eval(self, p):
-        return self.LIP * self.child.eval(inverse_np(self.kind, self.table.value(), p))
+        return self.LIP * self.child.eval(inverse_np(self.kind, self.table.value(), p, self.n))
 
 
 def inverse_glsl(kind, p, table, n):
-    return f"{'tpsInv' if kind == 'tps' else 'polyInv'}({p}, {table}, {n})"
+    """Inverse map of a soft-tissue field: kind "tps" (n control points), "polyrigid"
+    (n segments) or "polypair" (the polyrigid field of segments n and n + 1 only)."""
+    fn = {"tps": "tpsInv", "polyrigid": "polyInv", "polypair": "polyInv2"}[kind]
+    return f"{fn}({p}, {table}, {n})"
 
 
-def inverse_np(kind, table, p):
-    from .anatomy.alignment import poly_inverse, tps_eval
-    return tps_eval(table, p) if kind == "tps" else poly_inverse(table, p)
+def inverse_np(kind, table, p, n=None):
+    from .anatomy.alignment import poly_inverse, poly_inverse_pair, tps_eval
+    if kind == "tps":
+        return tps_eval(table, p)
+    return poly_inverse(table, p) if kind == "polyrigid" else poly_inverse_pair(table, p, int(n))
 
 
 class Lattice(SDF):
@@ -1156,6 +1161,22 @@ vec3 polyInv(vec3 p, highp sampler2D T, int n) {{
             float a = dot(ps.xyz, x) + ps.w, b = dot(pi.xyz, x) + pi.w;
             lam = clamp(a / (abs(a - b) > 1e-12 ? a - b : 1.0), 0.0, 1.0);
         }}
+        vec4 c0 = texelFetch(T, ivec2(0, r), 0), c1 = texelFetch(T, ivec2(1, r), 0), c2 = texelFetch(T, ivec2(2, r), 0);
+        vec3 q = p - vec3(c0.w, c1.w, c2.w);
+        q = vec3(dot(q, c0.xyz), dot(q, c1.xyz), dot(q, c2.xyz));
+        vec3 g = screwApply(q, -lam * texelFetch(T, ivec2(3, r), 0).xyz, -lam * texelFetch(T, ivec2(4, r), 0).xyz);
+        x = it < {POLY_RELAX} ? g : x + 0.5 * (g - x);
+    }}
+    return x;
+}}
+// polyInv for the two segments r0 and r0 + 1 only (alignment.poly_inverse_pair).
+vec3 polyInv2(vec3 p, highp sampler2D T, int r0) {{
+    vec3 x = p;
+    vec4 ps = texelFetch(T, ivec2(6, r0), 0), pi = texelFetch(T, ivec2(5, r0 + 1), 0);
+    for (int it = 0; it < {POLY_ITERS}; it++) {{
+        float a = dot(ps.xyz, x) + ps.w, b = dot(pi.xyz, x) + pi.w;
+        int r = (a >= 0.0 && b >= 0.0) ? r0 + 1 : r0;
+        float lam = (a >= 0.0 && b < 0.0) ? clamp(a / (abs(a - b) > 1e-12 ? a - b : 1.0), 0.0, 1.0) : 0.0;
         vec4 c0 = texelFetch(T, ivec2(0, r), 0), c1 = texelFetch(T, ivec2(1, r), 0), c2 = texelFetch(T, ivec2(2, r), 0);
         vec3 q = p - vec3(c0.w, c1.w, c2.w);
         q = vec3(dot(q, c0.xyz), dot(q, c1.xyz), dot(q, c2.xyz));

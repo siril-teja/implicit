@@ -923,7 +923,8 @@ def _tps_warp(x, node):
     polyrigid); both move exactly with the bones. "rib cage": the costal cartilages,
     by a thin-plate spline through their junctions with the ribs and the sternum, so
     they stay joined to both (implicit/anatomy/ribcage.py). "polyrigid": the polyrigid
-    field whatever the Spine alignment's choice (discs: exactly rigid at both endplates)."""
+    field whatever the Spine alignment's choice (discs: exactly rigid at both endplates;
+    with a segment, only that segment and the next one carry the body)."""
     a, b, carrier, seg = x["alignment"], x["body"], x["carrier"], x["segment"]
     kind, table, n = (a.ribcage_field if carrier == "rib cage" else a.polyrigid_field if carrier == "polyrigid"
                       else a.field)
@@ -935,6 +936,8 @@ def _tps_warp(x, node):
         lb = _child(b, False)
         if lb is not None:
             m, local = a.motion(seg), _grow(lb, a.relative_motion(seg, segs[segs.index(seg) + 1], lb) + 2.0)
+        if carrier == "polyrigid":  # only this segment and the next carry the body: the cheap inverse
+            kind, n = "polypair", segs.index(seg)
 
     def bounds(now):
         bb = _child(b, now)

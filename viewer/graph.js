@@ -511,11 +511,11 @@ const Graph = (() => {
     return a.tables[key];
   }
   // The soft-tissue field: the GLSL of its inverse map at a point (as Warp in sdf.py).
-  function fieldInverse(a, params, carrier = "soft tissue") {
+  function fieldInverse(a, params, carrier = "soft tissue", segment = "") {
     const d = a.solver.data;
     if (carrier === "polyrigid") {
-      const u = tableParam(a, "chain", params).uniform;
-      return (p) => `polyInv(${p}, ${u}, ${1 + d.levels.length})`;
+      const u = tableParam(a, "chain", params).uniform, r0 = ["sacrum", ...d.levels].indexOf(segment);
+      return segment ? (p) => `polyInv2(${p}, ${u}, ${r0})` : (p) => `polyInv(${p}, ${u}, ${1 + d.levels.length})`;
     }
     if (carrier === "rib cage") {
       if (!d.ribcage) throw new Error("no rib cage landmarks for this subject");
@@ -556,7 +556,7 @@ const Graph = (() => {
   }
   const WARP_LIP = 0.8;
   function tpsWarp(id, x, params) {
-    const a = x.alignment, carrier = x.carrier || "soft tissue", inv = fieldInverse(a, params, carrier);
+    const a = x.alignment, carrier = x.carrier || "soft tissue", inv = fieldInverse(a, params, carrier, x.segment || "");
     const bf = (iv) => { const bb = child(x.body, iv); return bb ? grow(bb, fieldDisp(a, iv, carrier) + 2.0) : null; };
     const ops = [["var", "vec3", inv("$p")], ["sub", "body", "$0"], ["var", "float", `${glslFloat(WARP_LIP)} * $1`]];
     let local = null;
