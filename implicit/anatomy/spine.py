@@ -310,6 +310,6 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
             nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 720, y + dy],
                                             "in": {"body": src, "name": f"{meta['name'].removeprefix('disc_')} {part}",
                                                    "color": hexc(COLORS[f"disc_{part}"]),
-                                                   "group": f"Discs: {part}", "visible": True}}
+                                                   "group": f"Discs: {part}", "visible": False}}  # cost: see 2.1
     return {"format": "implicit.graph", "version": 1,
             "name": name or f"Implicit bones ({subject})", "frame": "auto", "nodes": nodes}

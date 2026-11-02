@@ -194,6 +194,10 @@ point: 28 deg to the transverse plane at the outer wall to 45 deg at the nucleus
 alternating (Cassidy et al. 1989; Marchand & Ahmed 1990). Lumbar endplate rim areas
 (860-1,100 mm2) are within the women's range of Louie et al. 2018 (1,819 +- 502
 mm2, 3D surface area). Model and references: `implicit/anatomy/intervertebral.py`.
+The discs are hidden by default (groups "Discs: annulus" and "Discs: nucleus" in the
+Scene tab): shown, they make a full-resolution frame about 3.7 times slower in
+headless SwiftShader (a CPU renderer; `ci/frame_time.mjs` measures it), the cost of
+the extra geometry (static discs cost the same).
 
 ## Patient anatomy: implicit bones
 
