@@ -79,15 +79,19 @@ class TestDiscBodies(unittest.TestCase):
 
     def endplate_values(self, lab):
         """The disc's field (nucleus and annulus) at each endplate's surface samples
-        inside the disc's footprint, moved with their vertebra."""
+        inside the disc's footprint (as intervertebral._rim limits it), moved with their
+        vertebra."""
         up, lo = lab.split("-")
         lo = "sacrum" if lo == "S1" else lo
         bodies = discs.scene_bodies(self.scene, grids=True)
         an, nu = self.scene.body(f"{lab} annulus").sdf, self.scene.body(f"{lab} nucleus").sdf
         out = []
-        for b, ep in ((up, "inf"), (lo, "sup")):
+        cu, cl = bodies[up][2]["inf"], bodies[lo][2]["sup"]
+        ant = np.subtract(cl["anterior"], cl["posterior"])
+        for b, ep, mine, other in ((up, "inf", cu, cl), (lo, "sup", cl, cu)):
             g, S, c, (R, t) = bodies[b]
             P = np.asarray(S)[discs.endplate_indices(S, c[ep])]
+            P = P[iv._footprint(mine, ant, other)(P) < 0]  # within the disc's footprint (S1: not the alae)
             W = P @ np.asarray(R).T + np.asarray(t)
             out.append(np.minimum(an.eval(W), nu.eval(W)))
         return np.concatenate(out)
