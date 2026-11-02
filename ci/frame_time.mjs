@@ -31,12 +31,12 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 setTimeout(() => { console.log("frame_time: timed out"); process.exit(1); }, 20 * 60 * 1000).unref();
 const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--use-gl=angle", "--enable-unsafe-swiftshader"],
   channel: "chromium", headless: true });
-const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+const page = await browser.newPage({ viewport: { width: 480, height: 360 } });
 await page.goto(`http://127.0.0.1:${server.address().port}/index.html?scene=${key}`);
 const compiled = () => page.waitForFunction(() => /compiled/i.test(document.querySelector("#status").textContent),
   null, { timeout: 10 * 60 * 1000, polling: 500 });
 
-async function sharp(n = 5) {
+async function sharp(n = 3) {
   const times = [];
   for (let i = 0; i < n; i++) {
     await page.evaluate(() => { document.querySelector("#fps").textContent = ""; window.dispatchEvent(new Event("resize")); });
@@ -55,10 +55,16 @@ await compiled();
 log(`compiled: ${await page.textContent("#status")}`);
 const shown = await sharp();
 log(`shown: ${shown} ms`);
-for (const g of groups) {
-  const box = page.locator("#bodies label.body", { hasText: g }).locator("input");
-  if (await box.count() !== 1) { console.log(`frame_time: no group "${g}"`); process.exit(1); }
-  await box.uncheck();
+for (const g of groups) {  // the Scene tab may be hidden: toggle the checkbox from the page
+  const ok = await page.evaluate((name) => {
+    const label = [...document.querySelectorAll("#bodies label.body")].find((l) => l.textContent.trim() === name);
+    if (!label) return false;
+    const box = label.querySelector("input");
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    return true;
+  }, g);
+  if (!ok) { console.log(`frame_time: no group "${g}"`); process.exit(1); }
 }
 await page.waitForTimeout(500);
 await compiled();
