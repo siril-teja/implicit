@@ -265,6 +265,9 @@ class TestAlignment(unittest.TestCase):
         # Motion limits and coupling: saturated levels, shortfalls.
         self._compare_js(self.data, {**targets, "ML": 1.0, "CP": 1.0})
         self._compare_js(self.data, self.targets(LL=85.0, TK=10.0, MT=-20.0, TL=30.0, CB=-30.0, AR=0.6, ML=1.0, CP=0.5))
+        # Global balance: compensation by the pelvis and by the thoracic spine.
+        self._compare_js(self.data, self.targets(LL=35.0, CM=1.0, SV=20.0, ML=1.0, CP=1.0))
+        self._compare_js(self.data, self.targets(LL=35.0, CM=2.0, SV=20.0))
 
     def _positions(self, targets):
         m = al.solve(self.data, **targets, light=True)
@@ -298,14 +301,15 @@ class TestAlignment(unittest.TestCase):
         proportionally smaller steps; a jump was 400 mm in a 0.45 deg step of TL before the balance fix)."""
         for ml in (0.0, 1.0):
             for k, (lo, hi) in al.KNOBS.items():
-                if k in ("AR", "ML"):
-                    continue  # AR moves nothing without curves; ML is a switch
+                if k in ("AR", "ML", "CM"):
+                    continue  # AR moves nothing without curves; ML and CM are switches
                 self._assert_smooth([self.targets(**{"ML": ml, "CP": 1.0, k: x}) for x in np.linspace(lo, hi, 81)],
                                     f"{k} (ML {ml:.0f})")
         rng = np.random.default_rng(1)
         for i in range(8):
             a, b = ({k: rng.uniform(lo, hi) for k, (lo, hi) in al.KNOBS.items()} for _ in range(2))
             a["ML"] = b["ML"] = float(i % 2)  # limits off and on (held along the path)
+            a["CM"] = b["CM"] = float(i % 3)  # each compensation mode (held)
             self._assert_smooth([{k: a[k] + s * (b[k] - a[k]) for k in a} for s in np.linspace(0, 1, 41)], f"path {i}")
 
     def _compare_js(self, data, targets):
@@ -320,6 +324,11 @@ class TestAlignment(unittest.TestCase):
         self.assertEqual(set(lim["short"]), set(ref_lim["short"]))
         for k, v in ref_lim["short"].items():
             self.assertAlmostEqual(lim["short"][k], v, delta=1e-6, msg=k)
+        for k in ("SV", "TPA", "CB"):
+            self.assertAlmostEqual(lim["balance"][k], ref_lim["balance"][k], delta=1e-6, msg=k)
+        self.assertEqual(set(lim.get("compensation", {})), set(ref_lim.get("compensation", {})))
+        for k, v in ref_lim.get("compensation", {}).items():
+            self.assertAlmostEqual(lim["compensation"][k], v, delta=1e-6, msg=k)
         if "ribcage" in ref_lim:
             rc, ref_rc = lim["ribcage"], ref_lim["ribcage"]
             for k in ("sternum_mm", "sternum_deg"):

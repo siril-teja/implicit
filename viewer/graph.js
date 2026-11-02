@@ -383,7 +383,7 @@ const Graph = (() => {
   // ------------------------------------------------------------ spinopelvic alignment
   // As implicit/graph.py: the chain model runs on the CPU (solvers.js) and each Align
   // block reads its segment's motion (cos a, sin a, t_y, t_z) as computed uniforms.
-  const KNOB_NAMES = ["PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB", "ML", "CP"];
+  const KNOB_NAMES = ["PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB", "ML", "CP", "SV", "CM"];
   function spinopelvic(id, x, library) {
     const b = library && library.bones[x.bone.lib];
     if (!b || !b.spine) throw new Error("no spine and pelvis landmarks for this subject");

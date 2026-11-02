@@ -782,7 +782,9 @@ def _curve_defaults():
         S("PO", 0, -20, 20, 0.5, "deg", "Pelvic obliquity (+ right side up)"),
         S("CB", 0, -80, 80, 1, "mm", "Coronal balance (T1 right of S1)"),
         S("ML", 1, 0, 1, 1, "", "Motion limits per level (1 = on)"),
-        S("CP", 1, 0, 1, 0.05, "", "Coupled axial rotation (1 = physiological)")]
+        S("CP", 1, 0, 1, 0.05, "", "Coupled axial rotation (1 = physiological)"),
+        S("SV", 0, -100, 150, 1, "mm", "Sagittal balance target: T1 anterior of the S1 posterior corner"),
+        S("CM", 0, 0, 2, 1, "", "Compensation: 0 none, 1 pelvic retroversion (PT), 2 thoracic flattening (TK)")]
        + [Port(f"{k}_{part}", "choice", d, label=f"{k} {part}{' end' if part != 'apex' else ''}", choices=_LEVELS)
           for (k, part), d in zip(_CURVE_PORTS, _curve_defaults().values())]
        + [Port("field", "choice", "tps", label="Soft-tissue field", choices=("tps", "polyrigid"))],
@@ -794,7 +796,8 @@ def _spinopelvic(x, node):
     Coronal: two Cobb curves between chosen end vertebrae and apex (MT, TL) with the
     apex vertebrae turned toward the convexity (AR), pelvic obliquity (PO) and coronal
     balance (CB). Each disc stays within its range of motion (ML) and its lateral bend
-    carries the coupled axial rotation (CP; implicit/anatomy/motion.py). Feed it to
+    carries the coupled axial rotation (CP; implicit/anatomy/motion.py). With a
+    compensation mode (CM) PT or TK is solved to hold T1 at the sagittal offset SV. Feed it to
     an Align block per bone and to Field warp blocks for soft structures, carried by
     a thin-plate spline or a polyrigid field (see implicit/anatomy/alignment.py)."""
     from .anatomy.alignment import _curve_plan
@@ -807,7 +810,7 @@ def _spinopelvic(x, node):
     try:
         _curve_plan(data["levels"], curves)
         solver = Solver(node.id, "spinopelvic", {**data, "curves": curves, "field": x["field"]},
-                        {k: x[k] for k in ("PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB", "ML", "CP")})
+                        {k: x[k] for k in ("PI", "PT", "LL", "TK", "MT", "TL", "AR", "PO", "CB", "ML", "CP", "SV", "CM")})
     except ValueError as e:
         raise GraphError(str(e)) from e
     return {"alignment": AlignmentV(solver)}

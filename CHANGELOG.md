@@ -5,6 +5,30 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.20.0] - 2026-11-01
+
+### Added
+- **Global balance** (roadmap step 1.8): SV (T1 anterior of the posterior superior
+  corner of S1: the sagittal vertical axis measured from T1, as the cervical spine is
+  not modelled), the T1 pelvic angle (TPA, Protopsaltis et al. 2014) and PI - LL,
+  measured live with CB and listed under **Balance** in the Scene tab.
+- Compensation modes (SV and CM sliders): the body holds T1 at the SV target by
+  pelvic retroversion (PT solved) or thoracic flattening (TK solved), as patients do
+  (Barrey et al. 2011), solved by regula falsi (Illinois) in Python and the browser,
+  within the motion limits when they are on; the SV shortfall is reported. As in
+  Protopsaltis et al., pelvic retroversion leaves TPA unchanged.
+- **Sagittal shape** presets (Scene tab): Roussouly types 1, 2, 3, 3 AP and 4 with the
+  mean PI and PT of each type (Laouissat et al. 2017) and LL from PI (Le Huec &
+  Hasegawa 2016); a preset sets ML = 0 (another person's shape, not a posture).
+- Literature rows 34-40.
+
+### Notes
+- VIVA+ 50F stands at SV 15.9 mm, TPA 14.3 deg. LL 35 deg moves T1 about 100 mm
+  forward; pelvic retroversion holds it with PT about 35 deg; thoracic flattening
+  alone cannot (TK reaches 0), and with the limits on TK can change only about 7 deg.
+- Types 1 and 2 differ by lordosis shape, which the sliders do not set: their presets
+  differ only in PI and LL.
+
 ## [0.19.0] - 2026-11-01
 
 ### Added

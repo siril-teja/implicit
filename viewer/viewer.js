@@ -74,6 +74,8 @@ async function loadScene(scene, key) {
   $("#limits").replaceChildren();
   $("#ribHead").hidden = true;
   $("#ribcage").replaceChildren();
+  $("#balHead").hidden = true;
+  $("#balance").replaceChildren();
   limitsKey = null;
   $("#discHead").hidden = true;
   $("#discs").replaceChildren();
@@ -327,6 +329,26 @@ function buildPanel() {
   // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
   const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture);
   $("#paramsHead").hidden = !shown.length;
+  // Presets of a Spine alignment (Roussouly types): set its sliders at once.
+  for (const sv of Object.values(s.solvers || {})) {
+    const presets = sv.kind === "spinopelvic" && sv.data.presets;
+    if (!presets) continue;
+    const byName = Object.fromEntries(s.params.map((p) => [p.name, p]));
+    const pick = el("select", { title: "Sagittal shape presets (alignment.py ROUSSOULY): PI and PT of each type "
+      + "(Laouissat et al. 2017), LL from PI (Le Huec & Hasegawa 2016); a preset is another person's shape, so it sets ML = 0",
+    onchange: (e) => {
+      const set = presets[e.target.value];
+      if (!set) return;
+      for (const [k, x] of Object.entries(set)) {
+        const p = byName[sv.inputs[k]];
+        if (p && p.number) { state.values[p.name] = x; syncGraphValue(p); }
+      }
+      state.dirty = true;
+      buildPanel();
+    } }, el("option", { value: "", textContent: "Preset…" }),
+    ...Object.keys(presets).map((n) => el("option", { value: n, textContent: n })));
+    params.append(el("div", { className: "param" }, el("label", { textContent: "Sagittal shape" }), pick));
+  }
   for (const p of shown) {
     const out = el("output", { value: fmt(state.values[p.name], p.step) });
     const range = el("input", {
@@ -602,9 +624,13 @@ function updateDiscs(bodies) {
 // not reached, per target; the discs at a limit in the tooltip.
 function updateLimits(s) {
   const rows = Solvers.shortfalls(s, state.values), rib = Solvers.ribcageReport(s, state.values);
-  const key = JSON.stringify([rows, rib]);
+  const key = JSON.stringify([rows, rib, Solvers.balanceReport(s, state.values)]);
   if (key === limitsKey) return;
   limitsKey = key;
+  const bal = Solvers.balanceReport(s, state.values);
+  $("#balHead").hidden = !bal.length;
+  $("#balance").replaceChildren(...bal.map(([name, text, tip]) => el("div", { className: "clr", title: tip },
+    el("span", { textContent: name }), el("span", { textContent: text }))));
   $("#ribHead").hidden = !rib.length;
   $("#ribcage").replaceChildren(...rib.map(([name, text, tip]) => el("div", { className: "clr", title: tip },
     el("span", { textContent: name }), el("span", { textContent: text }))));
