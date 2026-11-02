@@ -334,7 +334,11 @@ def _boolean(cls, combine):
         def bounds(now):
             bb = combine(a.bfun(now) if a.bfun else None, b.bfun(now) if b.bfun else None)
             return _grow(bb, _upper(k, now)) if smooth_k else bb
-        return {"body": Field(cls(a.sdf, b.sdf, k if smooth_k else 0.0), bounds)}
+        sdf = cls(a.sdf, b.sdf, k if smooth_k else 0.0)
+        if cls is Difference and not smooth_k and getattr(a.sdf, "local_box", None) is not None:
+            # A minus B lies within A: keep A's moving cull box (Scene.glsl).
+            sdf.local_box, sdf.m, sdf.m_glsl = a.sdf.local_box, a.sdf.m, a.sdf.m_glsl
+        return {"body": Field(sdf, bounds)}
     return build
 
 

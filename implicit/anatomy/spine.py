@@ -229,7 +229,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                           "in": {"body": f"@field_{mode}", "name": title, "color": "#8fb3ff",
                                                  "group": title, "visible": False}}
     ys = {"vertebra": 0, "other": 0, "ribcage": 0}
-    discs = {}
+    discs, posed = {}, {}
     for bname, (_, meta) in loaded.items():
         kind = meta["kind"]
         if kind == "disc":  # after the bones (it needs their landmarks)
@@ -271,6 +271,7 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                              **({"carrier": carrier} if carrier != "soft tissue" else {})}}
             src = f"@{bname}_warp"
         right = x + 240
+        posed[bname] = src  # the bone as shown (the discs are cut by it)
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
@@ -284,8 +285,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                         "in": {"body": markers, "name": f"{bname} landmarks",
                                                "color": hexc(COLORS["marker"]), "group": "Landmarks",
                                                "visible": False}}
-    # Intervertebral discs (implicit.anatomy.intervertebral): nucleus and annulus,
-    # carried by the polyrigid field (exactly rigid at both endplates).
+    # Intervertebral discs (implicit.anatomy.intervertebral): nucleus and annulus of the
+    # extended disc, carried by the polyrigid field, then cut by both vertebrae as shown.
     yd = 0
     for dname, meta in discs.items():
         up, lo = meta["upper"], meta["lower"]
@@ -307,7 +308,13 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                                  "in": {"body": src, "alignment": "@spp", "carrier": "polyrigid",
                                                         "segment": lo}}
                 src = f"@{dname}_{part}_warp"
-            nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 720, y + dy],
+            # Cut by both bones as shown: the interfaces are the bone surfaces (common nodes).
+            for k, bone in enumerate((up, lo)):
+                nodes[f"{dname}_{part}_cut{k}"] = {"block": "subtract", "title": f"{dname} {part} minus {bone}",
+                                                   "pos": [x0 + 720 + 240 * k, y + dy],
+                                                   "in": {"a": src, "b": posed[bone]}}
+                src = f"@{dname}_{part}_cut{k}"
+            nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 1200, y + dy],
                                             "in": {"body": src, "name": f"{meta['name'].removeprefix('disc_')} {part}",
                                                    "color": hexc(COLORS[f"disc_{part}"]),
                                                    "group": f"Discs: {part}", "visible": False}}  # cost: see 2.1

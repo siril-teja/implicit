@@ -5,6 +5,22 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.22.0] - 2026-11-02
+
+### Changed
+- **Discs share the bone surface** (roadmap 2.1, as discs are built for FE: rims
+  joined, extended into the bones, cut by them): each disc file now holds the disc
+  extended about 3 mm into both bones from each endplate plane (tapering inward 1 mm
+  per mm, so no collar wraps the waisted bodies), and the graph cuts its nucleus and
+  annulus, after the polyrigid field has carried them, by the upper and lower
+  vertebrae as shown (Subtract blocks). The interface is the bone surface itself:
+  tested equal at rest, within the motion limits and in an extreme posture with the
+  limits off. Before, the disc was cut at rest inside its own grid and could leave
+  gaps at concave endplates and drift from them in large motions.
+- Rims from each body's outline with the body's depth and width (no endplate corners
+  needed): **T1-T2 now has a disc** (T1's inferior endplate has no corners).
+- A Subtract keeps A's moving cull box (Python scenes).
+
 ## [0.21.0] - 2026-11-02
 
 ### Added
