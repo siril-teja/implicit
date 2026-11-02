@@ -827,11 +827,19 @@ class Warp(SDF):
     """
     LIP = 0.8
 
-    def __init__(self, child, kind, table, n):
+    def __init__(self, child, kind, table, n, m=None, local_box=None):
         self.child, self.kind, self.table, self.n = child, kind, table, int(n)
+        # Culling (as RigidMove): with m (a segment's motion, 12 scalars) and local_box, the
+        # scene culls the body with that box moved by m (Scene.glsl).
+        self.m = [wrap(e) for e in m] if m is not None else None
+        self.local_box = local_box
+
+    def m_glsl(self):
+        g = [e.glsl() for e in self.m]
+        return ", ".join(f"vec3({', '.join(g[i:i + 3])})" for i in range(0, 12, 3))
 
     def children(self): return [self.child]
-    def exprs(self): return [self.table]
+    def exprs(self): return [self.table] + (self.m or [])
 
     def emit(self, ctx, p):
         q = ctx.var("vec3", inverse_glsl(self.kind, p, self.table.glsl(), self.n))

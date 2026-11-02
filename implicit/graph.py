@@ -765,6 +765,20 @@ class AlignmentV:
                              "run python -m implicit.anatomy.landmarks on its folder)")
         return "tps", self.texture("tps_ribcage"), len(rc["points"])
 
+    def relative_motion(self, lower, upper, box):
+        """Largest displacement (mm) of the corners of ``box`` by the motion of segment
+        ``upper`` relative to ``lower``, now and over the slider ranges."""
+        from .anatomy.alignment import _apply
+        corners = [[box[i][0], box[j][1], box[k][2]] for i in (0, 1) for j in (0, 1) for k in (0, 1)]
+        rt = lambda m: ([[m[0], m[3], m[6]], [m[1], m[4], m[7]], [m[2], m[5], m[8]]], m[9:])
+        out = 0.0
+        for res in [self.solver.result()] + list(self.solver.samples()):
+            (Rl, tl), (Ru, tu) = rt(res[lower]), rt(res[upper])
+            for c in corners:
+                w = np.subtract(_apply((Ru, tu), c), tl) @ np.asarray(Rl)  # lower^-1 upper c
+                out = max(out, float(np.linalg.norm(w - np.asarray(c))))
+        return out
+
     def displacement(self, now, carrier="soft tissue"):
         """Largest control point displacement (mm), now or over the slider ranges."""
         from .anatomy.alignment import _apply
@@ -900,7 +914,8 @@ def _spine_curve(x, node):
 @block("tps_warp", "Field warp", "Anatomy",
        [BODY(label="Body"), Port("alignment", "alignment", label="Alignment"),
         Port("carrier", "choice", "soft tissue", label="Carried by",
-             choices=("soft tissue", "rib cage", "polyrigid"))],
+             choices=("soft tissue", "rib cage", "polyrigid")),
+        Port("segment", "text", "", label="Moves with (culling; e.g. the lower vertebra of a disc)")],
        [Port("body", "body", label="Body")])
 def _tps_warp(x, node):
     """Carry a soft structure (spine curve, discs, ligaments) with the alignment, by the
@@ -909,14 +924,22 @@ def _tps_warp(x, node):
     by a thin-plate spline through their junctions with the ribs and the sternum, so
     they stay joined to both (implicit/anatomy/ribcage.py). "polyrigid": the polyrigid
     field whatever the Spine alignment's choice (discs: exactly rigid at both endplates)."""
-    a, b, carrier = x["alignment"], x["body"], x["carrier"]
+    a, b, carrier, seg = x["alignment"], x["body"], x["carrier"], x["segment"]
     kind, table, n = (a.ribcage_field if carrier == "rib cage" else a.polyrigid_field if carrier == "polyrigid"
                       else a.field)
+    m = local = None
+    if seg:  # cull with the body's box carried by that segment, grown by the next one's relative motion
+        segs = ["sacrum"] + list(a.solver.data["levels"])
+        if seg not in segs[:-1]:
+            raise GraphError(f"segment {seg!r}: a segment with one above it ({', '.join(segs[:-1])})")
+        lb = _child(b, False)
+        if lb is not None:
+            m, local = a.motion(seg), _grow(lb, a.relative_motion(seg, segs[segs.index(seg) + 1], lb) + 2.0)
 
     def bounds(now):
         bb = _child(b, now)
         return None if bb is None else _grow(bb, a.displacement(now, carrier) + 2.0)
-    return {"body": Field(Warp(b.sdf, kind, table, n), bounds)}
+    return {"body": Field(Warp(b.sdf, kind, table, n, m, local), bounds)}
 
 
 @block("field_view", "Field view", "Anatomy",

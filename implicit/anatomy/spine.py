@@ -304,7 +304,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
             if spine:
                 nodes[f"{dname}_{part}_warp"] = {"block": "tps_warp", "title": f"{dname} {part} warp",
                                                  "pos": [x0 + 480, y + dy],
-                                                 "in": {"body": src, "alignment": "@spp", "carrier": "polyrigid"}}
+                                                 "in": {"body": src, "alignment": "@spp", "carrier": "polyrigid",
+                                                        "segment": lo}}
                 src = f"@{dname}_{part}_warp"
             nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 720, y + dy],
                                             "in": {"body": src, "name": f"{meta['name'].removeprefix('disc_')} {part}",
