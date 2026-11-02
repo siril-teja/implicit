@@ -1069,6 +1069,7 @@ class ScaleInPlane(SDF):
 
 
 POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
+POLY_EPS = 1e-4  # mm: the two-segment inverse (polyInv2) stops once a step moves less
 # Flow line lookup margin (mm; above the renderer's hit tolerance, 0.002 mm per mm of ray, at
 # viewing distances up to 3 m) and segment table width (alignment.py).
 FLOW_MARGIN, FLOW_ROW = 6.0, 512
@@ -1181,7 +1182,9 @@ vec3 polyInv2(vec3 p, highp sampler2D T, int r0) {{
         vec3 q = p - vec3(c0.w, c1.w, c2.w);
         q = vec3(dot(q, c0.xyz), dot(q, c1.xyz), dot(q, c2.xyz));
         vec3 g = screwApply(q, -lam * texelFetch(T, ivec2(3, r), 0).xyz, -lam * texelFetch(T, ivec2(4, r), 0).xyz);
-        x = it < {POLY_RELAX} ? g : x + 0.5 * (g - x);
+        vec3 nx = it < {POLY_RELAX} ? g : x + 0.5 * (g - x);
+        if (dot(nx - x, nx - x) < {POLY_EPS * POLY_EPS:.1e}) {{ x = nx; break; }}  // converged
+        x = nx;
     }}
     return x;
 }}

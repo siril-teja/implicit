@@ -119,7 +119,7 @@ from pathlib import Path
 import numpy as np
 
 from ..expr import SOLVERS
-from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_ITERS, POLY_RELAX
+from ..sdf import FLOW_MARGIN, FLOW_ROW, POLY_EPS, POLY_ITERS, POLY_RELAX
 from . import motion, ribcage, rotation
 from .convert import VERTEBRAE, load_bone
 
@@ -1021,12 +1021,20 @@ def poly_inverse_pair(table, P, r0):
     """poly_inverse with only segments r0 and r0 + 1 (exact for points carried by those
     two: a disc between them), as polyInv2 in the shader: 2 planes per step, not all."""
     R, t, w, u, _, _ = _poly_parts(table)
-    X = np.array(P, float)
+    P = np.asarray(P, float)
+    X = P.copy()
+    live = np.ones(len(X), bool)  # points still iterating (each stops once a step moves < POLY_EPS)
     for k in range(POLY_ITERS):
-        r, lam = _poly_region_pair(table, X, r0)
-        G = np.array([screw((R[r[i]].T @ (P[i] - t[r[i]]))[None], -lam[i] * w[r[i]], -lam[i] * u[r[i]])[0]
-                      for i in range(len(X))])
-        X = G if k < POLY_RELAX else X + 0.5 * (G - X)
+        idx = np.flatnonzero(live)
+        if not len(idx):
+            break
+        r, lam = _poly_region_pair(table, X[idx], r0)
+        G = np.array([screw((R[r[n]].T @ (P[i] - t[r[n]]))[None], -lam[n] * w[r[n]], -lam[n] * u[r[n]])[0]
+                      for n, i in enumerate(idx)])
+        N = G if k < POLY_RELAX else X[idx] + 0.5 * (G - X[idx])
+        done = ((N - X[idx]) ** 2).sum(1) < POLY_EPS ** 2
+        X[idx] = N
+        live[idx[done]] = False
     return X
 
 
