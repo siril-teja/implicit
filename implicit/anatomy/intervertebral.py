@@ -20,8 +20,9 @@ normals, centre c: midway between the endplate centres):
     its bulge beyond the rims is not modelled);
   - endplates: the disc ends at both bones (max with -f_U, -f_L), so it fills the
     endplate concavities and shares their surfaces;
-  - height: limited to the disc space (CAP mm beyond each endplate plane, more than
-    any endplate concavity).
+  - height: limited to the disc space: beyond each endplate plane only inside the rim,
+    from 0 at the rim to at most CAP mm (1 mm per 3 mm inward: endplate concavities),
+    so the disc never wraps around the waisted vertebral bodies.
 Annulus fibres (``fibres``, for FE): 20 lamellae between the outer wall and the
 nucleus, each with its fibres inclined to the transverse plane, alternately up and
 down, from 28 deg at the outer wall to 45 deg at the nucleus (Cassidy et al. 1989;
@@ -55,6 +56,7 @@ SECTION = 1.5   # mm: rim outline sampled this far inside each endplate
 FOOTPRINT = 1.1  # the rim stays within the ellipse through the endplate corners, this much larger
 PARTNER = 1.15   # ... and within this much of the opposite endplate's semi-axes
 CAP = 4.0       # mm: the disc extends at most this far beyond each endplate plane
+CAP_SLOPE = 1.0 / 3.0  # ... starting from 0 at the rim: this much per mm inward
 SPACING = 0.6   # mm: disc grid spacing (as the vertebrae)
 MARGIN = 3.0    # mm: grid padding around the disc
 LUMBAR_AREA = (1819.0, 502.0)  # mm2, mean, SD: women, L1-S1 (Louie et al. 2018)
@@ -126,7 +128,10 @@ def disc_field(gu, gl, upper, lower):
         s = (X - c) @ w
         t = np.clip((s - hl) / (hu - hl), 0.0, 1.0)
         wall = (1 - t) * rim_l(X) + t * rim_u(X)
-        cap = np.maximum(s - hu - CAP, hl - CAP - s)
+        # Beyond the endplate planes only inside the rim (the concavities): none at the
+        # rim, CAP_SLOPE mm more per mm inward, at most CAP (no collar around the bodies).
+        allow = np.clip(-wall * CAP_SLOPE, 0.0, CAP)
+        cap = np.maximum(s - hu - allow, hl - allow - s)
         return np.maximum.reduce([wall, cap, -gu.eval(X), -gl.eval(X)])
     return f
 
