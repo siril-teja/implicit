@@ -31,6 +31,8 @@ publishes that section as the GitHub release notes. Versions follow
   endplates. The viewer leaves out the declarations of uniforms its program does not
   read, and computes derived values before it frames the view.
 - Shorter shaders: GLSL constants with 9 significant digits (exact for 32-bit floats).
+- GPU check: more time on slow runners (Direct3D compiles the live discs' probe
+  programs in 8-11 minutes on a CI runner): 18 minutes for the diagnostics, 22 overall.
 - A Subtract keeps A's moving cull box (Python scenes).
 
 ## [0.21.0] - 2026-11-02

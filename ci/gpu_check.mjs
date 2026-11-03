@@ -39,8 +39,10 @@ if (backend === "swiftshader") args.push("--enable-unsafe-swiftshader");
 else args.push("--disable-software-rasterizer");  // fail rather than fall back to SwiftShader
 if (backend.startsWith("d3d")) args.push("--disable-gpu-sandbox");  // D3D in a service session
 const COMPILE_LIMIT_MS = 15000;
-// Never hang a CI runner: hard stop after 12 minutes whatever happens.
-setTimeout(() => { console.log("FAIL: GPU check timed out"); process.exit(1); }, 12 * 60 * 1000).unref();
+// Never hang a CI runner: hard stop after 22 minutes whatever happens. (Direct3D on a
+// CI runner compiles the probe programs of the average spine with its live discs in
+// 8-11 minutes: twice per slider setting, Python's and the browser's build.)
+setTimeout(() => { console.log("FAIL: GPU check timed out"); process.exit(1); }, 22 * 60 * 1000).unref();
 // channel "chromium": the full browser (Playwright's default headless shell only
 // has SwiftShader). GPU_CHECK_HEADED=1 runs it headed, for runners where headless
 // Chrome would not use the hardware/D3D backend.
@@ -53,7 +55,7 @@ page.on("console", (m) => { const s = m.text().match(/^diag: \s*(== .*)/); if (s
 let code = 1;
 try {
   await page.goto(url, { timeout: 60000 });
-  await page.waitForFunction(() => window.DIAG && window.DIAG.done, null, { timeout: 10 * 60 * 1000, polling: 2000 });
+  await page.waitForFunction(() => window.DIAG && window.DIAG.done, null, { timeout: 18 * 60 * 1000, polling: 2000 });
   const report = await page.inputValue("#report");
   const diag = await page.evaluate(() => window.DIAG);
   // The viewer's own render shader (picking, highlighting) must compile here too.

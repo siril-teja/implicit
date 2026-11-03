@@ -32,7 +32,7 @@ jobs:
   # every shader distance must match NumPy and every ray must hit its body.
   gpu:
     name: gpu (${{ matrix.name }})
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
