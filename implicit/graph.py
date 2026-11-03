@@ -358,6 +358,9 @@ def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
 
 
+DISC_MARGIN = 6.0  # mm: rim ellipse centres (body axis on the endplate) off the endplate centres
+
+
 @block("disc", "Disc", "Anatomy",
        [Port("upper", "body", label="Upper vertebra (as shown)"), Port("lower", "body", label="Lower vertebra or sacrum"),
         Port("upper_v", "vertebra", label="Upper vertebra's landmarks (moved with it)"),
@@ -391,7 +394,14 @@ def _disc_block(x, node):
                  x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"])
     N = D.nucleus(sqrt(x["nucleus"]), *(x[f"{k}_{side}"] for side in "ul" for k in ("cu", "cv", "ea", "er")))
     bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
-    bounds = lambda now: _union_b(_child(U, now), _child(L, now))
+
+    def bounds(now):  # around both endplates: rim ellipses, extensions (tight culling)
+        parts = [_vec_interval(u.inf.point, now), _vec_interval(lo.sup.point, now)]
+        r = [_upper(x[k], now) for k in ("ra_u", "rr_u", "ra_l", "rr_l", "ext_u", "ext_l")]
+        if any(q is None for q in parts) or any(v is None for v in r):
+            return _union_b(_child(U, now), _child(L, now))
+        e = max(r[:4]) + max(r[4:]) + DISC_MARGIN
+        return np.min([q[0] for q in parts], axis=0) - e, np.max([q[1] for q in parts], axis=0) + e
     return {"annulus": Field(bones(Difference(D, N)), bounds), "nucleus": Field(bones(N), bounds)}
 
 

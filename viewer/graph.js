@@ -73,7 +73,14 @@ const Graph = (() => {
     union: (x, iv) => grow(unionB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     intersect: (x, iv) => grow(intersectB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     subtract: (x, iv) => grow(child(x.a, iv), upper(x.blend, iv)),
-    disc: (x, iv) => unionB(child(x.upper, iv), child(x.lower, iv)),  // built between its two bones
+    disc(x, iv) {  // around both endplates: rim ellipses, extensions (graph.py, DISC_MARGIN)
+      const parts = [vecIv(x.upper_v.inf.point, iv), vecIv(x.lower_v.sup.point, iv)];
+      const r = ["ra_u", "rr_u", "ra_l", "rr_l", "ext_u", "ext_l"].map((k) => upper(x[k], iv));
+      if (parts.some((q) => !q) || r.some((v) => v === null)) return unionB(child(x.upper, iv), child(x.lower, iv));
+      const e = Math.max(...r.slice(0, 4)) + Math.max(...r.slice(4)) + 6.0;
+      return [[0, 1, 2].map((k) => Math.min(...parts.map((q) => q[0][k])) - e),
+        [0, 1, 2].map((k) => Math.max(...parts.map((q) => q[1][k])) + e)];
+    },
     translate(x, iv) {
       const t = vecIv(x.offset, iv), b = child(x.body, iv);
       return b && t ? [add(b[0], t[0]), add(b[1], t[1])] : null;
