@@ -76,15 +76,21 @@ try {
     if (ms > COMPILE_LIMIT_MS) viewerErrors.push(`${key}: shader compile ${ms} ms > ${COMPILE_LIMIT_MS} ms`);
     // Groups hidden at load are left out of the shader and compiled in when shown:
     // show them all once, so the full shader is compiled here too (its time is logged).
+    // A small canvas: this checks the compile, and a full-size frame of everything can
+    // keep a slow CI GPU busy past the next page's load.
+    await v.setViewportSize({ width: 160, height: 120 });
     const hidden = await v.evaluate(() => {
-      const n = state.vis.filter((x) => !x).length;
+      const was = state.vis.slice();
+      const n = was.filter((x) => !x).length;
       if (n) { state.vis = state.vis.map(() => true); useScene(state.scene, true); }
+      window.__vis = was;
       return n;
     });
     if (hidden) {
       const all = await v.textContent("#status");
       console.log(`viewer ${key}, all ${hidden} hidden groups shown: ${all.split("\n")[0]}`);
       if (!/compiled/.test(all)) viewerErrors.push(`${key} (all groups): ${all}`);
+      await v.evaluate(() => { state.vis = window.__vis; useScene(state.scene, true); });  // light again
     }
     await v.close();
   }
