@@ -559,48 +559,31 @@ class GridSmooth(SDF):
         return self.grid.bounds()
 
     def _t_glsl(self):
-        # sigma / sigma_1 up to 1, then 1 + log2 of it (no branch: see emit), at most LEVELS.
-        x = f"max({self.sigma.glsl()}, 0.0) / {glsl_float(self.sigmas[1])}"
-        return f"min(min({x}, 1.0) + log2(max({x}, 1.0)), {glsl_float(float(self.LEVELS))})"
+        s1 = glsl_float(self.sigmas[1])
+        s = f"max({self.sigma.glsl()}, 0.0)"
+        return (f"({s} <= {s1} ? {s} / {s1} : min(1.0 + log2({s} / {s1}), "
+                f"{glsl_float(float(self.LEVELS))}))")
 
     def _t(self):
-        x = max(self.sigma.value(), 0.0) / self.sigmas[1]
-        return min(min(x, 1.0) + np.log2(max(x, 1.0)), float(self.LEVELS))
+        s, s1 = max(self.sigma.value(), 0.0), self.sigmas[1]
+        return s / s1 if s <= s1 else min(1.0 + np.log2(s / s1), float(self.LEVELS))
 
     def emit(self, ctx, p):
-        # Two taps: levels i and i + 1 around t (i = floor(t), the last pair at t =
-        # LEVELS), their grid parameters picked by weights that are exactly 0 or 1 (the
-        # weights are those of eval). The second tap only when its weight is non-zero
-        # (a uniform condition: unsmoothed bones read one level).
+        # At most two levels have non-zero weight; the others are not sampled. The
+        # condition depends only on uniforms (same for every pixel), and the grid
+        # lookup uses textureLod, so skipping it is well defined on every GPU.
         t = ctx.var("float", self._t_glsl())
-        i = ctx.var("float", f"min(floor({t}), {glsl_float(float(self.LEVELS - 1))})")
-        f = ctx.var("float", f"{t} - {i}")
-        e = [ctx.var("float", f"max(1.0 - abs({i} - {glsl_float(float(k))}), 0.0)") for k in range(self.LEVELS)]
         pres = self.preserve.glsl()
-        grids = [self.grid] + self.levels
-        for x in grids:
-            if x.atlas_offset is None:
-                raise RuntimeError("Grid not packed; add it to a Scene before emitting GLSL")
-        v3 = lambda xs: "vec3(" + ", ".join(glsl_float(x) for x in xs) + ")"
-
-        def sel(vals):  # the value for level i (vals[0]) ... i = LEVELS - 1
-            return "(" + " + ".join(f"{e[k]} * {v}" for k, v in enumerate(vals)) + ")"
-
-        def tap(ks):
-            g = [grids[k] for k in ks]
-            args = [sel([v3(x.origin) for x in g]), sel([glsl_float(1.0 / x.spacing) for x in g]),
-                    sel([v3(np.array(x.shape) - 1) for x in g]), sel([v3(np.array(x.atlas_offset) + 0.5) for x in g]),
-                    sel([glsl_float(x.spacing) for x in g]), sel([glsl_float(x.margin) for x in g])]
-            off = sel([glsl_float(self.offsets[k]) for k in ks])
-            return ctx.var("float", f"gridSDF({p}, {', '.join(args)}) - {pres} * {off}")
-        lo = tap(range(self.LEVELS))
-        g = [grids[k] for k in range(1, self.LEVELS + 1)]
-        hi = "gridSDF({}, {}) - {} * {}".format(p, ", ".join([
-            sel([v3(x.origin) for x in g]), sel([glsl_float(1.0 / x.spacing) for x in g]),
-            sel([v3(np.array(x.shape) - 1) for x in g]), sel([v3(np.array(x.atlas_offset) + 0.5) for x in g]),
-            sel([glsl_float(x.spacing) for x in g]), sel([glsl_float(x.margin) for x in g])]),
-            pres, sel([glsl_float(self.offsets[k]) for k in range(1, self.LEVELS + 1)]))
-        return ctx.var("float", f"(1.0 - {f}) * {lo} + ({f} > 0.0 ? {f} * ({hi}) : 0.0)")
+        terms = []
+        for k, g in enumerate([self.grid] + self.levels):
+            w = ctx.var("float", f"max(1.0 - abs({t} - {glsl_float(float(k))}), 0.0)")
+            off = f" - {pres} * {glsl_float(self.offsets[k])}" if self.offsets[k] else ""
+            if k == 0:  # the bone itself: may be shared with other uses of it
+                d = ctx.sub(g, p)
+                terms.append(f"{w} * ({d}{off})")
+            else:
+                terms.append(ctx.var("float", f"{w} > 0.0 ? {w} * ({g.call(p)}{off}) : 0.0"))
+        return ctx.var("float", " + ".join(terms))
 
     def eval(self, p):
         t = self._t()
