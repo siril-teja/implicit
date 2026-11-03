@@ -358,20 +358,6 @@ def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
 
 
-def _unsmoothed(sdf):
-    """The same chain of moves with each smoothed grid replaced by its grid."""
-    import copy
-    if isinstance(sdf, GridSmooth):
-        return sdf.grid
-    child = getattr(sdf, "child", None)
-    if isinstance(child, SDF):
-        c = _unsmoothed(child)
-        if c is not child:
-            sdf = copy.copy(sdf)
-            sdf.child = c
-    return sdf
-
-
 @block("disc", "Disc", "Anatomy",
        [Port("upper", "body", label="Upper vertebra (as shown)"), Port("lower", "body", label="Lower vertebra or sacrum"),
         Port("upper_v", "vertebra", label="Upper vertebra's landmarks (moved with it)"),
@@ -396,9 +382,7 @@ def _disc_block(x, node):
     cross-section; the annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
     U, L, u, lo = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
-    # Rims from the bones without their smoothing (one grid tap each: short shaders);
-    # the cut below uses the bones as shown, so the interface is exactly theirs.
-    D = LoftDisc(_unsmoothed(U.sdf), _unsmoothed(L.sdf), u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
+    D = LoftDisc(U.sdf, L.sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
                  lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
                  x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"])
     center = (u.inf.point + lo.sup.point) * 0.5

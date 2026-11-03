@@ -559,40 +559,38 @@ class GridSmooth(SDF):
         return self.grid.bounds()
 
     def _t_glsl(self):
-        s1 = glsl_float(self.sigmas[1])
-        s = f"max({self.sigma.glsl()}, 0.0)"
-        return (f"({s} <= {s1} ? {s} / {s1} : min(1.0 + log2({s} / {s1}), "
-                f"{glsl_float(float(self.LEVELS))}))")
+        # sigma / sigma_1 up to 1, then 1 + log2 of it (no branch: see emit), at most LEVELS.
+        x = f"max({self.sigma.glsl()}, 0.0) / {glsl_float(self.sigmas[1])}"
+        return f"min(min({x}, 1.0) + log2(max({x}, 1.0)), {glsl_float(float(self.LEVELS))})"
 
     def _t(self):
-        s, s1 = max(self.sigma.value(), 0.0), self.sigmas[1]
-        return s / s1 if s <= s1 else min(1.0 + np.log2(s / s1), float(self.LEVELS))
+        x = max(self.sigma.value(), 0.0) / self.sigmas[1]
+        return min(min(x, 1.0) + np.log2(max(x, 1.0)), float(self.LEVELS))
 
     def emit(self, ctx, p):
-        # Two taps, no branches: levels i and i + 1 around t (i = floor(t), the last
-        # pair at t = LEVELS), their grid parameters selected by i (uniforms only).
-        # Short code compiles fast (Direct3D); the weights are those of eval.
+        # Two taps: levels i and i + 1 around t (i = floor(t), the last pair at t =
+        # LEVELS), their grid parameters picked by weights that are exactly 0 or 1. No
+        # ?: anywhere (ANGLE turns each into an if block for Direct3D, which then
+        # compiles very slowly); the weights are those of eval.
         t = ctx.var("float", self._t_glsl())
         i = ctx.var("float", f"min(floor({t}), {glsl_float(float(self.LEVELS - 1))})")
         f = ctx.var("float", f"{t} - {i}")
+        e = [ctx.var("float", f"max(1.0 - abs({i} - {glsl_float(float(k))}), 0.0)") for k in range(self.LEVELS)]
         pres = self.preserve.glsl()
         grids = [self.grid] + self.levels
+        for x in grids:
+            if x.atlas_offset is None:
+                raise RuntimeError("Grid not packed; add it to a Scene before emitting GLSL")
+        v3 = lambda xs: "vec3(" + ", ".join(glsl_float(x) for x in xs) + ")"
 
         def sel(vals):  # the value for level i (vals[0]) ... i = LEVELS - 1
-            out = vals[-1]
-            for k in range(len(vals) - 2, -1, -1):
-                out = f"({i} < {glsl_float(k + 0.5)} ? {vals[k]} : {out})"
-            return out
+            return "(" + " + ".join(f"{e[k]} * {v}" for k, v in enumerate(vals)) + ")"
 
         def tap(ks):
             g = [grids[k] for k in ks]
-            v3 = lambda xs: "vec3(" + ", ".join(glsl_float(x) for x in xs) + ")"
             args = [sel([v3(x.origin) for x in g]), sel([glsl_float(1.0 / x.spacing) for x in g]),
                     sel([v3(np.array(x.shape) - 1) for x in g]), sel([v3(np.array(x.atlas_offset) + 0.5) for x in g]),
                     sel([glsl_float(x.spacing) for x in g]), sel([glsl_float(x.margin) for x in g])]
-            for x in g:
-                if x.atlas_offset is None:
-                    raise RuntimeError("Grid not packed; add it to a Scene before emitting GLSL")
             off = sel([glsl_float(self.offsets[k]) for k in ks])
             return ctx.var("float", f"gridSDF({p}, {', '.join(args)}) - {pres} * {off}")
         lo = tap(range(self.LEVELS))
@@ -1130,7 +1128,7 @@ class LoftDisc(SDF):
         ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l)
         hu = ctx.var("float", f"dot({p} - {pu}, -{nu})")
         hl = ctx.var("float", f"dot({p} - {pl}, -{nl})")
-        t = ctx.var("float", f"{hu} > 0.0 ? 1.0 : ({hl} > 0.0 ? 0.0 : max(-{hl}, 0.0) / max(max(-{hu}, 0.0) + max(-{hl}, 0.0), 1e-9))")
+        t = ctx.var("float", f"max(-{hl}, 0.0) / max(max(-{hu}, 0.0) + max(-{hl}, 0.0), 1e-9)")  # 1 beyond pu, 0 beyond pl
         wall = ctx.var("float", f"mix({ri_l}, {ri_u}, {t}) + {glsl_float(self.taper)} * (max({hu}, 0.0) + max({hl}, 0.0))")
         return ctx.var("float", f"{glsl_float(self.LIP)} * max({wall}, max({hu} - {ext_u}, {hl} - {ext_l}))")
 
@@ -1148,7 +1146,7 @@ class LoftDisc(SDF):
         ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u)
         ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l)
         hu, hl = (p - pu) @ (-nu), (p - pl) @ (-nl)
-        t = np.where(hu > 0, 1.0, np.where(hl > 0, 0.0, np.maximum(-hl, 0) / np.maximum(np.maximum(-hu, 0) + np.maximum(-hl, 0), 1e-9)))
+        t = np.maximum(-hl, 0) / np.maximum(np.maximum(-hu, 0) + np.maximum(-hl, 0), 1e-9)
         wall = (1 - t) * ri_l + t * ri_u + self.taper * (np.maximum(hu, 0) + np.maximum(hl, 0))
         return self.LIP * np.maximum(wall, np.maximum(hu - ext_u, hl - ext_l))
 

@@ -18,7 +18,7 @@ field.
 Shape (disc frame: axis w, the bisector of the two outward endplate normals;
 anterior a, right r):
   - rims: each vertebral body's outline SECTION mm inside its endplate (the bone's own
-    field, without its smoothing, sampled on that plane along w), behind the posterior body wall cut off (pedicles),
+    field as shown, sampled on that plane along w), behind the posterior body wall cut off (pedicles),
     within the ellipse of the body's depth and width, 10 % larger, and at most 15 %
     beyond the opposite endplate's extent (from its corners, else its body: the
     sacrum's section there includes its alae; S1 takes L5's body dimensions). No endplate corners are needed (T1's inferior endplate fits
