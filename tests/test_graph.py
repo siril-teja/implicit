@@ -172,10 +172,10 @@ class TestBrowserBuild(unittest.TestCase):
             j = lib.to_json("x.atlas.gz")
             self.assertEqual(set(j["bones"]), {"bones/L3.npz", "bones/L4.npz", "bones/spinal_cord.npz"})
             for b in j["bones"].values():
-                subs = [op for op in b["smooth"]["ops"] if op[0] == "sub"]
-                self.assertEqual(subs, [["sub", "bone", "$p"]])  # the bone is read once, via its wire
-                # coarser levels are only sampled when their weight is non-zero
-                self.assertEqual(sum("> 0.0 ? " in op[2] for op in b["smooth"]["ops"] if op[0] == "var"), 3)
+                ops = [op for op in b["smooth"]["ops"] if op[0] == "var"]
+                # two taps (the two pyramid levels blended), no branches
+                self.assertEqual(sum(op[2].count("gridSDF(") for op in ops), 2)
+                self.assertFalse(any("> 0.0 ? " in op[2] for op in ops))
             offsets = {k: lib.ctx.grid(k).atlas_offset for k in j["bones"]}
             sc = build_graph(g, d, library=lib)
             sc.glsl()
