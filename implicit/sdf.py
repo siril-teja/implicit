@@ -1102,30 +1102,48 @@ class LoftDisc(SDF):
         self.v = [vec3(x) for x in (pu, nu, bu, au, ru, pl, nl, bl, al, rl)]
         self.s = [wrap(x) for x in (hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l)]
         self.section, self.taper = float(section), float(taper)
+        self.nuc = None
 
-    def children(self): return [self.upper, self.lower]
-    def exprs(self): return self.v + self.s
+    def nucleus(self, k, cu_u, cv_u, ea_u, er_u, cu_l, cv_l, ea_l, er_l):
+        """The nucleus of this disc: the same loft with each rim replaced by its ellipse
+        (centre cu, cv and semi-axes ea, er in the body's anterior and right axes: the
+        rim's area and second moments, implicit.anatomy.intervertebral) scaled by k
+        about its centre, within the rim's ellipse and posterior wall; no bone sampled."""
+        n = LoftDisc.__new__(LoftDisc)
+        n.__dict__.update(self.__dict__)
+        n.upper = n.lower = None
+        n.nuc = [wrap(x) for x in (k, cu_u, cv_u, ea_u, er_u, cu_l, cv_l, ea_l, er_l)]
+        return n
+
+    def children(self): return [] if self.nuc else [self.upper, self.lower]
+    def exprs(self): return self.v + self.s + (self.nuc or [])
 
     def emit(self, ctx, p):
-        # The moved landmarks (long expressions) once per shader unit, for every point
-        # this disc is evaluated at (the nucleus evaluates it at a scaled point).
-        key = (id(self), "landmarks")
+        # The moved landmarks (long expressions) once per shader unit, shared by the
+        # disc and its nucleus.
+        key = ("loft landmarks",) + tuple(id(x) for x in self.v)
         if key not in ctx.memo:
             vs = [ctx.var("vec3", x.glsl()) for x in self.v]
             ctx.memo[key] = (self, vs + [ctx.var("vec3", f"normalize({vs[6]} - {vs[1]})")])
         pu, nu, bu, au, ru, pl, nl, bl, al, rl, w = ctx.memo[key][1]
         hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l = (x.glsl() for x in self.s)
+        nuc = [x.glsl() for x in self.nuc] if self.nuc else None
         sec = glsl_float(self.section)
 
-        def rim(child, pt, n, b, a, r, hd, ra, rr):
+        def rim(child, pt, n, b, a, r, hd, ra, rr, side):
             q = ctx.var("vec3", f"{pt} - {sec} * {n}")
             P = ctx.var("vec3", f"{p} - dot({p} - {q}, {n}) / dot({w}, {n}) * {w}")
             u = ctx.var("float", f"dot({P} - {b}, {a})")
             v = ctx.var("float", f"dot({P} - {b}, {r})")
             foot = f"(length(vec2({u} / {ra}, {v} / {rr})) - 1.0) * min({ra}, {rr})"
+            if nuc:
+                k, cu, cv, ea, er = nuc[0], *nuc[1 + 4 * side: 5 + 4 * side]
+                inner = (f"(length(vec2(({u} - {cu}) / ({k} * {ea}), ({v} - {cv}) / ({k} * {er}))) - 1.0)"
+                         f" * {k} * min({ea}, {er})")
+                return ctx.var("float", f"max(max({inner}, -({u} + {hd})), {foot})")
             return ctx.var("float", f"max(max({ctx.sub(child, P)}, -({u} + {hd})), {foot})")
-        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u)
-        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l)
+        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
+        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
         hu = ctx.var("float", f"dot({p} - {pu}, -{nu})")
         hl = ctx.var("float", f"dot({p} - {pl}, -{nl})")
         t = ctx.var("float", f"max(-{hl}, 0.0) / max(max(-{hu}, 0.0) + max(-{hl}, 0.0), 1e-9)")  # 1 beyond pu, 0 beyond pl
@@ -1135,16 +1153,21 @@ class LoftDisc(SDF):
     def eval(self, p):
         pu, nu, bu, au, ru, pl, nl, bl, al, rl = (_vv(x) for x in self.v)
         hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l = (_v(x) for x in self.s)
+        nuc = [_v(x) for x in self.nuc] if self.nuc else None
         w = (nl - nu) / np.linalg.norm(nl - nu)
 
-        def rim(child, pt, n, b, a, r, hd, ra, rr):
+        def rim(child, pt, n, b, a, r, hd, ra, rr, side):
             q = pt - self.section * n
             P = p - np.outer((p - q) @ n / (w @ n), w)
             u, v = (P - b) @ a, (P - b) @ r
             foot = (np.sqrt((u / ra) ** 2 + (v / rr) ** 2) - 1.0) * min(ra, rr)
+            if nuc:
+                k, cu, cv, ea, er = nuc[0], *nuc[1 + 4 * side: 5 + 4 * side]
+                inner = (np.sqrt(((u - cu) / (k * ea)) ** 2 + ((v - cv) / (k * er)) ** 2) - 1.0) * k * min(ea, er)
+                return np.maximum(np.maximum(inner, -(u + hd)), foot)
             return np.maximum(np.maximum(child.eval(P), -(u + hd)), foot)
-        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u)
-        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l)
+        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
+        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
         hu, hl = (p - pu) @ (-nu), (p - pl) @ (-nl)
         t = np.maximum(-hl, 0) / np.maximum(np.maximum(-hu, 0) + np.maximum(-hl, 0), 1e-9)
         wall = (1 - t) * ri_l + t * ri_u + self.taper * (np.maximum(hu, 0) + np.maximum(hl, 0))

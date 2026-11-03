@@ -135,14 +135,32 @@ def _concavity(g, entry, ep, rim):
     return float(h[inner].max()) if inner.any() else 0.0
 
 
-def rim_area(rim, p, n, a, r, step=0.5):
-    """Area (mm2) inside a rim outline (its field on the plane through p, normal n)."""
+def _rim_points(rim, p, n, a, step=0.5):
+    """Sample points inside a rim outline (its field on the plane through p, normal n)."""
     s = np.arange(-45, 45 + 1e-9, step)
     U, V = np.meshgrid(s, s, indexing="ij")
     u = _unit(a - a.dot(n) * n)
     v = np.cross(n, u)
     X = p + U.reshape(-1, 1) * u + V.reshape(-1, 1) * v
-    return float((rim(X) < 0).sum() * step * step)
+    return X[rim(X) < 0]
+
+
+def rim_area(rim, p, n, a, r, step=0.5):
+    """Area (mm2) inside a rim outline (its field on the plane through p, normal n)."""
+    return float(len(_rim_points(rim, p, n, a, step)) * step * step)
+
+
+def rim_ellipse(rim, p, n, body, step=0.5):
+    """The rim's ellipse for the nucleus: centre (cu, cv) and semi-axes (ea, er) in the
+    body's anterior and right axes (as the Disc block measures them), from the rim's
+    centroid and second moments, scaled to the rim's area."""
+    bc, ax, ar = body[:3]
+    X = _rim_points(rim, p, n, ax, step)
+    u, v = (X - bc) @ ax, (X - bc) @ ar
+    area = len(X) * step * step
+    ea, er = 2.0 * np.sqrt(np.var(u)), 2.0 * np.sqrt(np.var(v))
+    k = np.sqrt(area / (np.pi * ea * er))
+    return float(u.mean()), float(v.mean()), float(k * ea), float(k * er)
 
 
 def disc_params(gu, gl, upper, lower, dims_u, dims_l):
@@ -167,6 +185,9 @@ def disc_params(gu, gl, upper, lower, dims_u, dims_l):
         out[f"ra_{side}"] = round(min(FOOTPRINT * body[3], PARTNER * pd), 3)
         out[f"rr_{side}"] = round(min(FOOTPRINT * body[4], PARTNER * pw), 3)
         out[f"ext_{side}"] = round(max(_concavity(g, e, ep, rim) + EXT_MARGIN, EXT_MIN), 2)
+        q, n = np.asarray(e[ep]["point"], float), _unit(e[ep]["normal"])
+        for name, x in zip(("cu", "cv", "ea", "er"), rim_ellipse(rim, q - SECTION * n, n, body)):
+            out[f"{name}_{side}"] = round(x, 3)
     areas = {"upper": rim_area(rim_u, pu - SECTION * nu, nu, a, r),
              "lower": rim_area(rim_l, pl - SECTION * nl, nl, a, r)}
     return out, areas

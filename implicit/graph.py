@@ -370,23 +370,26 @@ def _child(f: Field, now):
         S("hd_l", 8, 1, 40, 0.1, "mm", "Lower body: half depth (posterior wall)"),
         S("ra_l", 9, 1, 40, 0.1, "mm", "Lower rim ellipse: antero-posterior semi-axis"),
         S("rr_l", 12, 1, 40, 0.1, "mm", "Lower rim ellipse: lateral semi-axis"),
-        S("ext_l", 3, 0, 10, 0.1, "mm", "Into the lower bone")],
+        S("ext_l", 3, 0, 10, 0.1, "mm", "Into the lower bone"),
+        *[S(f"{k}_{side}", v, lo, hi, 0.1, "mm", f"{'Upper' if side == 'u' else 'Lower'} rim ellipse for the nucleus: {what}")
+          for side in "ul" for k, v, lo, hi, what in (("cu", 0, -30, 30, "centre, anterior"), ("cv", 0, -30, 30, "centre, right"),
+                                                        ("ea", 8, 1, 40, "antero-posterior semi-axis"),
+                                                        ("er", 11, 1, 40, "lateral semi-axis"))]],
        [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus")])
 def _disc_block(x, node):
     """An intervertebral disc built from its two vertebrae as they are (moved, and later
     reshaped): the two rims (each body's outline just inside its endplate) blended
     between the endplate planes, extended a few mm into both bones and cut by them, so
     disc and bone share their interface surface in every posture (common nodes for FE).
-    The nucleus is the disc scaled in its mid-plane (about the point midway between the
-    endplate centres, normal to the disc axis) to the given fraction of its
-    cross-section; the annulus is the rest (implicit/anatomy/intervertebral.py)."""
+    The nucleus is the same loft between the rims' ellipses (each rim's area and second
+    moments) scaled about their centres to the given fraction of the cross-section; the
+    annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
     U, L, u, lo = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
     D = LoftDisc(U.sdf, L.sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
                  lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
                  x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"])
-    center = (u.inf.point + lo.sup.point) * 0.5
-    N = ScaleInPlane(D, sqrt(x["nucleus"]), center, lo.sup.normal - u.inf.normal)
+    N = D.nucleus(sqrt(x["nucleus"]), *(x[f"{k}_{side}"] for side in "ul" for k in ("cu", "cv", "ea", "er")))
     bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
     bounds = lambda now: _union_b(_child(U, now), _child(L, now))
     return {"annulus": Field(bones(Difference(D, N)), bounds), "nucleus": Field(bones(N), bounds)}
