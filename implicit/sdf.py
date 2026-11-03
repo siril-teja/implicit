@@ -1085,9 +1085,15 @@ class LoftDisc(SDF):
     LIP = 0.7
 
     def __init__(self, upper, lower, pu, nu, bu, au, ru, pl, nl, bl, al, rl, hd_u, ra_u, rr_u, ext_u,
-                 hd_l, ra_l, rr_l, ext_l, section=1.5, taper=1.0):
+                 hd_l, ra_l, rr_l, ext_l, section=1.5, taper=1.0, zu=None, zl=None, rest_u=None, rest_l=None):
+        # upper, lower: the bones sampled for the rims. With rest_u / rest_l (each the
+        # bone's rest frame: origin, right, anterior, cranial), they are the bones at rest,
+        # sampled at the rim point taken back to rest through the moved frame (bu, ru, au,
+        # zu): exact for rigid motions and cheap (no pose or alignment inverse per point).
         self.upper, self.lower = upper, lower
         self.v = [vec3(x) for x in (pu, nu, bu, au, ru, pl, nl, bl, al, rl)]
+        self.z = [vec3(x) for x in (zu, zl)] if rest_u is not None else []
+        self.rest = [[vec3(x) for x in r] for r in (rest_u, rest_l)] if rest_u is not None else []
         self.s = [wrap(x) for x in (hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l)]
         self.section, self.taper = float(section), float(taper)
         self.nuc = None
@@ -1104,7 +1110,7 @@ class LoftDisc(SDF):
         return n
 
     def children(self): return [] if self.nuc else [self.upper, self.lower]
-    def exprs(self): return self.v + self.s + (self.nuc or [])
+    def exprs(self): return self.v + self.z + [x for r in self.rest for x in r] + self.s + (self.nuc or [])
 
     def emit(self, ctx, p):
         # The moved landmarks (long expressions) once per shader unit, shared by the
@@ -1114,6 +1120,12 @@ class LoftDisc(SDF):
             vs = [ctx.var("vec3", x.glsl()) for x in self.v]
             ctx.memo[key] = (self, vs + [ctx.var("vec3", f"normalize({vs[6]} - {vs[1]})")])
         pu, nu, bu, au, ru, pl, nl, bl, al, rl, w = ctx.memo[key][1]
+        zs = []
+        if self.rest and not self.nuc:
+            zk = ("loft frame z",) + tuple(id(x) for x in self.z)
+            if zk not in ctx.memo:
+                ctx.memo[zk] = (self, [ctx.var("vec3", x.glsl()) for x in self.z])
+            zs = ctx.memo[zk][1]
         hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l = (x.glsl() for x in self.s)
         nuc = [x.glsl() for x in self.nuc] if self.nuc else None
         sec = glsl_float(self.section)
@@ -1129,7 +1141,12 @@ class LoftDisc(SDF):
                 inner = (f"(length(vec2(({u} - {cu}) / ({k} * {ea}), ({v} - {cv}) / ({k} * {er}))) - 1.0)"
                          f" * {k} * min({ea}, {er})")
                 return ctx.var("float", f"max(max({inner}, -({u} + {hd})), {foot})")
-            return ctx.var("float", f"max(max({ctx.sub(child, P)}, -({u} + {hd})), {foot})")
+            at = P
+            if zs:  # back to the bone at rest through its moved frame
+                o, ex, ey, ez = (x.glsl() for x in self.rest[side])
+                d = ctx.var("vec3", f"{P} - {b}")
+                at = ctx.var("vec3", f"{o} + {ex} * dot({d}, {r}) + {ey} * dot({d}, {a}) + {ez} * dot({d}, {zs[side]})")
+            return ctx.var("float", f"max(max({ctx.sub(child, at)}, -({u} + {hd})), {foot})")
         ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
         ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
         hu = ctx.var("float", f"dot({p} - {pu}, -{nu})")
@@ -1153,7 +1170,12 @@ class LoftDisc(SDF):
                 k, cu, cv, ea, er = nuc[0], *nuc[1 + 4 * side: 5 + 4 * side]
                 inner = (np.sqrt(((u - cu) / (k * ea)) ** 2 + ((v - cv) / (k * er)) ** 2) - 1.0) * k * min(ea, er)
                 return np.maximum(np.maximum(inner, -(u + hd)), foot)
-            return np.maximum(np.maximum(child.eval(P), -(u + hd)), foot)
+            at = P
+            if self.rest:
+                o, ex, ey, ez = (_vv(x) for x in self.rest[side])
+                d = P - b
+                at = o + np.outer(d @ r, ex) + np.outer(d @ a, ey) + np.outer(d @ _vv(self.z[side]), ez)
+            return np.maximum(np.maximum(child.eval(at), -(u + hd)), foot)
         ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
         ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
         hu, hl = (p - pu) @ (-nu), (p - pl) @ (-nl)

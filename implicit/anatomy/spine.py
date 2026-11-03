@@ -299,6 +299,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
         nodes[f"{dname}_split"] = {"block": "disc", "title": f"{label} disc", "pos": [x0, y],
                                    "in": {"upper": f"{posed[up]}", "lower": f"{posed[lo_bone]}",
                                           "upper_v": moved[up], "lower_v": moved[lo_bone],
+                                          "upper_bone": f"@{up}", "lower_bone": f"@{lo_bone}",
+                                          "upper_rest": f"@{up}_lm.vertebra", "lower_rest": f"@{lo_bone}_lm.vertebra",
                                           "nucleus": nucleus_fraction(up), **prm}}
         for part, dy in (("annulus", 0), ("nucleus", 115)):
             nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{label} {part}", "pos": [x0 + 240, y + dy],

@@ -365,6 +365,10 @@ DISC_MARGIN = 6.0  # mm: rim ellipse centres (body axis on the endplate) off the
        [Port("upper", "body", label="Upper vertebra (as shown)"), Port("lower", "body", label="Lower vertebra or sacrum"),
         Port("upper_v", "vertebra", label="Upper vertebra's landmarks (moved with it)"),
         Port("lower_v", "vertebra", label="Lower vertebra's landmarks (moved with it)"),
+        Port("upper_bone", "bone", label="Upper bone at rest (its rim)"),
+        Port("lower_bone", "bone", label="Lower bone at rest (its rim)"),
+        Port("upper_rest", "vertebra", label="Upper vertebra's landmarks at rest"),
+        Port("lower_rest", "vertebra", label="Lower vertebra's landmarks at rest"),
         S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area"),
         S("hd_u", 8, 1, 40, 0.1, "mm", "Upper body: half depth (posterior wall)"),
         S("ra_u", 9, 1, 40, 0.1, "mm", "Upper rim ellipse: antero-posterior semi-axis"),
@@ -381,7 +385,8 @@ DISC_MARGIN = 6.0  # mm: rim ellipse centres (body axis on the endplate) off the
        [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus")])
 def _disc_block(x, node):
     """An intervertebral disc built from its two vertebrae as they are (moved, and later
-    reshaped): the two rims (each body's outline just inside its endplate) blended
+    reshaped): the two rims (each body's outline just inside its endplate, sampled on
+    the bone at rest through its moved frame) blended
     between the endplate planes, extended a few mm into both bones and cut by them, so
     disc and bone share their interface surface in every posture (common nodes for FE).
     The nucleus is the same loft between the rims' ellipses (each rim's area and second
@@ -389,9 +394,11 @@ def _disc_block(x, node):
     annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
     U, L, u, lo = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
-    D = LoftDisc(U.sdf, L.sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
+    fr = lambda f: (f.origin, f.x, f.y, f.z)
+    D = LoftDisc(x["upper_bone"].sdf, x["lower_bone"].sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
                  lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
-                 x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"])
+                 x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"],
+                 zu=u.frame.z, zl=lo.frame.z, rest_u=fr(x["upper_rest"].frame), rest_l=fr(x["lower_rest"].frame))
     N = D.nucleus(sqrt(x["nucleus"]), *(x[f"{k}_{side}"] for side in "ul" for k in ("cu", "cv", "ea", "er")))
     bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
 
