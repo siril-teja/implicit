@@ -18,7 +18,8 @@ field.
 Shape (disc frame: axis w, the bisector of the two outward endplate normals;
 anterior a, right r):
   - rims: each vertebral body's outline SECTION mm inside its endplate (the bone's own
-    field at rest, unsmoothed, sampled on that plane along w through its moved frame), behind the posterior body wall cut off (pedicles),
+    field at rest, unsmoothed, sampled on that plane along w through its moved frame),
+    behind the posterior body wall cut off (pedicles),
     within the ellipse of the body's depth and width, 10 % larger, and at most 15 %
     beyond the opposite endplate's extent (from its corners, else its body: the
     sacrum's section there includes its alae; S1 takes L5's body dimensions). No endplate corners are needed (T1's inferior endplate fits
@@ -29,7 +30,12 @@ anterior a, right r):
     collar around the waisted vertebral bodies) up to EXT mm into the bone (each
     endplate's deepest concavity below its plane plus 1 mm, measured on the bone more
     than INNER mm inside the rim, where the waisted side walls do not reach; at least
-    EXT_MIN mm, as the bones cut it anyway).
+    EXT_MIN mm, as the bones cut it anyway);
+  - nucleus: the same loft between each rim's ellipse (``rim_ellipse``: the rim's
+    centroid, its second moments along a and r, scaled to its area) scaled by
+    sqrt(fraction) about its centre, within the rim's own ellipse and posterior wall;
+    the annulus is the rest. The fraction is of the cross-section (an assumption for
+    Moens et al.'s volume fractions; the nucleus spans the disc height).
 Endplate rim area: the area inside the rim at rest (``disc_params``), compared with
 population values (lumbar: Louie et al. 2018, women 1,819 +- 502 mm2 over L1-S1).
 
@@ -202,9 +208,9 @@ def levels(lm):
 
 def radial_position(g, centre, axis, P, iters=40):
     """For points P of a disc (grid g, centre, unit axis): the in-plane scale s at which
-    each point lies on the disc's outline scaled about the centre (normal to the axis,
-    as the Disc block scales the nucleus): 0 at the centre, 1 on the outer wall; the
-    nucleus is s < sqrt(fraction). Bisection on s (the outline is star-shaped about the
+    each point lies on the disc's outline scaled about the centre (normal to the axis):
+    0 at the centre, 1 on the outer wall; the nucleus is about s < sqrt(fraction) (the
+    Disc block scales the rims' ellipses). Bisection on s (the outline is star-shaped about the
     centre)."""
     c, w = np.asarray(centre, float), _unit(axis)
     d = np.asarray(P, float) - c

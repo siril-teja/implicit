@@ -323,8 +323,21 @@ float spGet(int k) {
   // unit functions are removed, so the shader compiles faster (the viewer recompiles
   // when one is shown). The landmark markers alone are three quarters of the average
   // spine's scene code.
+  // Leave out the declarations of float uniforms nothing reads (e.g. those of hidden
+  // groups, or read through u_SP by shared code): drivers keep declared uniforms in the
+  // uniform block, and hundreds of unused ones slowed drawing down sharply (ANGLE on
+  // Vulkan and Metal).
+  function dropUnusedUniforms(src) {
+    const decl = /^uniform float (u_\w+);$/;
+    const lines = src.split("\n"), used = new Set();
+    for (const line of lines) if (!decl.test(line)) for (const m of line.matchAll(/\bu_\w+/g)) used.add(m[0]);
+    return lines.filter((line) => { const m = decl.exec(line); return !m || used.has(m[1]); }).join("\n");
+  }
+
   function sceneProgram(gl, sceneGlsl, skip = null) {
-    const p = instancedProgram(gl, FRAG_HEAD, instanced(skip && skip.size ? pruneGroups(sceneGlsl, skip) : sceneGlsl), FRAG_TAIL);
+    const inst = instanced(skip && skip.size ? pruneGroups(sceneGlsl, skip) : sceneGlsl);
+    inst.glsl = dropUnusedUniforms(inst.glsl);
+    const p = instancedProgram(gl, FRAG_HEAD, inst, FRAG_TAIL);
     p.skip = new Set(skip || []);
     return p;
   }

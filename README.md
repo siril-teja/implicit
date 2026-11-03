@@ -185,8 +185,9 @@ for FE elsewhere: the two endplate rims (each vertebral body's outline 1.5 mm in
 its endplate, sampled on the moved bone) are joined across the disc space, the disc is
 extended about 3 mm into both bones (tapering inward, so no collar wraps the waisted
 bodies) to cover any endplate concavity, and the bones as shown cut it. It splits into
-nucleus (the disc scaled in its mid-plane to a fraction of its cross-section: 0.22
-from T10-T11 down, 0.11 above, from the nucleus volume fractions of Moens et al. 2024)
+nucleus (the same loft between the rims' ellipses, each with its rim's area and second
+moments, scaled to a fraction of the cross-section: 0.22 from T10-T11 down, 0.11
+above, from the nucleus volume fractions of Moens et al. 2024)
 and annulus. Whatever moves or reshapes the vertebrae, the disc is rebuilt from them,
 and its interface is the bone surface itself in every posture, with or without the
 motion limits: one shared surface, so meshes of disc and bone can share their nodes.

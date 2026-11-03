@@ -165,7 +165,7 @@ const Graph = (() => {
   const nowIv = (values) => Object.assign((s) => {
     if (s.param) {
       const v = s.param.name in values ? values[s.param.name] : s.param.value;
-      return [v, v];
+      return Number.isFinite(v) ? [v, v] : null;  // e.g. a derived value not computed yet: unknown
     }
     if (s.ev) {  // derived value (e.g. a posed frame): evaluate its expression
       const v = s.ev(values);

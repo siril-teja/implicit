@@ -118,6 +118,7 @@ function useScene(scene, keep) {
   const oldVals = state.values;
   state.values = {};
   for (const p of scene.params) state.values[p.name] = keep && p.name in oldVals ? oldVals[p.name] : p.value;
+  Solvers.apply(scene, state.values);  // computed and derived values, before anything is measured (fitView)
   state.vis = vis;
   state.scene = scene;
   if (first) fitView();
