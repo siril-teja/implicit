@@ -173,9 +173,9 @@ class TestBrowserBuild(unittest.TestCase):
             self.assertEqual(set(j["bones"]), {"bones/L3.npz", "bones/L4.npz", "bones/spinal_cord.npz"})
             for b in j["bones"].values():
                 ops = [op for op in b["smooth"]["ops"] if op[0] == "var"]
-                # two taps (the two pyramid levels blended), no branches
+                # two taps (the two pyramid levels blended), the second only when weighted
                 self.assertEqual(sum(op[2].count("gridSDF(") for op in ops), 2)
-                self.assertFalse(any("> 0.0 ? " in op[2] for op in ops))
+                self.assertEqual(sum(op[2].count("> 0.0 ? ") for op in ops), 1)
             offsets = {k: lib.ctx.grid(k).atlas_offset for k in j["bones"]}
             sc = build_graph(g, d, library=lib)
             sc.glsl()

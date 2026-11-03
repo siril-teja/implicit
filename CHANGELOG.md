@@ -25,9 +25,8 @@ publishes that section as the GitHub release notes. Versions follow
   needed): **T1-T2 now has a disc** (T1's inferior endplate has no corners).
 - Shorter shaders (faster compiles, notably with Direct3D): GLSL constants with 9
   significant digits (exact for 32-bit floats); a smoothed bone samples only the two
-  pyramid levels it blends, and the shaders avoid `?:` (ANGLE turns each into an if
-  block for Direct3D); the disc rims sample the bones as shown, so the viewer's own
-  build of the graph gives the same discs.
+  pyramid levels it blends (the second only when smoothing is on); the disc rims sample
+  the bones as shown, so the viewer's own build of the graph gives the same discs.
 - A Subtract keeps A's moving cull box (Python scenes).
 
 ## [0.21.0] - 2026-11-02

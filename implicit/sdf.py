@@ -569,9 +569,9 @@ class GridSmooth(SDF):
 
     def emit(self, ctx, p):
         # Two taps: levels i and i + 1 around t (i = floor(t), the last pair at t =
-        # LEVELS), their grid parameters picked by weights that are exactly 0 or 1. No
-        # ?: anywhere (ANGLE turns each into an if block for Direct3D, which then
-        # compiles very slowly); the weights are those of eval.
+        # LEVELS), their grid parameters picked by weights that are exactly 0 or 1 (the
+        # weights are those of eval). The second tap only when its weight is non-zero
+        # (a uniform condition: unsmoothed bones read one level).
         t = ctx.var("float", self._t_glsl())
         i = ctx.var("float", f"min(floor({t}), {glsl_float(float(self.LEVELS - 1))})")
         f = ctx.var("float", f"{t} - {i}")
@@ -594,8 +594,13 @@ class GridSmooth(SDF):
             off = sel([glsl_float(self.offsets[k]) for k in ks])
             return ctx.var("float", f"gridSDF({p}, {', '.join(args)}) - {pres} * {off}")
         lo = tap(range(self.LEVELS))
-        hi = tap(range(1, self.LEVELS + 1))
-        return ctx.var("float", f"(1.0 - {f}) * {lo} + {f} * {hi}")
+        g = [grids[k] for k in range(1, self.LEVELS + 1)]
+        hi = "gridSDF({}, {}) - {} * {}".format(p, ", ".join([
+            sel([v3(x.origin) for x in g]), sel([glsl_float(1.0 / x.spacing) for x in g]),
+            sel([v3(np.array(x.shape) - 1) for x in g]), sel([v3(np.array(x.atlas_offset) + 0.5) for x in g]),
+            sel([glsl_float(x.spacing) for x in g]), sel([glsl_float(x.margin) for x in g])]),
+            pres, sel([glsl_float(self.offsets[k]) for k in range(1, self.LEVELS + 1)]))
+        return ctx.var("float", f"(1.0 - {f}) * {lo} + ({f} > 0.0 ? {f} * ({hi}) : 0.0)")
 
     def eval(self, p):
         t = self._t()
