@@ -5,20 +5,28 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
-## [0.22.0] - 2026-11-02
+## [0.22.0] - 2026-11-03
 
 ### Changed
-- **Discs share the bone surface** (roadmap 2.1, as discs are built for FE: rims
-  joined, extended into the bones, cut by them): each disc file now holds the disc
-  extended about 3 mm into both bones from each endplate plane (tapering inward 1 mm
-  per mm, so no collar wraps the waisted bodies), and the graph cuts its nucleus and
-  annulus, after the polyrigid field has carried them, by the upper and lower
-  vertebrae as shown (Subtract blocks). The interface is the bone surface itself:
-  tested equal at rest, within the motion limits and in an extreme posture with the
-  limits off. Before, the disc was cut at rest inside its own grid and could leave
-  gaps at concave endplates and drift from them in large motions.
+- **Discs rebuilt live from the bones** (roadmap 2.1, as discs are built for FE: rims
+  joined, extended into the bones, cut by them). The Disc block now builds each disc
+  in the shader from its two vertebrae as shown: the rims are each body's outline
+  1.5 mm inside its endplate, sampled on the moved bone; the wall blends the two rims
+  between the endplate planes; it reaches about 3 mm into both bones (tapering inward
+  1 mm per mm, so no collar wraps the waisted bodies); then the bones as shown cut it.
+  Whatever moves or reshapes the vertebrae (sliders, motion limits, posture), the disc
+  follows, and its interface is the bone surface itself: tested equal at rest, within
+  the motion limits and in an extreme posture with the limits off. Before, each disc
+  was a grid built at rest and carried by the polyrigid field, which left gaps at
+  concave endplates and drifted from them in large motions. The `disc_*.npz` files
+  are gone; `python -m implicit.anatomy.intervertebral` now reports each level's
+  Disc block inputs and rim areas.
 - Rims from each body's outline with the body's depth and width (no endplate corners
   needed): **T1-T2 now has a disc** (T1's inferior endplate has no corners).
+- Shorter shaders (faster compiles, notably with Direct3D): GLSL constants with 9
+  significant digits (exact for 32-bit floats); a smoothed bone samples only the two
+  pyramid levels it blends, without branches; the disc rims sample the bones without
+  their smoothing (one grid tap each).
 - A Subtract keeps A's moving cull box (Python scenes).
 
 ## [0.21.0] - 2026-11-02

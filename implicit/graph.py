@@ -44,7 +44,7 @@ import numpy as np
 
 from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, ScaleInPlane, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, ScaleInPlane, LoftDisc, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -358,26 +358,54 @@ def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
 
 
+def _unsmoothed(sdf):
+    """The same chain of moves with each smoothed grid replaced by its grid."""
+    import copy
+    if isinstance(sdf, GridSmooth):
+        return sdf.grid
+    child = getattr(sdf, "child", None)
+    if isinstance(child, SDF):
+        c = _unsmoothed(child)
+        if c is not child:
+            sdf = copy.copy(sdf)
+            sdf.child = c
+    return sdf
+
+
 @block("disc", "Disc", "Anatomy",
-       [Port("bone", "bone", label="Disc (bone file from implicit.anatomy.intervertebral)"),
-        Port("upper", "vertebra", label="Upper vertebra (at rest)"),
-        Port("lower", "vertebra", label="Lower vertebra or sacrum (at rest)"),
-        S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area")],
+       [Port("upper", "body", label="Upper vertebra (as shown)"), Port("lower", "body", label="Lower vertebra or sacrum"),
+        Port("upper_v", "vertebra", label="Upper vertebra's landmarks (moved with it)"),
+        Port("lower_v", "vertebra", label="Lower vertebra's landmarks (moved with it)"),
+        S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area"),
+        S("hd_u", 8, 1, 40, 0.1, "mm", "Upper body: half depth (posterior wall)"),
+        S("ra_u", 9, 1, 40, 0.1, "mm", "Upper rim ellipse: antero-posterior semi-axis"),
+        S("rr_u", 12, 1, 40, 0.1, "mm", "Upper rim ellipse: lateral semi-axis"),
+        S("ext_u", 3, 0, 10, 0.1, "mm", "Into the upper bone"),
+        S("hd_l", 8, 1, 40, 0.1, "mm", "Lower body: half depth (posterior wall)"),
+        S("ra_l", 9, 1, 40, 0.1, "mm", "Lower rim ellipse: antero-posterior semi-axis"),
+        S("rr_l", 12, 1, 40, 0.1, "mm", "Lower rim ellipse: lateral semi-axis"),
+        S("ext_l", 3, 0, 10, 0.1, "mm", "Into the lower bone")],
        [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus")])
 def _disc_block(x, node):
-    """An intervertebral disc split into nucleus and annulus: the nucleus is the disc
-    scaled in its mid-plane (about the point midway between the two endplate centres,
-    normal to the bisector of the endplate normals) to the given fraction
-    of its cross-sectional area, over the full disc height; the annulus is the rest.
-    Carry both with a Field warp (polyrigid: exactly rigid at both endplates)."""
+    """An intervertebral disc built from its two vertebrae as they are (moved, and later
+    reshaped): the two rims (each body's outline just inside its endplate) blended
+    between the endplate planes, extended a few mm into both bones and cut by them, so
+    disc and bone share their interface surface in every posture (common nodes for FE).
+    The nucleus is the disc scaled in its mid-plane (about the point midway between the
+    endplate centres, normal to the disc axis) to the given fraction of its
+    cross-section; the annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
-    b = x["bone"]
-    u, lo = x["upper"], x["lower"]
-    center = (u.inf.point + lo.sup.point) * 0.5  # midway between the endplate centres
-    axis = lo.sup.normal - u.inf.normal  # bisector of the outward normals (normalised by ScaleInPlane)
-    nuc = ScaleInPlane(b.sdf, sqrt(x["nucleus"]), center, axis)
-    bounds = lambda now: _child(b, now)
-    return {"annulus": Field(Difference(b.sdf, nuc), bounds), "nucleus": Field(nuc, bounds)}
+    U, L, u, lo = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
+    # Rims from the bones without their smoothing (one grid tap each: short shaders);
+    # the cut below uses the bones as shown, so the interface is exactly theirs.
+    D = LoftDisc(_unsmoothed(U.sdf), _unsmoothed(L.sdf), u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
+                 lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
+                 x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"])
+    center = (u.inf.point + lo.sup.point) * 0.5
+    N = ScaleInPlane(D, sqrt(x["nucleus"]), center, lo.sup.normal - u.inf.normal)
+    bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
+    bounds = lambda now: _union_b(_child(U, now), _child(L, now))
+    return {"annulus": Field(bones(Difference(D, N)), bounds), "nucleus": Field(bones(N), bounds)}
 
 
 @block("translate", "Move", "Transforms",

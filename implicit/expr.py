@@ -11,7 +11,9 @@ import math
 
 
 def glsl_float(v: float) -> str:
-    s = repr(float(v))
+    # 9 significant digits: GLSL floats are 32-bit, and 9 digits pin a float32 exactly
+    # (shorter shaders compile faster, notably with Direct3D).
+    s = repr(float(f"{float(v):.9g}"))
     if "inf" in s or "nan" in s:
         raise ValueError(f"cannot emit {v} as a GLSL literal")
     return s

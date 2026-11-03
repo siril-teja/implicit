@@ -15,7 +15,7 @@ const Graph = (() => {
 
   function glslFloat(v) {
     if (!Number.isFinite(v)) throw new Error(`cannot emit ${v} as a GLSL literal`);
-    let s = String(v);
+    let s = String(Number(v.toPrecision(9)));  // float32: 9 significant digits are exact (glsl_float)
     if (!/[.e]/.test(s)) s += ".0";
     return s;
   }
@@ -73,6 +73,7 @@ const Graph = (() => {
     union: (x, iv) => grow(unionB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     intersect: (x, iv) => grow(intersectB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     subtract: (x, iv) => grow(child(x.a, iv), upper(x.blend, iv)),
+    disc: (x, iv) => unionB(child(x.upper, iv), child(x.lower, iv)),  // built between its two bones
     translate(x, iv) {
       const t = vecIv(x.offset, iv), b = child(x.body, iv);
       return b && t ? [add(b[0], t[0]), add(b[1], t[1])] : null;
