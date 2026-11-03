@@ -11,7 +11,9 @@ import math
 
 
 def glsl_float(v: float) -> str:
-    s = repr(float(v))
+    # 9 significant digits: GLSL floats are 32-bit, and 9 digits pin a float32 exactly
+    # (shorter shaders compile faster, notably with Direct3D).
+    s = repr(float(f"{float(v):.9g}"))
     if "inf" in s or "nan" in s:
         raise ValueError(f"cannot emit {v} as a GLSL literal")
     return s
@@ -189,6 +191,36 @@ class Computed(Param):
 
     def to_json(self):
         return {**super().to_json(), "computed": {"solver": self.solver.id, "key": self.key, "index": self.index}}
+
+
+class Derived(Param):
+    """A uniform whose value is an expression of other uniforms (e.g. a moved landmark's
+    coordinate), computed on the CPU whenever they change instead of in every pixel. The
+    viewer evaluates the same expression (``derived``: its GLSL, viewer/solvers.js)."""
+
+    def __init__(self, name, expr: Expr):
+        if not name.isidentifier():
+            raise ValueError(f"param name must be an identifier: {name!r}")
+        self.name, self.expr = name, expr
+        self.lo, self.hi, self.step = -1e9, 1e9, 0.0
+        self.label, self.unit = name, ""
+
+    @property
+    def v(self):
+        return float(self.expr.value())
+
+    @property
+    def default(self):
+        return self.v
+
+    def set(self, v):
+        pass  # follows its expression's uniforms
+
+    def params(self):
+        return [self] + self.expr.params()
+
+    def to_json(self):
+        return {**super().to_json(), "derived": self.expr.glsl()}
 
 
 class ComputedTexture(Param):

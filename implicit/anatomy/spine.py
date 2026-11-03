@@ -17,6 +17,7 @@ import numpy as np
 from ..expr import Param
 from ..scene import Scene
 from ..sdf import Grid, HalfSpace, Sphere, smooth
+from . import intervertebral as iv
 from .convert import VERTEBRAE, load_bones
 
 COLORS = {
@@ -229,12 +230,9 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                           "in": {"body": f"@field_{mode}", "name": title, "color": "#8fb3ff",
                                                  "group": title, "visible": False}}
     ys = {"vertebra": 0, "other": 0, "ribcage": 0}
-    discs = {}
+    posed, moved = {}, {}
     for bname, (_, meta) in loaded.items():
         kind = meta["kind"]
-        if kind == "disc":  # after the bones (it needs their landmarks)
-            discs[bname] = meta
-            continue
         key = bname[0] if kind == "vertebra" else kind
         has_lm = ("S1" if bname == "sacrum" else bname) in levels
         seg = segments.get(bname)
@@ -271,6 +269,8 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                              **({"carrier": carrier} if carrier != "soft tissue" else {})}}
             src = f"@{bname}_warp"
         right = x + 240
+        posed[bname] = src  # the bone as shown (the discs are built from it)
+        moved[bname] = vert
         nodes[f"{bname}_out"] = {"block": "output", "title": bname, "pos": [right, y],
                                  "in": {"body": src, "name": bname, "color": hexc(COLORS[key]),
                                         "group": GROUP[key], "visible": kind != "reference"}}
@@ -284,31 +284,27 @@ def anatomy_graph(bone_dir, relative_to=None, name=None):
                                         "in": {"body": markers, "name": f"{bname} landmarks",
                                                "color": hexc(COLORS["marker"]), "group": "Landmarks",
                                                "visible": False}}
-    # Intervertebral discs (implicit.anatomy.intervertebral): nucleus and annulus,
-    # carried by the polyrigid field (exactly rigid at both endplates).
-    yd = 0
-    for dname, meta in discs.items():
-        up, lo = meta["upper"], meta["lower"]
-        if f"{up}_lm" not in nodes or f"{lo}_lm" not in nodes:
+    # Intervertebral discs (implicit.anatomy.intervertebral): built live from the two
+    # vertebrae as shown (moved and reshaped), extended into both and cut by them.
+    lm, yd = doc["landmarks"], 0
+    for up, lo in iv.levels(lm):
+        lo_bone = "sacrum" if lo == "S1" else lo
+        if not (moved.get(up) and moved.get(lo_bone)):
             continue
+        prm, _ = iv.disc_params(loaded[up][0], loaded[lo_bone][0], lm[up], lm[lo], lm[up],
+                                lm["L5"] if lo == "S1" else lm[lo])
         x0, y = 3600, yd
         yd += 240
-        file, dname = rel(dname), dname.replace("-", "_")  # node ids are identifiers
-        nodes[dname] = {"block": "bone", "title": meta["name"], "pos": [x0, y], "in": {"file": file}}
-        nodes[f"{dname}_split"] = {"block": "disc", "title": f"{dname} nucleus/annulus", "pos": [x0 + 240, y],
-                                   "in": {"bone": f"@{dname}", "upper": f"@{up}_lm.vertebra",
-                                          "lower": f"@{lo}_lm.vertebra",
-                                          "nucleus": nucleus_fraction(up)}}
+        label, dname = f"{up}-{lo}", f"disc_{up}_{lo}"  # node ids are identifiers
+        nodes[f"{dname}_split"] = {"block": "disc", "title": f"{label} disc", "pos": [x0, y],
+                                   "in": {"upper": f"{posed[up]}", "lower": f"{posed[lo_bone]}",
+                                          "upper_v": moved[up], "lower_v": moved[lo_bone],
+                                          "upper_bone": f"@{up}", "lower_bone": f"@{lo_bone}",
+                                          "upper_rest": f"@{up}_lm.vertebra", "lower_rest": f"@{lo_bone}_lm.vertebra",
+                                          "nucleus": nucleus_fraction(up), **prm}}
         for part, dy in (("annulus", 0), ("nucleus", 115)):
-            src = f"@{dname}_split.{part}"
-            if spine:
-                nodes[f"{dname}_{part}_warp"] = {"block": "tps_warp", "title": f"{dname} {part} warp",
-                                                 "pos": [x0 + 480, y + dy],
-                                                 "in": {"body": src, "alignment": "@spp", "carrier": "polyrigid",
-                                                        "segment": lo}}
-                src = f"@{dname}_{part}_warp"
-            nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{dname} {part}", "pos": [x0 + 720, y + dy],
-                                            "in": {"body": src, "name": f"{meta['name'].removeprefix('disc_')} {part}",
+            nodes[f"{dname}_{part}_out"] = {"block": "output", "title": f"{label} {part}", "pos": [x0 + 240, y + dy],
+                                            "in": {"body": f"@{dname}_split.{part}", "name": f"{label} {part}",
                                                    "color": hexc(COLORS[f"disc_{part}"]),
                                                    "group": f"Discs: {part}", "visible": False}}  # cost: see 2.1
     return {"format": "implicit.graph", "version": 1,

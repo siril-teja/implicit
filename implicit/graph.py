@@ -44,7 +44,7 @@ import numpy as np
 
 from .expr import BinOp, Computed, ComputedTexture, Const, Expr, Func, Param, Solver, Vec3, cos, radians, sin
 from .scene import Scene, pack_grids
-from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, ScaleInPlane, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
+from .sdf import (GLSL_LIB, SDF, Box, Capsule, Ctx, Cylinder, Difference, FramePose, Grid, GridSmooth, HalfSpace, RigidMove, ScaleInPlane, LoftDisc, Warp, Lattice, Arrows, FlowLines, Slab, ColorValue, inverse_glsl, inverse_np, Tube,
                   _rot_np,
                   Intersect, Offset, Rotate, Shell, Sphere, Translate, Union, _pyramid, smooth)
 
@@ -334,7 +334,11 @@ def _boolean(cls, combine):
         def bounds(now):
             bb = combine(a.bfun(now) if a.bfun else None, b.bfun(now) if b.bfun else None)
             return _grow(bb, _upper(k, now)) if smooth_k else bb
-        return {"body": Field(cls(a.sdf, b.sdf, k if smooth_k else 0.0), bounds)}
+        sdf = cls(a.sdf, b.sdf, k if smooth_k else 0.0)
+        if cls is Difference and not smooth_k and getattr(a.sdf, "local_box", None) is not None:
+            # A minus B lies within A: keep A's moving cull box (Scene.glsl).
+            sdf.local_box, sdf.m, sdf.m_glsl = a.sdf.local_box, a.sdf.m, a.sdf.m_glsl
+        return {"body": Field(sdf, bounds)}
     return build
 
 
@@ -354,26 +358,73 @@ def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
 
 
+def _derived_vertebra(v, name):
+    """The vertebra's frame and planes as Derived uniforms (moved landmarks computed on
+    the CPU, not in every pixel); unchanged while tracing a template (the viewer's graph
+    builder makes the same uniforms, viewer/graph.js)."""
+    from .expr import Derived
+    if v is None or any(isinstance(c, _ScalarHole) for c in v.frame.origin.c):
+        return v
+    vec = lambda e, tag: Vec3(*(Derived(f"{name}_{tag}_{a}", c) for a, c in zip("xyz", e.c)))
+    plane = lambda pl, tag: None if pl is None else PlaneV(vec(pl.point, f"{tag}_point"), vec(pl.normal, f"{tag}_normal"))
+    f = v.frame
+    return VertebraV(FrameV(*(vec(getattr(f, k), f"frame_{k}") for k in ("origin", "x", "y", "z"))),
+                     plane(v.sup, "sup"), plane(v.inf, "inf"))
+
+
+DISC_MARGIN = 6.0  # mm: rim ellipse centres (body axis on the endplate) off the endplate centres
+
+
 @block("disc", "Disc", "Anatomy",
-       [Port("bone", "bone", label="Disc (bone file from implicit.anatomy.intervertebral)"),
-        Port("upper", "vertebra", label="Upper vertebra (at rest)"),
-        Port("lower", "vertebra", label="Lower vertebra or sacrum (at rest)"),
-        S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area")],
+       [Port("upper", "body", label="Upper vertebra (as shown)"), Port("lower", "body", label="Lower vertebra or sacrum"),
+        Port("upper_v", "vertebra", label="Upper vertebra's landmarks (moved with it)"),
+        Port("lower_v", "vertebra", label="Lower vertebra's landmarks (moved with it)"),
+        Port("upper_bone", "bone", label="Upper bone at rest (its rim)"),
+        Port("lower_bone", "bone", label="Lower bone at rest (its rim)"),
+        Port("upper_rest", "vertebra", label="Upper vertebra's landmarks at rest"),
+        Port("lower_rest", "vertebra", label="Lower vertebra's landmarks at rest"),
+        S("nucleus", 0.25, 0.05, 0.8, 0.01, "", "Nucleus: fraction of the disc's cross-sectional area"),
+        S("hd_u", 8, 1, 40, 0.1, "mm", "Upper body: half depth (posterior wall)"),
+        S("ra_u", 9, 1, 40, 0.1, "mm", "Upper rim ellipse: antero-posterior semi-axis"),
+        S("rr_u", 12, 1, 40, 0.1, "mm", "Upper rim ellipse: lateral semi-axis"),
+        S("ext_u", 3, 0, 10, 0.1, "mm", "Into the upper bone"),
+        S("hd_l", 8, 1, 40, 0.1, "mm", "Lower body: half depth (posterior wall)"),
+        S("ra_l", 9, 1, 40, 0.1, "mm", "Lower rim ellipse: antero-posterior semi-axis"),
+        S("rr_l", 12, 1, 40, 0.1, "mm", "Lower rim ellipse: lateral semi-axis"),
+        S("ext_l", 3, 0, 10, 0.1, "mm", "Into the lower bone"),
+        *[S(f"{k}_{side}", v, lo, hi, 0.1, "mm", f"{'Upper' if side == 'u' else 'Lower'} rim ellipse for the nucleus: {what}")
+          for side in "ul" for k, v, lo, hi, what in (("cu", 0, -30, 30, "centre, anterior"), ("cv", 0, -30, 30, "centre, right"),
+                                                        ("ea", 8, 1, 40, "antero-posterior semi-axis"),
+                                                        ("er", 11, 1, 40, "lateral semi-axis"))]],
        [Port("annulus", "body", label="Annulus"), Port("nucleus", "body", label="Nucleus")])
 def _disc_block(x, node):
-    """An intervertebral disc split into nucleus and annulus: the nucleus is the disc
-    scaled in its mid-plane (about the point midway between the two endplate centres,
-    normal to the bisector of the endplate normals) to the given fraction
-    of its cross-sectional area, over the full disc height; the annulus is the rest.
-    Carry both with a Field warp (polyrigid: exactly rigid at both endplates)."""
+    """An intervertebral disc built from its two vertebrae as they are (moved, and later
+    reshaped): the two rims (each body's outline just inside its endplate, sampled on
+    the bone at rest through its moved frame) blended
+    between the endplate planes, extended a few mm into both bones and cut by them, so
+    disc and bone share their interface surface in every posture (common nodes for FE).
+    The nucleus is the same loft between the rims' ellipses (each rim's area and second
+    moments) scaled about their centres to the given fraction of the cross-section; the
+    annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
-    b = x["bone"]
-    u, lo = x["upper"], x["lower"]
-    center = (u.inf.point + lo.sup.point) * 0.5  # midway between the endplate centres
-    axis = lo.sup.normal - u.inf.normal  # bisector of the outward normals (normalised by ScaleInPlane)
-    nuc = ScaleInPlane(b.sdf, sqrt(x["nucleus"]), center, axis)
-    bounds = lambda now: _child(b, now)
-    return {"annulus": Field(Difference(b.sdf, nuc), bounds), "nucleus": Field(nuc, bounds)}
+    U, L, u0, lo0 = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
+    u, lo = _derived_vertebra(u0, f"{node.id}_u"), _derived_vertebra(lo0, f"{node.id}_l")
+    fr = lambda f: (f.origin, f.x, f.y, f.z)
+    D = LoftDisc(x["upper_bone"].sdf, x["lower_bone"].sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
+                 lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
+                 x["hd_u"], x["ra_u"], x["rr_u"], x["ext_u"], x["hd_l"], x["ra_l"], x["rr_l"], x["ext_l"],
+                 zu=u.frame.z, zl=lo.frame.z, rest_u=fr(x["upper_rest"].frame), rest_l=fr(x["lower_rest"].frame))
+    N = D.nucleus(sqrt(x["nucleus"]), *(x[f"{k}_{side}"] for side in "ul" for k in ("cu", "cv", "ea", "er")))
+    bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
+
+    def bounds(now):  # around both endplates: rim ellipses, extensions (tight culling)
+        parts = [_vec_interval(u0.inf.point, now), _vec_interval(lo0.sup.point, now)]
+        r = [_upper(x[k], now) for k in ("ra_u", "rr_u", "ra_l", "rr_l", "ext_u", "ext_l")]
+        if any(q is None for q in parts) or any(v is None for v in r):
+            return _union_b(_child(U, now), _child(L, now))
+        e = max(r[:4]) + max(r[4:]) + DISC_MARGIN
+        return np.min([q[0] for q in parts], axis=0) - e, np.max([q[1] for q in parts], axis=0) + e
+    return {"annulus": Field(bones(Difference(D, N)), bounds), "nucleus": Field(bones(N), bounds)}
 
 
 @block("translate", "Move", "Transforms",

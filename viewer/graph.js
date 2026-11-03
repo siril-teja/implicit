@@ -15,7 +15,7 @@ const Graph = (() => {
 
   function glslFloat(v) {
     if (!Number.isFinite(v)) throw new Error(`cannot emit ${v} as a GLSL literal`);
-    let s = String(v);
+    let s = String(Number(v.toPrecision(9)));  // float32: 9 significant digits are exact (glsl_float)
     if (!/[.e]/.test(s)) s += ".0";
     return s;
   }
@@ -73,6 +73,14 @@ const Graph = (() => {
     union: (x, iv) => grow(unionB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     intersect: (x, iv) => grow(intersectB(child(x.a, iv), child(x.b, iv)), upper(x.blend, iv)),
     subtract: (x, iv) => grow(child(x.a, iv), upper(x.blend, iv)),
+    disc(x, iv) {  // around both endplates: rim ellipses, extensions (graph.py, DISC_MARGIN)
+      const parts = [vecIv(x.upper_v.inf.point, iv), vecIv(x.lower_v.sup.point, iv)];
+      const r = ["ra_u", "rr_u", "ra_l", "rr_l", "ext_u", "ext_l"].map((k) => upper(x[k], iv));
+      if (parts.some((q) => !q) || r.some((v) => v === null)) return unionB(child(x.upper, iv), child(x.lower, iv));
+      const e = Math.max(...r.slice(0, 4)) + Math.max(...r.slice(4)) + 6.0;
+      return [[0, 1, 2].map((k) => Math.min(...parts.map((q) => q[0][k])) - e),
+        [0, 1, 2].map((k) => Math.max(...parts.map((q) => q[1][k])) + e)];
+    },
     translate(x, iv) {
       const t = vecIv(x.offset, iv), b = child(x.body, iv);
       return b && t ? [add(b[0], t[0]), add(b[1], t[1])] : null;
@@ -157,7 +165,7 @@ const Graph = (() => {
   const nowIv = (values) => Object.assign((s) => {
     if (s.param) {
       const v = s.param.name in values ? values[s.param.name] : s.param.value;
-      return [v, v];
+      return Number.isFinite(v) ? [v, v] : null;  // e.g. a derived value not computed yet: unknown
     }
     if (s.ev) {  // derived value (e.g. a posed frame): evaluate its expression
       const v = s.ev(values);
@@ -320,6 +328,10 @@ const Graph = (() => {
     if (name === "spine_curve") return { body: spineCurve(id, x) };
     if (name === "tps_warp") return { body: tpsWarp(id, x, params) };
     if (name === "field_view") return { body: fieldView(id, x, params) };
+    if (name === "disc") {  // moved landmarks as derived uniforms (graph.py, _derived_vertebra)
+      x = { ...x, upper_v: derivedVertebra(x.upper_v, `${id}_u`, id, params),
+        lower_v: derivedVertebra(x.lower_v, `${id}_l`, id, params) };
+    }
     // Template variant: choice inputs, then optional parts present (1) or absent (0).
     const key = [...blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`),
       ...Object.entries(blk.optional || {}).flatMap(([inp, parts]) => parts.map((pt) => `${inp}.${pt}=${x[inp] && x[inp][pt] ? 1 : 0}`))]
@@ -412,6 +424,22 @@ const Graph = (() => {
     params.push(p);
     return p;
   };
+  // A vertebra wire whose components are derived uniforms: computed on the CPU from
+  // their expressions (Solvers.apply) instead of in every pixel.
+  function derivedVertebra(v, base, node, params) {
+    if (!v) return v;
+    const vec = (e, tag) => ({ c: e.c.map((q, k) => {
+      const name = `${base}_${tag}_${"xyz"[k]}`;
+      const p = { name, uniform: `u_${name}`, value: NaN, default: NaN, min: -1e9, max: 1e9, step: 0, label: name,
+        unit: "", node, port: tag, derived: q.g };
+      params.push(p);
+      return { g: p.uniform, iv: null, ev: null, param: p };
+    }) });
+    const plane = (pl, tag) => (pl ? { point: vec(pl.point, `${tag}_point`), normal: vec(pl.normal, `${tag}_normal`) } : null);
+    const f = v.frame;
+    return { frame: { origin: vec(f.origin, "frame_origin"), x: vec(f.x, "frame_x"), y: vec(f.y, "frame_y"), z: vec(f.z, "frame_z") },
+      sup: plane(v.sup, "sup"), inf: plane(v.inf, "inf") };
+  }
   const rigNp = (m, q) => [0, 1, 2].map((i) => m[i] * q[0] + m[3 + i] * q[1] + m[6 + i] * q[2] + m[9 + i]);
 
   // A segment's motion as 12 computed uniforms (shared by Align and Field warp culling).
@@ -714,6 +742,10 @@ const Graph = (() => {
       for (const m of line.matchAll(/\bu_[A-Za-z0-9_]+/g)) used.add(m[0]);
     });
     colorLines.push("    return BODY_COLORS[i];\n}");
+    // Derived uniforms need the uniforms of their expressions (evaluated on the CPU).
+    for (const p of ev.params) {
+      if (p.derived && used.has(p.uniform)) for (const m of p.derived.matchAll(/\bu_\w+/g)) used.add(m[0]);
+    }
     // Computed uniforms need their solver's inputs (sliders, not in the shader).
     const solvers = {};
     for (const p of ev.params) {
@@ -740,9 +772,9 @@ const Graph = (() => {
     const glsl = lines.join("\n");
     return {
       name: graph.name || "graph", glsl, bounds,
-      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed, texture }) =>
+      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed, texture, derived }) =>
         ({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number: !!number,
-          ...(computed ? { computed } : {}), ...(texture ? { texture } : {}) })),
+          ...(computed ? { computed } : {}), ...(texture ? { texture } : {}), ...(derived ? { derived } : {}) })),
       solvers,
       groups: groupInfo, bodies: bodies.map((b) => ({ name: b.name, group: b.group, node: b.node,
         ...(b.body.colormap ? { colormap: { max: b.body.colormap.max.param ? b.body.colormap.max.param.name : b.body.colormap.max.iv[0] } } : {}) })),

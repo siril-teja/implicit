@@ -118,6 +118,7 @@ function useScene(scene, keep) {
   const oldVals = state.values;
   state.values = {};
   for (const p of scene.params) state.values[p.name] = keep && p.name in oldVals ? oldVals[p.name] : p.value;
+  Solvers.apply(scene, state.values);  // computed and derived values, before anything is measured (fitView)
   state.vis = vis;
   state.scene = scene;
   if (first) fitView();
@@ -327,7 +328,7 @@ function buildPanel() {
   const params = $("#params");
   params.replaceChildren();
   // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
-  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture);
+  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture && !p.derived);
   $("#paramsHead").hidden = !shown.length;
   // Presets of a Spine alignment (Roussouly types): set its sliders at once.
   for (const sv of Object.values(s.solvers || {})) {

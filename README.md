@@ -179,20 +179,26 @@ the concave side into each other (rib motion, roadmap 2.7, will let ribs move to
 
 ## Intervertebral discs
 
-`python -m implicit.anatomy.intervertebral assets/bones/vivaplus-50F` builds a disc
-between every pair of neighbouring vertebrae with endplate corners (T2-T3 to L5-S1 on
-VIVA+ 50F; T1-T2's endplate fit is too poor), from the template at rest: its wall
-joins the two endplate rims (each vertebral body's outline 1.5 mm inside its
-endplate, within its corners), and it ends at both bones, filling the endplate
-concavities. The **Disc** block splits a disc into nucleus (the disc scaled in its
-mid-plane to a fraction of its cross-section: 0.22 from T10-T11 down, 0.11 above,
-from the nucleus volume fractions of Moens et al. 2024) and annulus; the polyrigid
-field carries both, so they stay on both endplates in every posture (within 0.1 mm).
-The Discs table adds each disc's sagittal wedge angle. For FE,
+Every pair of neighbouring vertebrae (T1-T2 to L5-S1 on VIVA+ 50F) gets a **Disc**
+block, which builds the disc live from the two vertebrae as shown, as discs are built
+for FE elsewhere: the two endplate rims (each vertebral body's outline 1.5 mm inside
+its endplate, sampled on the moved bone) are joined across the disc space, the disc is
+extended about 3 mm into both bones (tapering inward, so no collar wraps the waisted
+bodies) to cover any endplate concavity, and the bones as shown cut it. It splits into
+nucleus (the same loft between the rims' ellipses, each with its rim's area and second
+moments, scaled to a fraction of the cross-section: 0.22 from T10-T11 down, 0.11
+above, from the nucleus volume fractions of Moens et al. 2024)
+and annulus. Whatever moves or reshapes the vertebrae, the disc is rebuilt from them,
+and its interface is the bone surface itself in every posture, with or without the
+motion limits: one shared surface, so meshes of disc and bone can share their nodes.
+`python -m implicit.anatomy.intervertebral assets/bones/vivaplus-50F` reports each
+level's Disc block inputs (body half depth, rim ellipse, extension into each bone) and
+rim areas. The Discs table adds each
+disc's sagittal wedge angle. For FE,
 `intervertebral.fibres` gives the annulus lamella (20) and fibre direction at any
 point: 28 deg to the transverse plane at the outer wall to 45 deg at the nucleus,
 alternating (Cassidy et al. 1989; Marchand & Ahmed 1990). Lumbar endplate rim areas
-(860-1,100 mm2) are within the women's range of Louie et al. 2018 (1,819 +- 502
+(880-1,200 mm2) are within the women's range of Louie et al. 2018 (1,819 +- 502
 mm2, 3D surface area). Model and references: `implicit/anatomy/intervertebral.py`.
 The discs are hidden by default (groups "Discs: annulus" and "Discs: nucleus" in the
 Scene tab): shown, they make a full-resolution frame about 3.7 times slower in

@@ -5,6 +5,36 @@ Format: one `## [X.Y.Z] - YYYY-MM-DD` section per release; the release workflow
 publishes that section as the GitHub release notes. Versions follow
 [Semantic Versioning](https://semver.org/) (0.x while the API is still moving).
 
+## [0.22.0] - 2026-11-03
+
+### Changed
+- **Discs rebuilt live from the bones** (roadmap 2.1, as discs are built for FE: rims
+  joined, extended into the bones, cut by them). The Disc block now builds each disc
+  in the shader from its two vertebrae: the rims are each body's outline 1.5 mm inside
+  its endplate (the bone sampled through its moved frame); the wall blends the two
+  rims between the endplate planes; it reaches about 3 mm into both bones (tapering
+  inward 1 mm per mm, so no collar wraps the waisted bodies); then the bones as shown
+  cut it. The nucleus is the same loft between the rims' ellipses (each rim's area and
+  second moments) scaled to the nucleus fraction. Whatever moves the vertebrae
+  (sliders, motion limits, posture), the disc follows, and its interface is the bone
+  surface itself: tested equal at rest, within
+  the motion limits and in an extreme posture with the limits off. Before, each disc
+  was a grid built at rest and carried by the polyrigid field, which left gaps at
+  concave endplates and drifted from them in large motions. The `disc_*.npz` files
+  are gone; `python -m implicit.anatomy.intervertebral` now reports each level's
+  Disc block inputs and rim areas.
+- Rims from each body's outline with the body's depth and width (no endplate corners
+  needed): **T1-T2 now has a disc** (T1's inferior endplate has no corners).
+- **Derived uniforms** (`implicit.expr.Derived`): values computed from other uniforms on
+  the CPU (Python, and the viewer: `Solvers.apply`) instead of in every pixel; the
+  discs' moved landmarks use them. Discs are culled by a box around their two
+  endplates. The viewer leaves out the declarations of uniforms its program does not
+  read, and computes derived values before it frames the view.
+- Shorter shaders: GLSL constants with 9 significant digits (exact for 32-bit floats).
+- GPU check: more time on slow runners (Direct3D compiles the live discs' probe
+  programs in 8-11 minutes on a CI runner): 18 minutes for the diagnostics, 22 overall.
+- A Subtract keeps A's moving cull box (Python scenes).
+
 ## [0.21.0] - 2026-11-02
 
 ### Added

@@ -584,16 +584,62 @@ const Solvers = (() => {
     return combos.map((vals) => KINDS[solver.kind](solver.data, vals, true));  // light: motions only
   }
 
-  // Fill in the computed params of a scene (scene.params entries with ``computed``)
-  // from the other values; returns ``values`` (changed in place).
+  // A derived uniform's GLSL (implicit.expr.Derived) as a JavaScript function of the
+  // uniforms' values: arithmetic, vec3 and component access, radians, sin, cos, and the
+  // pose and rigid-motion calls of the shader library (implicit/sdf.py, GLSL_LIB).
+  const glRot = (i, j) => (p, a) => { const c = Math.cos(a), s = Math.sin(a), q = p.slice(); q[i] = c * p[i] - s * p[j]; q[j] = s * p[i] + c * p[j]; return q; };
+  const rotX = glRot(1, 2), rotY = glRot(2, 0), rotZ = glRot(0, 1);
+  const glDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const comb = (e, l) => [0, 1, 2].map((k) => e[0][k] * l[0] + e[1][k] * l[1] + e[2][k] * l[2]);
+  const GL = {
+    vec3: (a, b, c) => [a, b, c], radians: rad, sin: Math.sin, cos: Math.cos, sqrt: Math.sqrt,
+    abs: Math.abs, min: Math.min, max: Math.max,
+    poseRot: (l, ang) => rotZ(rotY(rotX(l, -rad(ang[0])), rad(ang[1])), rad(ang[2])),
+    poseDir: (v, ex, ey, ez, ang) => comb([ex, ey, ez], GL.poseRot([glDot(v, ex), glDot(v, ey), glDot(v, ez)], ang)),
+    posePoint: (p, o, ex, ey, ez, ang, sh) => {
+      const d = GL.poseDir(p.map((v, k) => v - o[k]), ex, ey, ez, ang), s = comb([ex, ey, ez], sh);
+      return [0, 1, 2].map((k) => o[k] + d[k] + s[k]);
+    },
+    rigDir: (v, c0, c1, c2) => comb([c0, c1, c2], v),
+    rigPoint: (v, c0, c1, c2, t) => comb([c0, c1, c2], v).map((x, k) => x + t[k]),
+  };
+  const DERIVED = new Map();
+  function derivedFn(g) {
+    if (DERIVED.has(g)) return DERIVED.get(g);
+    let f = null;
+    if (/^[\w\s.+\-*/(),]*$/.test(g)) {
+      const js = g.replace(/\bu_\w+/g, (u) => `U(${JSON.stringify(u)})`)
+        .replace(/\)\.([xyz])\b/g, (_, c) => `)[${"xyz".indexOf(c)}]`)
+        .replace(/\b([A-Za-z_]\w*)\(/g, (m, n) => (n === "U" ? m : `GL.${n}(`));
+      try { f = new Function("U", "GL", `return (${js});`); } catch { f = null; }
+    }
+    DERIVED.set(g, f);
+    return f;
+  }
+
+  // Fill in the computed params of a scene (scene.params entries with ``computed``) from
+  // the other values, then the derived ones (``derived``); returns ``values`` (changed
+  // in place).
   function applyScene(scene, values) {
-    if (!scene || !scene.solvers) return values;
+    if (!scene) return values;
     const byName = Object.fromEntries(scene.params.map((p) => [p.name, p]));
     const value = (n) => (n in values ? values[n] : byName[n] ? byName[n].value : NaN);
-    const results = {};
-    for (const [id, s] of Object.entries(scene.solvers)) results[id] = run(s, value);
-    for (const p of scene.params) {
-      if (p.computed) values[p.name] = results[p.computed.solver][p.computed.key][p.computed.index];
+    if (scene.solvers) {
+      const results = {};
+      for (const [id, s] of Object.entries(scene.solvers)) results[id] = run(s, value);
+      for (const p of scene.params) {
+        if (p.computed) values[p.name] = results[p.computed.solver][p.computed.key][p.computed.index];
+      }
+    }
+    const derived = scene.params.filter((p) => p.derived);
+    if (derived.length) {
+      const byUniform = Object.fromEntries(scene.params.map((p) => [p.uniform, p.name]));
+      const U = (u) => (u in byUniform ? value(byUniform[u]) : NaN);
+      for (const p of derived) {
+        const f = derivedFn(p.derived);
+        const v = f ? f(U, GL) : NaN;
+        values[p.name] = Number.isFinite(v) ? v : p.value;
+      }
     }
     return values;
   }
@@ -610,7 +656,7 @@ const Solvers = (() => {
     return out;
   }
 
-  return { run, samples, apply: applyScene, tables, shortfalls, ribcageReport, balanceReport, KINDS, fill, horn };
+  return { run, samples, apply: applyScene, derivedFn, GL, tables, shortfalls, ribcageReport, balanceReport, KINDS, fill, horn };
 })();
 
 if (typeof module !== "undefined") module.exports = Solvers;

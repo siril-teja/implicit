@@ -1052,7 +1052,7 @@ class ScaleInPlane(SDF):
     def exprs(self): return [self.k, self.center, self.axis]
 
     def emit(self, ctx, p):
-        c, k = self.center.glsl(), self.k.glsl()
+        c, k = ctx.var("vec3", self.center.glsl()), self.k.glsl()
         w = ctx.var("vec3", f"normalize({self.axis.glsl()})")
         d = ctx.var("vec3", f"{p} - {c}")
         h = ctx.var("float", f"dot({d}, {w})")
@@ -1066,6 +1066,122 @@ class ScaleInPlane(SDF):
         h = d @ w
         q = c + (d - np.outer(h, w)) / k + np.outer(h, w)
         return self.child.eval(q) * min(k, 1.0)
+
+
+class LoftDisc(SDF):
+    """An intervertebral disc built from its two vertebrae as they are (implicit.anatomy
+    .intervertebral): each rim is its body's outline ``section`` mm inside its endplate
+    (the bone's own field sampled on that plane, along the disc axis), behind the
+    posterior body wall cut off and within an ellipse (semi-axes ra, rr in the body's
+    anterior and right axes); the two rims are blended by height between the endplate
+    planes; beyond a plane the profile shrinks by ``taper`` per mm up to ``ext`` mm
+    into the bone. Not cut by the bones (the Disc block does that). The value is scaled
+    by LIP (the height blend stretches the field a little).
+
+    upper / lower: the bodies; per side: plane point and outward normal (pu, nu: the
+    upper's inferior endplate; pl, nl: the lower's superior one), body centre b,
+    anterior axis a, right axis r, half depth hd, ellipse ra, rr, extension ext.
+    """
+    LIP = 0.7
+
+    def __init__(self, upper, lower, pu, nu, bu, au, ru, pl, nl, bl, al, rl, hd_u, ra_u, rr_u, ext_u,
+                 hd_l, ra_l, rr_l, ext_l, section=1.5, taper=1.0, zu=None, zl=None, rest_u=None, rest_l=None):
+        # upper, lower: the bones sampled for the rims. With rest_u / rest_l (each the
+        # bone's rest frame: origin, right, anterior, cranial), they are the bones at rest,
+        # sampled at the rim point taken back to rest through the moved frame (bu, ru, au,
+        # zu): exact for rigid motions and cheap (no pose or alignment inverse per point).
+        self.upper, self.lower = upper, lower
+        self.v = [vec3(x) for x in (pu, nu, bu, au, ru, pl, nl, bl, al, rl)]
+        self.z = [vec3(x) for x in (zu, zl)] if rest_u is not None else []
+        self.rest = [[vec3(x) for x in r] for r in (rest_u, rest_l)] if rest_u is not None else []
+        self.s = [wrap(x) for x in (hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l)]
+        self.section, self.taper = float(section), float(taper)
+        self.nuc = None
+
+    def nucleus(self, k, cu_u, cv_u, ea_u, er_u, cu_l, cv_l, ea_l, er_l):
+        """The nucleus of this disc: the same loft with each rim replaced by its ellipse
+        (centre cu, cv and semi-axes ea, er in the body's anterior and right axes: the
+        rim's area and second moments, implicit.anatomy.intervertebral) scaled by k
+        about its centre, within the rim's ellipse and posterior wall; no bone sampled."""
+        n = LoftDisc.__new__(LoftDisc)
+        n.__dict__.update(self.__dict__)
+        n.upper = n.lower = None
+        n.nuc = [wrap(x) for x in (k, cu_u, cv_u, ea_u, er_u, cu_l, cv_l, ea_l, er_l)]
+        return n
+
+    def children(self): return [] if self.nuc else [self.upper, self.lower]
+    def exprs(self): return self.v + self.z + [x for r in self.rest for x in r] + self.s + (self.nuc or [])
+
+    def emit(self, ctx, p):
+        # The moved landmarks (long expressions) once per shader unit, shared by the
+        # disc and its nucleus.
+        key = ("loft landmarks",) + tuple(id(x) for x in self.v)
+        if key not in ctx.memo:
+            vs = [ctx.var("vec3", x.glsl()) for x in self.v]
+            ctx.memo[key] = (self, vs + [ctx.var("vec3", f"normalize({vs[6]} - {vs[1]})")])
+        pu, nu, bu, au, ru, pl, nl, bl, al, rl, w = ctx.memo[key][1]
+        zs = []
+        if self.rest and not self.nuc:
+            zk = ("loft frame z",) + tuple(id(x) for x in self.z)
+            if zk not in ctx.memo:
+                ctx.memo[zk] = (self, [ctx.var("vec3", x.glsl()) for x in self.z])
+            zs = ctx.memo[zk][1]
+        hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l = (x.glsl() for x in self.s)
+        nuc = [x.glsl() for x in self.nuc] if self.nuc else None
+        sec = glsl_float(self.section)
+
+        def rim(child, pt, n, b, a, r, hd, ra, rr, side):
+            q = ctx.var("vec3", f"{pt} - {sec} * {n}")
+            P = ctx.var("vec3", f"{p} - dot({p} - {q}, {n}) / dot({w}, {n}) * {w}")
+            u = ctx.var("float", f"dot({P} - {b}, {a})")
+            v = ctx.var("float", f"dot({P} - {b}, {r})")
+            foot = f"(length(vec2({u} / {ra}, {v} / {rr})) - 1.0) * min({ra}, {rr})"
+            if nuc:
+                k, cu, cv, ea, er = nuc[0], *nuc[1 + 4 * side: 5 + 4 * side]
+                inner = (f"(length(vec2(({u} - {cu}) / ({k} * {ea}), ({v} - {cv}) / ({k} * {er}))) - 1.0)"
+                         f" * {k} * min({ea}, {er})")
+                return ctx.var("float", f"max(max({inner}, -({u} + {hd})), {foot})")
+            at = P
+            if zs:  # back to the bone at rest through its moved frame
+                o, ex, ey, ez = (x.glsl() for x in self.rest[side])
+                d = ctx.var("vec3", f"{P} - {b}")
+                at = ctx.var("vec3", f"{o} + {ex} * dot({d}, {r}) + {ey} * dot({d}, {a}) + {ez} * dot({d}, {zs[side]})")
+            return ctx.var("float", f"max(max({ctx.sub(child, at)}, -({u} + {hd})), {foot})")
+        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
+        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
+        hu = ctx.var("float", f"dot({p} - {pu}, -{nu})")
+        hl = ctx.var("float", f"dot({p} - {pl}, -{nl})")
+        t = ctx.var("float", f"max(-{hl}, 0.0) / max(max(-{hu}, 0.0) + max(-{hl}, 0.0), 1e-9)")  # 1 beyond pu, 0 beyond pl
+        wall = ctx.var("float", f"mix({ri_l}, {ri_u}, {t}) + {glsl_float(self.taper)} * (max({hu}, 0.0) + max({hl}, 0.0))")
+        return ctx.var("float", f"{glsl_float(self.LIP)} * max({wall}, max({hu} - {ext_u}, {hl} - {ext_l}))")
+
+    def eval(self, p):
+        pu, nu, bu, au, ru, pl, nl, bl, al, rl = (_vv(x) for x in self.v)
+        hd_u, ra_u, rr_u, ext_u, hd_l, ra_l, rr_l, ext_l = (_v(x) for x in self.s)
+        nuc = [_v(x) for x in self.nuc] if self.nuc else None
+        w = (nl - nu) / np.linalg.norm(nl - nu)
+
+        def rim(child, pt, n, b, a, r, hd, ra, rr, side):
+            q = pt - self.section * n
+            P = p - np.outer((p - q) @ n / (w @ n), w)
+            u, v = (P - b) @ a, (P - b) @ r
+            foot = (np.sqrt((u / ra) ** 2 + (v / rr) ** 2) - 1.0) * min(ra, rr)
+            if nuc:
+                k, cu, cv, ea, er = nuc[0], *nuc[1 + 4 * side: 5 + 4 * side]
+                inner = (np.sqrt(((u - cu) / (k * ea)) ** 2 + ((v - cv) / (k * er)) ** 2) - 1.0) * k * min(ea, er)
+                return np.maximum(np.maximum(inner, -(u + hd)), foot)
+            at = P
+            if self.rest:
+                o, ex, ey, ez = (_vv(x) for x in self.rest[side])
+                d = P - b
+                at = o + np.outer(d @ r, ex) + np.outer(d @ a, ey) + np.outer(d @ _vv(self.z[side]), ez)
+            return np.maximum(np.maximum(child.eval(at), -(u + hd)), foot)
+        ri_u = rim(self.upper, pu, nu, bu, au, ru, hd_u, ra_u, rr_u, 0)
+        ri_l = rim(self.lower, pl, nl, bl, al, rl, hd_l, ra_l, rr_l, 1)
+        hu, hl = (p - pu) @ (-nu), (p - pl) @ (-nl)
+        t = np.maximum(-hl, 0) / np.maximum(np.maximum(-hu, 0) + np.maximum(-hl, 0), 1e-9)
+        wall = (1 - t) * ri_l + t * ri_u + self.taper * (np.maximum(hu, 0) + np.maximum(hl, 0))
+        return self.LIP * np.maximum(wall, np.maximum(hu - ext_u, hl - ext_l))
 
 
 POLY_ITERS, POLY_RELAX = 12, 4  # polyrigid inverse: steps, full steps before half steps (alignment.py)
@@ -1257,6 +1373,6 @@ __all__ = [
     "SDF", "Sphere", "Box", "Cylinder", "EllipticCylinder", "Capsule", "HalfSpace",
     "Union", "Intersect", "Difference", "union", "Translate", "Rotate", "Scale",
     "MirrorX", "Offset", "Shell", "Grid", "GridSmooth", "smooth", "GridSlot", "ProjectToPlane", "Morph",
-    "ScaleAbout", "ScaleInPlane", "FramePose",
+    "ScaleAbout", "ScaleInPlane", "LoftDisc", "FramePose",
     "Ctx", "GLSL_LIB", "glsl_float",
 ]
