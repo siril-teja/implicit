@@ -193,6 +193,36 @@ class Computed(Param):
         return {**super().to_json(), "computed": {"solver": self.solver.id, "key": self.key, "index": self.index}}
 
 
+class Derived(Param):
+    """A uniform whose value is an expression of other uniforms (e.g. a moved landmark's
+    coordinate), computed on the CPU whenever they change instead of in every pixel. The
+    viewer evaluates the same expression (``derived``: its GLSL, viewer/solvers.js)."""
+
+    def __init__(self, name, expr: Expr):
+        if not name.isidentifier():
+            raise ValueError(f"param name must be an identifier: {name!r}")
+        self.name, self.expr = name, expr
+        self.lo, self.hi, self.step = -1e9, 1e9, 0.0
+        self.label, self.unit = name, ""
+
+    @property
+    def v(self):
+        return float(self.expr.value())
+
+    @property
+    def default(self):
+        return self.v
+
+    def set(self, v):
+        pass  # follows its expression's uniforms
+
+    def params(self):
+        return [self] + self.expr.params()
+
+    def to_json(self):
+        return {**super().to_json(), "derived": self.expr.glsl()}
+
+
 class ComputedTexture(Param):
     """A float table a Solver computes (``solver.result()[key]``, rows of ``width`` RGBA
     texels), read in the shader as a sampler2D uniform; the viewer refills it whenever

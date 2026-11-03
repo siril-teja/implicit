@@ -328,6 +328,10 @@ const Graph = (() => {
     if (name === "spine_curve") return { body: spineCurve(id, x) };
     if (name === "tps_warp") return { body: tpsWarp(id, x, params) };
     if (name === "field_view") return { body: fieldView(id, x, params) };
+    if (name === "disc") {  // moved landmarks as derived uniforms (graph.py, _derived_vertebra)
+      x = { ...x, upper_v: derivedVertebra(x.upper_v, `${id}_u`, id, params),
+        lower_v: derivedVertebra(x.lower_v, `${id}_l`, id, params) };
+    }
     // Template variant: choice inputs, then optional parts present (1) or absent (0).
     const key = [...blk.inputs.filter((p) => p.type === "choice").map((p) => `${p.name}=${x[p.name]}`),
       ...Object.entries(blk.optional || {}).flatMap(([inp, parts]) => parts.map((pt) => `${inp}.${pt}=${x[inp] && x[inp][pt] ? 1 : 0}`))]
@@ -420,6 +424,22 @@ const Graph = (() => {
     params.push(p);
     return p;
   };
+  // A vertebra wire whose components are derived uniforms: computed on the CPU from
+  // their expressions (Solvers.apply) instead of in every pixel.
+  function derivedVertebra(v, base, node, params) {
+    if (!v) return v;
+    const vec = (e, tag) => ({ c: e.c.map((q, k) => {
+      const name = `${base}_${tag}_${"xyz"[k]}`;
+      const p = { name, uniform: `u_${name}`, value: NaN, default: NaN, min: -1e9, max: 1e9, step: 0, label: name,
+        unit: "", node, port: tag, derived: q.g };
+      params.push(p);
+      return { g: p.uniform, iv: null, ev: null, param: p };
+    }) });
+    const plane = (pl, tag) => (pl ? { point: vec(pl.point, `${tag}_point`), normal: vec(pl.normal, `${tag}_normal`) } : null);
+    const f = v.frame;
+    return { frame: { origin: vec(f.origin, "frame_origin"), x: vec(f.x, "frame_x"), y: vec(f.y, "frame_y"), z: vec(f.z, "frame_z") },
+      sup: plane(v.sup, "sup"), inf: plane(v.inf, "inf") };
+  }
   const rigNp = (m, q) => [0, 1, 2].map((i) => m[i] * q[0] + m[3 + i] * q[1] + m[6 + i] * q[2] + m[9 + i]);
 
   // A segment's motion as 12 computed uniforms (shared by Align and Field warp culling).
@@ -722,6 +742,10 @@ const Graph = (() => {
       for (const m of line.matchAll(/\bu_[A-Za-z0-9_]+/g)) used.add(m[0]);
     });
     colorLines.push("    return BODY_COLORS[i];\n}");
+    // Derived uniforms need the uniforms of their expressions (evaluated on the CPU).
+    for (const p of ev.params) {
+      if (p.derived && used.has(p.uniform)) for (const m of p.derived.matchAll(/\bu_\w+/g)) used.add(m[0]);
+    }
     // Computed uniforms need their solver's inputs (sliders, not in the shader).
     const solvers = {};
     for (const p of ev.params) {
@@ -748,9 +772,9 @@ const Graph = (() => {
     const glsl = lines.join("\n");
     return {
       name: graph.name || "graph", glsl, bounds,
-      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed, texture }) =>
+      params: params.map(({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number, computed, texture, derived }) =>
         ({ name, uniform, value, default: def, min, max, step, label, unit, node, port, number: !!number,
-          ...(computed ? { computed } : {}), ...(texture ? { texture } : {}) })),
+          ...(computed ? { computed } : {}), ...(texture ? { texture } : {}), ...(derived ? { derived } : {}) })),
       solvers,
       groups: groupInfo, bodies: bodies.map((b) => ({ name: b.name, group: b.group, node: b.node,
         ...(b.body.colormap ? { colormap: { max: b.body.colormap.max.param ? b.body.colormap.max.param.name : b.body.colormap.max.iv[0] } } : {}) })),

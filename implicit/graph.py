@@ -358,6 +358,20 @@ def _child(f: Field, now):
     return f.bfun(now) if f.bfun else None
 
 
+def _derived_vertebra(v, name):
+    """The vertebra's frame and planes as Derived uniforms (moved landmarks computed on
+    the CPU, not in every pixel); unchanged while tracing a template (the viewer's graph
+    builder makes the same uniforms, viewer/graph.js)."""
+    from .expr import Derived
+    if v is None or any(isinstance(c, _ScalarHole) for c in v.frame.origin.c):
+        return v
+    vec = lambda e, tag: Vec3(*(Derived(f"{name}_{tag}_{a}", c) for a, c in zip("xyz", e.c)))
+    plane = lambda pl, tag: None if pl is None else PlaneV(vec(pl.point, f"{tag}_point"), vec(pl.normal, f"{tag}_normal"))
+    f = v.frame
+    return VertebraV(FrameV(*(vec(getattr(f, k), f"frame_{k}") for k in ("origin", "x", "y", "z"))),
+                     plane(v.sup, "sup"), plane(v.inf, "inf"))
+
+
 DISC_MARGIN = 6.0  # mm: rim ellipse centres (body axis on the endplate) off the endplate centres
 
 
@@ -393,7 +407,8 @@ def _disc_block(x, node):
     moments) scaled about their centres to the given fraction of the cross-section; the
     annulus is the rest (implicit/anatomy/intervertebral.py)."""
     from .expr import sqrt
-    U, L, u, lo = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
+    U, L, u0, lo0 = x["upper"], x["lower"], x["upper_v"], x["lower_v"]
+    u, lo = _derived_vertebra(u0, f"{node.id}_u"), _derived_vertebra(lo0, f"{node.id}_l")
     fr = lambda f: (f.origin, f.x, f.y, f.z)
     D = LoftDisc(x["upper_bone"].sdf, x["lower_bone"].sdf, u.inf.point, u.inf.normal, u.frame.origin, u.frame.y, u.frame.x,
                  lo.sup.point, lo.sup.normal, lo.frame.origin, lo.frame.y, lo.frame.x,
@@ -403,7 +418,7 @@ def _disc_block(x, node):
     bones = lambda f: Difference(Difference(f, U.sdf), L.sdf)
 
     def bounds(now):  # around both endplates: rim ellipses, extensions (tight culling)
-        parts = [_vec_interval(u.inf.point, now), _vec_interval(lo.sup.point, now)]
+        parts = [_vec_interval(u0.inf.point, now), _vec_interval(lo0.sup.point, now)]
         r = [_upper(x[k], now) for k in ("ra_u", "rr_u", "ra_l", "rr_l", "ext_u", "ext_l")]
         if any(q is None for q in parts) or any(v is None for v in r):
             return _union_b(_child(U, now), _child(L, now))

@@ -327,7 +327,7 @@ function buildPanel() {
   const params = $("#params");
   params.replaceChildren();
   // Graph scenes: block settings are edited on the blocks; here only the named Number sliders.
-  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture);
+  const shown = s.graph ? s.params.filter((p) => p.number) : s.params.filter((p) => !p.computed && !p.texture && !p.derived);
   $("#paramsHead").hidden = !shown.length;
   // Presets of a Spine alignment (Roussouly types): set its sliders at once.
   for (const sv of Object.values(s.solvers || {})) {
